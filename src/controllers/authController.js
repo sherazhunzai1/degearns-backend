@@ -53,12 +53,18 @@ const getOrCreateUser = async (req, res, next) => {
 };
 
 /**
- * Get current authenticated user profile
+ * Get user profile by wallet address
  */
 const getMe = async (req, res, next) => {
   try {
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
     const user = await User.findOne({
-      where: { id: req.user.id },
+      where: { walletAddress },
       include: [
         {
           association: 'collections',
@@ -84,10 +90,13 @@ const getMe = async (req, res, next) => {
  */
 const updateProfile = async (req, res, next) => {
   try {
-    const { username, email, bio, profileImage, coverImage, socialLinks } = req.body;
-    const userId = req.user.id;
+    const { walletAddress, username, email, bio, profileImage, coverImage, socialLinks } = req.body;
 
-    const user = await User.findByPk(userId);
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const user = await User.findOne({ where: { walletAddress } });
 
     if (!user) {
       throw new ApiError(404, 'User not found');

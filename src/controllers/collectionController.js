@@ -10,8 +10,11 @@ const { Op } = require('sequelize');
  */
 const listCollection = async (req, res, next) => {
   try {
-    const { name, description, image, bannerImage, category, royaltyPercentage, socialLinks, taxon } = req.body;
-    const creatorWalletAddress = req.user.walletAddress;
+    const { name, description, image, bannerImage, category, royaltyPercentage, socialLinks, taxon, creatorWalletAddress } = req.body;
+
+    if (!creatorWalletAddress) {
+      throw new ApiError(400, 'Creator wallet address is required');
+    }
 
     if (!taxon) {
       throw new ApiError(400, 'Taxon is required to identify the collection on XRPL');
@@ -218,8 +221,11 @@ const getCollection = async (req, res, next) => {
 const updateCollection = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, description, image, bannerImage, socialLinks } = req.body;
-    const creatorWalletAddress = req.user.walletAddress;
+    const { name, description, image, bannerImage, socialLinks, creatorWalletAddress } = req.body;
+
+    if (!creatorWalletAddress) {
+      throw new ApiError(400, 'Creator wallet address is required');
+    }
 
     const collection = await Collection.findByPk(id);
 

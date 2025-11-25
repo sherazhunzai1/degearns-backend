@@ -7,35 +7,34 @@ const {
   updateCollection,
   updateCollectionStats
 } = require('../controllers/collectionController');
-const { authenticate, optionalAuth } = require('../middleware/auth');
 
 /**
  * @route   POST /api/v1/collections/list
  * @desc    List/Register a collection on the marketplace
- * @access  Private
+ * @access  Public
  */
-router.post('/list', authenticate, listCollection);
+router.post('/list', listCollection);
 
 /**
  * @route   GET /api/v1/collections
  * @desc    Get all collections with filters
  * @access  Public
  */
-router.get('/', optionalAuth, getCollections);
+router.get('/', getCollections);
 
 /**
  * @route   GET /api/v1/collections/:identifier
  * @desc    Get single collection by ID or slug
  * @access  Public
  */
-router.get('/:identifier', optionalAuth, getCollection);
+router.get('/:identifier', getCollection);
 
 /**
  * @route   PUT /api/v1/collections/:id
  * @desc    Update collection
- * @access  Private
+ * @access  Public
  */
-router.put('/:id', authenticate, updateCollection);
+router.put('/:id', updateCollection);
 
 /**
  * @route   PUT /api/v1/collections/:id/stats
