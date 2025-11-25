@@ -1,36 +1,53 @@
-const mongoose = require('mongoose');
-const logger = require('../utils/logger');
+require('dotenv').config();
 
-const connectDatabase = async () => {
-  try {
-    const mongoURI = process.env.NODE_ENV === 'test'
-      ? process.env.MONGODB_TEST_URI
-      : process.env.MONGODB_URI;
-
-    const options = {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    };
-
-    await mongoose.connect(mongoURI, options);
-
-    logger.info('MongoDB connected successfully');
-
-    mongoose.connection.on('error', (err) => {
-      logger.error('MongoDB connection error:', err);
-    });
-
-    mongoose.connection.on('disconnected', () => {
-      logger.warn('MongoDB disconnected');
-    });
-
-  } catch (error) {
-    logger.error('Failed to connect to MongoDB:', error);
-    process.exit(1);
+module.exports = {
+  development: {
+    username: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'xrpl_nft_marketplace',
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 3306,
+    dialect: process.env.DB_DIALECT || 'mysql',
+    logging: false,
+    pool: {
+      max: 5,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    define: {
+      timestamps: true,
+      underscored: false,
+      freezeTableName: true
+    }
+  },
+  test: {
+    username: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_TEST_NAME || 'xrpl_nft_marketplace_test',
+    host: process.env.DB_HOST || 'localhost',
+    port: process.env.DB_PORT || 3306,
+    dialect: process.env.DB_DIALECT || 'mysql',
+    logging: false
+  },
+  production: {
+    username: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT || 3306,
+    dialect: process.env.DB_DIALECT || 'mysql',
+    logging: false,
+    pool: {
+      max: 10,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    define: {
+      timestamps: true,
+      underscored: false,
+      freezeTableName: true
+    }
   }
 };
-
-module.exports = connectDatabase;

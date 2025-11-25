@@ -1,6 +1,6 @@
 require('dotenv').config();
 const app = require('./app');
-const connectDatabase = require('./config/database');
+const { connectDatabase } = require('./config/sequelize');
 const xrplConfig = require('./config/xrpl');
 const logger = require('./utils/logger');
 
@@ -15,7 +15,7 @@ process.on('uncaughtException', (error) => {
 // Connect to database and start server
 const startServer = async () => {
   try {
-    // Connect to MongoDB
+    // Connect to MySQL database
     await connectDatabase();
 
     // Connect to XRPL

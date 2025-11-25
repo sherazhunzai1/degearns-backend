@@ -1,118 +1,139 @@
-const mongoose = require('mongoose');
+module.exports = (sequelize, DataTypes) => {
+  const NFT = sequelize.define('NFT', {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+      allowNull: false
+    },
+    tokenId: {
+      type: DataTypes.STRING(100),
+      unique: true,
+      allowNull: false,
+      comment: 'XRPL NFToken ID'
+    },
+    name: {
+      type: DataTypes.STRING(200),
+      allowNull: false,
+      comment: 'NFT name/title'
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'NFT description'
+    },
+    image: {
+      type: DataTypes.STRING(500),
+      allowNull: false,
+      comment: 'Main image URL'
+    },
+    uri: {
+      type: DataTypes.STRING(500),
+      allowNull: false,
+      comment: 'Metadata URI (IPFS or HTTP)'
+    },
+    collectionId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      comment: 'Collection this NFT belongs to'
+    },
+    creatorWalletAddress: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      comment: 'Original creator wallet address'
+    },
+    ownerWalletAddress: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      comment: 'Current owner wallet address'
+    },
+    taxon: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'XRPL taxon value'
+    },
+    transferFee: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Transfer fee in basis points (0-50000)',
+      validate: {
+        min: 0,
+        max: 50000
+      }
+    },
+    attributes: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: 'NFT attributes/traits as JSON',
+      get() {
+        const rawValue = this.getDataValue('attributes');
+        return rawValue ? JSON.parse(JSON.stringify(rawValue)) : null;
+      }
+    },
+    isListed: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: 'Whether NFT is currently listed for sale'
+    },
+    currentPrice: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: 'Current listing price in drops'
+    },
+    offerID: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'XRPL offer ID if listed'
+    },
+    views: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Number of views'
+    },
+    likes: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Number of likes'
+    },
+    transactionHash: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      comment: 'XRPL transaction hash for minting'
+    },
+    mintedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+      comment: 'When the NFT was minted'
+    },
+    metadata: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: 'Additional metadata',
+      get() {
+        const rawValue = this.getDataValue('metadata');
+        return rawValue ? JSON.parse(JSON.stringify(rawValue)) : null;
+      }
+    }
+  }, {
+    tableName: 'NFTs',
+    timestamps: true,
+    indexes: [
+      { unique: true, fields: ['tokenId'] },
+      { fields: ['collectionId'] },
+      { fields: ['creatorWalletAddress'] },
+      { fields: ['ownerWalletAddress'] },
+      { fields: ['isListed'] },
+      { fields: ['mintedAt'] },
+      { fields: ['createdAt'] }
+    ]
+  });
 
-const nftSchema = new mongoose.Schema({
-  tokenId: {
-    type: String,
-    required: [true, 'Token ID is required'],
-    unique: true,
-    trim: true
-  },
-  name: {
-    type: String,
-    required: [true, 'NFT name is required'],
-    trim: true,
-    maxlength: [100, 'Name must not exceed 100 characters']
-  },
-  description: {
-    type: String,
-    required: [true, 'Description is required'],
-    maxlength: [1000, 'Description must not exceed 1000 characters']
-  },
-  image: {
-    type: String,
-    required: [true, 'Image URL is required']
-  },
-  uri: {
-    type: String,
-    required: [true, 'Metadata URI is required']
-  },
-  creator: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  owner: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
-  },
-  ownerWalletAddress: {
-    type: String,
-    required: true
-  },
-  taxon: {
-    type: Number,
-    default: 0
-  },
-  transferFee: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 50000
-  },
-  category: {
-    type: String,
-    enum: ['art', 'music', 'photography', 'sports', 'gaming', 'collectibles', 'other'],
-    default: 'other'
-  },
-  tags: [{
-    type: String,
-    trim: true
-  }],
-  attributes: [{
-    trait_type: String,
-    value: mongoose.Schema.Types.Mixed
-  }],
-  isListed: {
-    type: Boolean,
-    default: false
-  },
-  currentPrice: {
-    type: String,
-    default: null
-  },
-  offerID: {
-    type: String,
-    default: null
-  },
-  views: {
-    type: Number,
-    default: 0
-  },
-  likes: {
-    type: Number,
-    default: 0
-  },
-  likedBy: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  royalties: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 50
-  },
-  transactionHash: {
-    type: String,
-    required: true
-  },
-  mintedAt: {
-    type: Date,
-    default: Date.now
-  }
-}, {
-  timestamps: true
-});
+  // Instance methods
+  NFT.prototype.toJSON = function() {
+    const values = Object.assign({}, this.get());
+    return values;
+  };
 
-// Indexes for better query performance
-nftSchema.index({ tokenId: 1 });
-nftSchema.index({ creator: 1 });
-nftSchema.index({ owner: 1 });
-nftSchema.index({ isListed: 1 });
-nftSchema.index({ category: 1 });
-nftSchema.index({ createdAt: -1 });
-
-const NFT = mongoose.model('NFT', nftSchema);
-
-module.exports = NFT;
+  return NFT;
+};

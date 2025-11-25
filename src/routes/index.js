@@ -2,21 +2,21 @@ const express = require('express');
 const router = express.Router();
 
 const authRoutes = require('./authRoutes');
+const collectionRoutes = require('./collectionRoutes');
 const nftRoutes = require('./nftRoutes');
-const userRoutes = require('./userRoutes');
-const transactionRoutes = require('./transactionRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
+router.use('/collections', collectionRoutes);
 router.use('/nfts', nftRoutes);
-router.use('/users', userRoutes);
-router.use('/transactions', transactionRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'Server is running',
+    database: 'MySQL',
+    blockchain: 'XRPL',
     timestamp: new Date().toISOString()
   });
 });

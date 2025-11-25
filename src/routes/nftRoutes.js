@@ -1,25 +1,27 @@
 const express = require('express');
 const router = express.Router();
 const {
-  mintNFT,
+  mintSingleNFT,
+  mintBulkNFTs,
   getNFTs,
-  getNFT,
-  listNFT,
-  delistNFT,
-  buyNFT,
-  toggleLike,
-  getUserNFTs
+  getNFT
 } = require('../controllers/nftController');
 const { authenticate, optionalAuth } = require('../middleware/auth');
 const { mintLimiter } = require('../middleware/rateLimiter');
-const { validate, nftValidation } = require('../utils/validators');
 
 /**
  * @route   POST /api/v1/nfts/mint
- * @desc    Mint a new NFT
+ * @desc    Mint a single NFT
  * @access  Private
  */
-router.post('/mint', authenticate, mintLimiter, validate(nftValidation.mint), mintNFT);
+router.post('/mint', authenticate, mintLimiter, mintSingleNFT);
+
+/**
+ * @route   POST /api/v1/nfts/mint-bulk
+ * @desc    Mint multiple NFTs in bulk
+ * @access  Private
+ */
+router.post('/mint-bulk', authenticate, mintLimiter, mintBulkNFTs);
 
 /**
  * @route   GET /api/v1/nfts
@@ -34,40 +36,5 @@ router.get('/', optionalAuth, getNFTs);
  * @access  Public
  */
 router.get('/:id', optionalAuth, getNFT);
-
-/**
- * @route   POST /api/v1/nfts/:id/list
- * @desc    List NFT for sale
- * @access  Private
- */
-router.post('/:id/list', authenticate, validate(nftValidation.list), listNFT);
-
-/**
- * @route   POST /api/v1/nfts/:id/delist
- * @desc    Delist NFT from sale
- * @access  Private
- */
-router.post('/:id/delist', authenticate, delistNFT);
-
-/**
- * @route   POST /api/v1/nfts/:id/buy
- * @desc    Buy an NFT
- * @access  Private
- */
-router.post('/:id/buy', authenticate, buyNFT);
-
-/**
- * @route   POST /api/v1/nfts/:id/like
- * @desc    Like/Unlike an NFT
- * @access  Private
- */
-router.post('/:id/like', authenticate, toggleLike);
-
-/**
- * @route   GET /api/v1/nfts/user/:userId
- * @desc    Get user's NFTs
- * @access  Public
- */
-router.get('/user/:userId', getUserNFTs);
 
 module.exports = router;

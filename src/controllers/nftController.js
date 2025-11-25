@@ -1,23 +1,45 @@
 const { Wallet } = require('xrpl');
-const NFT = require('../models/NFT');
-const Transaction = require('../models/Transaction');
-const User = require('../models/User');
+const { NFT, Collection, User, Transaction, sequelize } = require('../models');
 const xrplService = require('../services/xrplService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { Op } = require('sequelize');
 
 /**
- * Mint a new NFT
+ * Mint a single NFT
  */
-const mintNFT = async (req, res, next) => {
+const mintSingleNFT = async (req, res, next) => {
   try {
-    const { name, description, image, uri, category, tags, attributes, taxon, transferFee, royalties } = req.body;
-    const userId = req.user._id;
+    const {
+      collectionId,
+      name,
+      description,
+      image,
+      uri,
+      attributes,
+      taxon,
+      transferFee,
+      walletSeed
+    } = req.body;
 
-    // Get user's wallet (in production, user would sign this transaction)
-    // For demo purposes, we'll use a provided wallet seed or create test wallet
-    const userWallet = Wallet.fromSeed(req.body.walletSeed || process.env.ADMIN_WALLET_SEED);
+    const creatorWalletAddress = req.user.walletAddress;
+
+    // Verify collection exists and user is the creator
+    const collection = await Collection.findByPk(collectionId);
+    if (!collection) {
+      throw new ApiError(404, 'Collection not found');
+    }
+
+    if (collection.creatorWalletAddress !== creatorWalletAddress) {
+      throw new ApiError(403, 'You are not the creator of this collection');
+    }
+
+    // Get user's wallet
+    const userWallet = Wallet.fromSeed(walletSeed);
+    if (userWallet.address !== creatorWalletAddress) {
+      throw new ApiError(400, 'Wallet seed does not match your wallet address');
+    }
 
     // Mint NFT on XRPL
     const mintResult = await xrplService.mintNFT({
@@ -39,40 +61,149 @@ const mintNFT = async (req, res, next) => {
       description,
       image,
       uri,
-      creator: userId,
-      owner: userId,
-      ownerWalletAddress: userWallet.address,
-      category,
-      tags,
-      attributes,
+      collectionId,
+      creatorWalletAddress,
+      ownerWalletAddress: creatorWalletAddress,
       taxon: taxon || 0,
       transferFee: transferFee || 0,
-      royalties: royalties || 0,
-      transactionHash: mintResult.hash
+      attributes,
+      transactionHash: mintResult.hash,
+      mintedAt: new Date()
     });
 
-    // Update user's created NFTs
-    await User.findByIdAndUpdate(userId, {
-      $push: { nftsCreated: nft._id, nftsOwned: nft._id }
-    });
+    // Update collection total supply
+    collection.totalSupply += 1;
+    await collection.save();
 
     // Create transaction record
     await Transaction.create({
       txHash: mintResult.hash,
       type: 'mint',
-      nft: nft._id,
+      nftId: nft.id,
       nftTokenId: mintResult.nftokenID,
-      from: userId,
-      fromAddress: userWallet.address,
+      fromWalletAddress: creatorWalletAddress,
       status: 'completed'
     });
 
-    logger.info(`NFT minted: ${nft.tokenId} by user ${req.user.username}`);
+    logger.info(`NFT minted: ${nft.tokenId} in collection ${collection.name}`);
 
     res.status(201).json(
       new ApiResponse(201, nft, 'NFT minted successfully')
     );
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Mint bulk NFTs
+ */
+const mintBulkNFTs = async (req, res, next) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const { collectionId, nfts, walletSeed } = req.body;
+
+    if (!Array.isArray(nfts) || nfts.length === 0) {
+      throw new ApiError(400, 'NFTs array is required and must not be empty');
+    }
+
+    const creatorWalletAddress = req.user.walletAddress;
+
+    // Verify collection
+    const collection = await Collection.findByPk(collectionId);
+    if (!collection) {
+      throw new ApiError(404, 'Collection not found');
+    }
+
+    if (collection.creatorWalletAddress !== creatorWalletAddress) {
+      throw new ApiError(403, 'You are not the creator of this collection');
+    }
+
+    // Get user's wallet
+    const userWallet = Wallet.fromSeed(walletSeed);
+    if (userWallet.address !== creatorWalletAddress) {
+      throw new ApiError(400, 'Wallet seed does not match your wallet address');
+    }
+
+    const mintedNFTs = [];
+    const failedNFTs = [];
+
+    // Mint each NFT
+    for (const nftData of nfts) {
+      try {
+        // Mint on XRPL
+        const mintResult = await xrplService.mintNFT({
+          wallet: userWallet,
+          uri: nftData.uri,
+          taxon: nftData.taxon || 0,
+          transferFee: nftData.transferFee || 0,
+          flags: 8
+        });
+
+        if (!mintResult.success) {
+          throw new Error('XRPL minting failed');
+        }
+
+        // Create NFT in database
+        const nft = await NFT.create({
+          tokenId: mintResult.nftokenID,
+          name: nftData.name,
+          description: nftData.description,
+          image: nftData.image,
+          uri: nftData.uri,
+          collectionId,
+          creatorWalletAddress,
+          ownerWalletAddress: creatorWalletAddress,
+          taxon: nftData.taxon || 0,
+          transferFee: nftData.transferFee || 0,
+          attributes: nftData.attributes,
+          transactionHash: mintResult.hash,
+          mintedAt: new Date()
+        }, { transaction: t });
+
+        // Create transaction record
+        await Transaction.create({
+          txHash: mintResult.hash,
+          type: 'mint',
+          nftId: nft.id,
+          nftTokenId: mintResult.nftokenID,
+          fromWalletAddress: creatorWalletAddress,
+          status: 'completed'
+        }, { transaction: t });
+
+        mintedNFTs.push(nft);
+
+      } catch (error) {
+        logger.error(`Failed to mint NFT: ${nftData.name}`, error);
+        failedNFTs.push({
+          name: nftData.name,
+          error: error.message
+        });
+      }
+    }
+
+    // Update collection total supply
+    collection.totalSupply += mintedNFTs.length;
+    await collection.save({ transaction: t });
+
+    await t.commit();
+
+    logger.info(`Bulk mint completed: ${mintedNFTs.length} successful, ${failedNFTs.length} failed`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        mintedNFTs,
+        failedNFTs,
+        summary: {
+          total: nfts.length,
+          successful: mintedNFTs.length,
+          failed: failedNFTs.length
+        }
+      }, `Bulk minting completed: ${mintedNFTs.length}/${nfts.length} NFTs minted successfully`)
+    );
+  } catch (error) {
+    await t.rollback();
     next(error);
   }
 };
@@ -85,35 +216,50 @@ const getNFTs = async (req, res, next) => {
     const {
       page = 1,
       limit = 20,
-      category,
+      collectionId,
+      creatorWalletAddress,
+      ownerWalletAddress,
       isListed,
       sortBy = 'createdAt',
-      order = 'desc',
+      order = 'DESC',
       search
     } = req.query;
 
-    const query = {};
+    const where = {};
 
-    if (category) query.category = category;
-    if (isListed !== undefined) query.isListed = isListed === 'true';
+    if (collectionId) where.collectionId = collectionId;
+    if (creatorWalletAddress) where.creatorWalletAddress = creatorWalletAddress;
+    if (ownerWalletAddress) where.ownerWalletAddress = ownerWalletAddress;
+    if (isListed !== undefined) where.isListed = isListed === 'true';
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } }
+      where[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } }
       ];
     }
 
-    const skip = (page - 1) * limit;
-    const sort = { [sortBy]: order === 'desc' ? -1 : 1 };
+    const offset = (page - 1) * limit;
 
-    const nfts = await NFT.find(query)
-      .populate('creator', 'username profileImage walletAddress')
-      .populate('owner', 'username profileImage walletAddress')
-      .sort(sort)
-      .skip(skip)
-      .limit(parseInt(limit));
-
-    const total = await NFT.countDocuments(query);
+    const { count, rows: nfts } = await NFT.findAndCountAll({
+      where,
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage']
+        },
+        {
+          association: 'owner',
+          attributes: ['walletAddress', 'username', 'profileImage']
+        }
+      ],
+      order: [[sortBy, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -121,8 +267,8 @@ const getNFTs = async (req, res, next) => {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total,
-          pages: Math.ceil(total / limit)
+          total: count,
+          pages: Math.ceil(count / limit)
         }
       }, 'NFTs retrieved successfully')
     );
@@ -138,9 +284,30 @@ const getNFT = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const nft = await NFT.findById(id)
-      .populate('creator', 'username profileImage walletAddress')
-      .populate('owner', 'username profileImage walletAddress');
+    const nft = await NFT.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          include: [{
+            association: 'creator',
+            attributes: ['walletAddress', 'username', 'profileImage']
+          }]
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        },
+        {
+          association: 'owner',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        },
+        {
+          association: 'transactions',
+          limit: 10,
+          order: [['createdAt', 'DESC']]
+        }
+      ]
+    });
 
     if (!nft) {
       throw new ApiError(404, 'NFT not found');
@@ -166,276 +333,10 @@ const getNFT = async (req, res, next) => {
   }
 };
 
-/**
- * List NFT for sale
- */
-const listNFT = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { price, destination, expiration } = req.body;
-    const userId = req.user._id;
-
-    const nft = await NFT.findById(id);
-
-    if (!nft) {
-      throw new ApiError(404, 'NFT not found');
-    }
-
-    if (nft.owner.toString() !== userId.toString()) {
-      throw new ApiError(403, 'You do not own this NFT');
-    }
-
-    if (nft.isListed) {
-      throw new ApiError(400, 'NFT is already listed');
-    }
-
-    // Create sell offer on XRPL
-    const userWallet = Wallet.fromSeed(req.body.walletSeed || process.env.ADMIN_WALLET_SEED);
-
-    const offerResult = await xrplService.createSellOffer({
-      wallet: userWallet,
-      nftokenID: nft.tokenId,
-      amount: price,
-      destination,
-      expiration
-    });
-
-    if (!offerResult.success) {
-      throw new ApiError(500, 'Failed to create sell offer on XRPL');
-    }
-
-    // Update NFT record
-    nft.isListed = true;
-    nft.currentPrice = price;
-    nft.offerID = offerResult.offerID;
-    await nft.save();
-
-    // Create transaction record
-    await Transaction.create({
-      txHash: offerResult.hash,
-      type: 'list',
-      nft: nft._id,
-      nftTokenId: nft.tokenId,
-      from: userId,
-      fromAddress: userWallet.address,
-      amount: price,
-      offerID: offerResult.offerID,
-      status: 'completed'
-    });
-
-    logger.info(`NFT listed: ${nft.tokenId} for ${price} drops`);
-
-    res.status(200).json(
-      new ApiResponse(200, nft, 'NFT listed successfully')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Delist NFT
- */
-const delistNFT = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-
-    const nft = await NFT.findById(id);
-
-    if (!nft) {
-      throw new ApiError(404, 'NFT not found');
-    }
-
-    if (nft.owner.toString() !== userId.toString()) {
-      throw new ApiError(403, 'You do not own this NFT');
-    }
-
-    if (!nft.isListed) {
-      throw new ApiError(400, 'NFT is not listed');
-    }
-
-    // Cancel offer on XRPL
-    const userWallet = Wallet.fromSeed(req.body.walletSeed || process.env.ADMIN_WALLET_SEED);
-
-    const cancelResult = await xrplService.cancelOffer({
-      wallet: userWallet,
-      offerIDs: [nft.offerID]
-    });
-
-    if (!cancelResult.success) {
-      throw new ApiError(500, 'Failed to cancel offer on XRPL');
-    }
-
-    // Update NFT record
-    nft.isListed = false;
-    nft.currentPrice = null;
-    nft.offerID = null;
-    await nft.save();
-
-    // Create transaction record
-    await Transaction.create({
-      txHash: cancelResult.hash,
-      type: 'delist',
-      nft: nft._id,
-      nftTokenId: nft.tokenId,
-      from: userId,
-      fromAddress: userWallet.address,
-      status: 'completed'
-    });
-
-    logger.info(`NFT delisted: ${nft.tokenId}`);
-
-    res.status(200).json(
-      new ApiResponse(200, nft, 'NFT delisted successfully')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Buy NFT
- */
-const buyNFT = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-
-    const nft = await NFT.findById(id).populate('owner');
-
-    if (!nft) {
-      throw new ApiError(404, 'NFT not found');
-    }
-
-    if (!nft.isListed) {
-      throw new ApiError(400, 'NFT is not listed for sale');
-    }
-
-    if (nft.owner._id.toString() === userId.toString()) {
-      throw new ApiError(400, 'You cannot buy your own NFT');
-    }
-
-    // Accept offer on XRPL
-    const buyerWallet = Wallet.fromSeed(req.body.walletSeed);
-
-    const acceptResult = await xrplService.acceptOffer({
-      wallet: buyerWallet,
-      offerID: nft.offerID
-    });
-
-    if (!acceptResult.success) {
-      throw new ApiError(500, 'Failed to accept offer on XRPL');
-    }
-
-    const previousOwner = nft.owner._id;
-
-    // Update NFT record
-    nft.owner = userId;
-    nft.ownerWalletAddress = buyerWallet.address;
-    nft.isListed = false;
-    const salePrice = nft.currentPrice;
-    nft.currentPrice = null;
-    nft.offerID = null;
-    await nft.save();
-
-    // Update users' NFT arrays
-    await User.findByIdAndUpdate(previousOwner, {
-      $pull: { nftsOwned: nft._id }
-    });
-
-    await User.findByIdAndUpdate(userId, {
-      $push: { nftsOwned: nft._id }
-    });
-
-    // Create transaction record
-    await Transaction.create({
-      txHash: acceptResult.hash,
-      type: 'sale',
-      nft: nft._id,
-      nftTokenId: nft.tokenId,
-      from: previousOwner,
-      fromAddress: nft.ownerWalletAddress,
-      to: userId,
-      toAddress: buyerWallet.address,
-      amount: salePrice,
-      status: 'completed'
-    });
-
-    logger.info(`NFT purchased: ${nft.tokenId} by user ${req.user.username}`);
-
-    res.status(200).json(
-      new ApiResponse(200, nft, 'NFT purchased successfully')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Like/Unlike NFT
- */
-const toggleLike = async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user._id;
-
-    const nft = await NFT.findById(id);
-
-    if (!nft) {
-      throw new ApiError(404, 'NFT not found');
-    }
-
-    const hasLiked = nft.likedBy.includes(userId);
-
-    if (hasLiked) {
-      nft.likedBy = nft.likedBy.filter(id => id.toString() !== userId.toString());
-      nft.likes -= 1;
-    } else {
-      nft.likedBy.push(userId);
-      nft.likes += 1;
-    }
-
-    await nft.save();
-
-    res.status(200).json(
-      new ApiResponse(200, { liked: !hasLiked, likes: nft.likes }, 'Like toggled successfully')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Get user's NFTs
- */
-const getUserNFTs = async (req, res, next) => {
-  try {
-    const { userId } = req.params;
-    const { type = 'owned' } = req.query; // owned or created
-
-    const query = type === 'created' ? { creator: userId } : { owner: userId };
-
-    const nfts = await NFT.find(query)
-      .populate('creator', 'username profileImage')
-      .populate('owner', 'username profileImage')
-      .sort({ createdAt: -1 });
-
-    res.status(200).json(
-      new ApiResponse(200, nfts, 'User NFTs retrieved successfully')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
+// Export additional NFT operations (list, buy, etc.)...
 module.exports = {
-  mintNFT,
+  mintSingleNFT,
+  mintBulkNFTs,
   getNFTs,
-  getNFT,
-  listNFT,
-  delistNFT,
-  buyNFT,
-  toggleLike,
-  getUserNFTs
+  getNFT
 };

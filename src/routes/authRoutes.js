@@ -1,23 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, logout } = require('../controllers/authController');
+const { getOrCreateUser, getMe } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
-const { validate, userValidation } = require('../utils/validators');
 
 /**
- * @route   POST /api/v1/auth/register
- * @desc    Register a new user
+ * @route   POST /api/v1/auth/wallet
+ * @desc    Get or create user by wallet address (XAMAN login)
  * @access  Public
  */
-router.post('/register', authLimiter, validate(userValidation.register), register);
-
-/**
- * @route   POST /api/v1/auth/login
- * @desc    Login user
- * @access  Public
- */
-router.post('/login', authLimiter, validate(userValidation.login), login);
+router.post('/wallet', authLimiter, getOrCreateUser);
 
 /**
  * @route   GET /api/v1/auth/me
@@ -25,12 +17,5 @@ router.post('/login', authLimiter, validate(userValidation.login), login);
  * @access  Private
  */
 router.get('/me', authenticate, getMe);
-
-/**
- * @route   POST /api/v1/auth/logout
- * @desc    Logout user
- * @access  Private
- */
-router.post('/logout', authenticate, logout);
 
 module.exports = router;

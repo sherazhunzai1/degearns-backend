@@ -1,95 +1,46 @@
-const User = require('../models/User');
+const { User } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
-const { generateToken, generateRefreshToken } = require('../middleware/auth');
+const { generateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
 /**
- * Register a new user
+ * Get or create user by wallet address (XAMAN wallet connection)
+ * This endpoint is called after user connects their XAMAN wallet
  */
-const register = async (req, res, next) => {
+const getOrCreateUser = async (req, res, next) => {
   try {
-    const { username, email, password, walletAddress } = req.body;
+    const { walletAddress } = req.body;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      $or: [{ email }, { username }, { walletAddress }]
-    });
-
-    if (existingUser) {
-      if (existingUser.email === email) {
-        throw new ApiError(400, 'Email already registered');
-      }
-      if (existingUser.username === username) {
-        throw new ApiError(400, 'Username already taken');
-      }
-      if (existingUser.walletAddress === walletAddress) {
-        throw new ApiError(400, 'Wallet address already registered');
-      }
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
     }
 
-    // Create new user
-    const user = await User.create({
-      username,
-      email,
-      password,
-      walletAddress
+    // Try to find existing user
+    let user = await User.findOne({
+      where: { walletAddress }
     });
 
-    // Generate tokens
-    const token = generateToken(user._id);
-    const refreshToken = generateRefreshToken(user._id);
-
-    logger.info(`New user registered: ${user.username}`);
-
-    res.status(201).json(
-      new ApiResponse(201, {
-        user,
-        token,
-        refreshToken
-      }, 'User registered successfully')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Login user
- */
-const login = async (req, res, next) => {
-  try {
-    const { email, password } = req.body;
-
-    // Find user and include password
-    const user = await User.findOne({ email }).select('+password');
-
+    // If user doesn't exist, create new user
     if (!user) {
-      throw new ApiError(401, 'Invalid credentials');
+      user = await User.create({
+        walletAddress,
+        role: 'user'
+      });
+
+      logger.info(`New user created with wallet: ${walletAddress}`);
     }
 
-    // Check password
-    const isPasswordValid = await user.comparePassword(password);
+    // Generate JWT token
+    const token = generateToken(user.id, user.walletAddress);
 
-    if (!isPasswordValid) {
-      throw new ApiError(401, 'Invalid credentials');
-    }
-
-    // Generate tokens
-    const token = generateToken(user._id);
-    const refreshToken = generateRefreshToken(user._id);
-
-    // Remove password from response
-    user.password = undefined;
-
-    logger.info(`User logged in: ${user.username}`);
+    logger.info(`User authenticated: ${walletAddress}`);
 
     res.status(200).json(
       new ApiResponse(200, {
         user,
-        token,
-        refreshToken
-      }, 'Login successful')
+        token
+      }, user.username ? 'Login successful' : 'User created successfully. Please complete your profile.')
     );
   } catch (error) {
     next(error);
@@ -97,13 +48,33 @@ const login = async (req, res, next) => {
 };
 
 /**
- * Get current user profile
+ * Get current authenticated user profile
  */
 const getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id)
-      .populate('nftsCreated', 'tokenId name image currentPrice isListed')
-      .populate('nftsOwned', 'tokenId name image currentPrice isListed');
+    const user = await User.findOne({
+      where: { id: req.user.id },
+      include: [
+        {
+          association: 'collections',
+          attributes: ['id', 'name', 'slug', 'image', 'totalSupply']
+        },
+        {
+          association: 'createdNFTs',
+          attributes: ['id', 'tokenId', 'name', 'image', 'currentPrice', 'isListed'],
+          limit: 10
+        },
+        {
+          association: 'ownedNFTs',
+          attributes: ['id', 'tokenId', 'name', 'image', 'currentPrice', 'isListed'],
+          limit: 10
+        }
+      ]
+    });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
 
     res.status(200).json(
       new ApiResponse(200, user, 'User profile retrieved successfully')
@@ -113,26 +84,7 @@ const getMe = async (req, res, next) => {
   }
 };
 
-/**
- * Logout user (client-side token removal)
- */
-const logout = async (req, res, next) => {
-  try {
-    // In a stateless JWT system, logout is handled client-side
-    // This endpoint can be used for logging or cleanup
-    logger.info(`User logged out: ${req.user.username}`);
-
-    res.status(200).json(
-      new ApiResponse(200, null, 'Logout successful')
-    );
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
-  register,
-  login,
-  getMe,
-  logout
+  getOrCreateUser,
+  getMe
 };

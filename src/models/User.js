@@ -1,106 +1,78 @@
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+module.exports = (sequelize, DataTypes) => {
+  const User = sequelize.define('User', {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+      allowNull: false
+    },
+    walletAddress: {
+      type: DataTypes.STRING(100),
+      unique: true,
+      allowNull: false,
+      comment: 'XRPL wallet address - primary identifier'
+    },
+    username: {
+      type: DataTypes.STRING(50),
+      unique: true,
+      allowNull: true,
+      comment: 'User display name'
+    },
+    email: {
+      type: DataTypes.STRING(100),
+      unique: true,
+      allowNull: true,
+      comment: 'User email (optional)'
+    },
+    bio: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'User biography'
+    },
+    profileImage: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Profile image URL'
+    },
+    coverImage: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Cover/banner image URL'
+    },
+    isVerified: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: 'Verified badge status'
+    },
+    role: {
+      type: DataTypes.ENUM('user', 'admin'),
+      defaultValue: 'user',
+      allowNull: false
+    },
+    socialLinks: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: 'JSON object for social media links',
+      get() {
+        const rawValue = this.getDataValue('socialLinks');
+        return rawValue ? JSON.parse(JSON.stringify(rawValue)) : null;
+      }
+    }
+  }, {
+    tableName: 'Users',
+    timestamps: true,
+    indexes: [
+      { unique: true, fields: ['walletAddress'] },
+      { fields: ['username'] },
+      { fields: ['email'] }
+    ]
+  });
 
-const userSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: [true, 'Username is required'],
-    unique: true,
-    trim: true,
-    minlength: [3, 'Username must be at least 3 characters'],
-    maxlength: [30, 'Username must not exceed 30 characters']
-  },
-  email: {
-    type: String,
-    required: [true, 'Email is required'],
-    unique: true,
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email']
-  },
-  password: {
-    type: String,
-    required: [true, 'Password is required'],
-    minlength: [8, 'Password must be at least 8 characters'],
-    select: false
-  },
-  walletAddress: {
-    type: String,
-    required: [true, 'Wallet address is required'],
-    unique: true,
-    trim: true
-  },
-  bio: {
-    type: String,
-    maxlength: [500, 'Bio must not exceed 500 characters']
-  },
-  profileImage: {
-    type: String
-  },
-  role: {
-    type: String,
-    enum: ['user', 'admin'],
-    default: 'user'
-  },
-  isVerified: {
-    type: Boolean,
-    default: false
-  },
-  nftsCreated: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'NFT'
-  }],
-  nftsOwned: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'NFT'
-  }],
-  favorites: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'NFT'
-  }],
-  following: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
-  followers: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }]
-}, {
-  timestamps: true
-});
+  // Instance methods
+  User.prototype.toJSON = function() {
+    const values = Object.assign({}, this.get());
+    return values;
+  };
 
-// Hash password before saving
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) {
-    return next();
-  }
-
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Compare password method
-userSchema.methods.comparePassword = async function(candidatePassword) {
-  try {
-    return await bcrypt.compare(candidatePassword, this.password);
-  } catch (error) {
-    throw error;
-  }
+  return User;
 };
-
-// Remove sensitive data when converting to JSON
-userSchema.methods.toJSON = function() {
-  const user = this.toObject();
-  delete user.password;
-  return user;
-};
-
-const User = mongoose.model('User', userSchema);
-
-module.exports = User;

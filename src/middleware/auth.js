@@ -1,7 +1,6 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { User } = require('../models');
 const ApiError = require('../utils/ApiError');
-const logger = require('../utils/logger');
 
 /**
  * Authenticate JWT token
@@ -20,8 +19,10 @@ const authenticate = async (req, res, next) => {
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Get user from database
-    const user = await User.findById(decoded.userId).select('-password');
+    // Get user from database by wallet address
+    const user = await User.findOne({
+      where: { walletAddress: decoded.walletAddress }
+    });
 
     if (!user) {
       throw new ApiError(401, 'User not found');
@@ -68,7 +69,9 @@ const optionalAuth = async (req, res, next) => {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.userId).select('-password');
+      const user = await User.findOne({
+        where: { walletAddress: decoded.walletAddress }
+      });
 
       if (user) {
         req.user = user;
@@ -85,22 +88,11 @@ const optionalAuth = async (req, res, next) => {
 /**
  * Generate JWT token
  */
-const generateToken = (userId) => {
+const generateToken = (userId, walletAddress) => {
   return jwt.sign(
-    { userId },
+    { userId, walletAddress },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-  );
-};
-
-/**
- * Generate refresh token
- */
-const generateRefreshToken = (userId) => {
-  return jwt.sign(
-    { userId },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d' }
   );
 };
 
@@ -108,6 +100,5 @@ module.exports = {
   authenticate,
   authorize,
   optionalAuth,
-  generateToken,
-  generateRefreshToken
+  generateToken
 };
