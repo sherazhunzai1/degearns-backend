@@ -21,13 +21,17 @@ const getOrCreateUser = async (req, res, next) => {
       where: { walletAddress }
     });
 
-    // If user doesn't exist, create new user
+    let isNewUser = false;
+
+    // If user doesn't exist, create new user with wallet address as default username
     if (!user) {
       user = await User.create({
         walletAddress,
+        username: walletAddress,  // Set wallet address as default username
         role: 'user'
       });
 
+      isNewUser = true;
       logger.info(`New user created with wallet: ${walletAddress}`);
     }
 
@@ -39,8 +43,9 @@ const getOrCreateUser = async (req, res, next) => {
     res.status(200).json(
       new ApiResponse(200, {
         user,
-        token
-      }, user.username ? 'Login successful' : 'User created successfully. Please complete your profile.')
+        token,
+        isNewUser
+      }, 'User authenticated successfully')
     );
   } catch (error) {
     next(error);
@@ -84,7 +89,50 @@ const getMe = async (req, res, next) => {
   }
 };
 
+/**
+ * Update user profile
+ */
+const updateProfile = async (req, res, next) => {
+  try {
+    const { username, email, bio, profileImage, coverImage, socialLinks } = req.body;
+    const userId = req.user.id;
+
+    const user = await User.findByPk(userId);
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    // Check if username is being changed and if it's already taken
+    if (username && username !== user.username) {
+      const existingUser = await User.findOne({ where: { username } });
+      if (existingUser) {
+        throw new ApiError(400, 'Username already taken');
+      }
+      user.username = username;
+    }
+
+    // Update other fields
+    if (email !== undefined) user.email = email;
+    if (bio !== undefined) user.bio = bio;
+    if (profileImage !== undefined) user.profileImage = profileImage;
+    if (coverImage !== undefined) user.coverImage = coverImage;
+    if (socialLinks !== undefined) user.socialLinks = socialLinks;
+
+    await user.save();
+
+    logger.info(`User profile updated: ${user.walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, user, 'Profile updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getOrCreateUser,
-  getMe
+  getMe,
+  updateProfile
 };

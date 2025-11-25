@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getOrCreateUser, getMe } = require('../controllers/authController');
+const { getOrCreateUser, getMe, updateProfile } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
 
@@ -17,5 +17,12 @@ router.post('/wallet', authLimiter, getOrCreateUser);
  * @access  Private
  */
 router.get('/me', authenticate, getMe);
+
+/**
+ * @route   PUT /api/v1/auth/profile
+ * @desc    Update user profile
+ * @access  Private
+ */
+router.put('/profile', authenticate, updateProfile);
 
 module.exports = router;
