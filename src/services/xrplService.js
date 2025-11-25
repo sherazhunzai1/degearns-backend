@@ -320,6 +320,71 @@ class XRPLService {
   }
 
   /**
+   * Get account transactions related to a specific NFT
+   */
+  async getNFTTransactionHistory(ownerAddress, nftokenID, limit = 20) {
+    try {
+      const client = xrplConfig.getClient();
+      const response = await client.request({
+        command: 'account_tx',
+        account: ownerAddress,
+        ledger_index_min: -1,
+        ledger_index_max: -1,
+        limit: limit
+      });
+
+      // Filter transactions related to the specific NFT
+      const nftTransactions = [];
+      if (response.result.transactions) {
+        for (const txData of response.result.transactions) {
+          const tx = txData.tx;
+          const meta = txData.meta;
+
+          // Check if transaction involves our NFT
+          if (tx.NFTokenID === nftokenID) {
+            nftTransactions.push({
+              hash: tx.hash,
+              type: tx.TransactionType,
+              date: tx.date,
+              account: tx.Account,
+              amount: tx.Amount,
+              destination: tx.Destination,
+              result: meta.TransactionResult,
+              ledgerIndex: txData.tx.ledger_index
+            });
+          }
+
+          // Also check for NFTokenAcceptOffer transactions
+          if (tx.TransactionType === 'NFTokenAcceptOffer' && meta.AffectedNodes) {
+            for (const node of meta.AffectedNodes) {
+              if (node.DeletedNode && node.DeletedNode.LedgerEntryType === 'NFTokenOffer') {
+                const offer = node.DeletedNode.FinalFields;
+                if (offer.NFTokenID === nftokenID) {
+                  nftTransactions.push({
+                    hash: tx.hash,
+                    type: 'NFTokenSale',
+                    date: tx.date,
+                    buyer: tx.Account,
+                    seller: offer.Owner,
+                    amount: offer.Amount,
+                    result: meta.TransactionResult,
+                    ledgerIndex: txData.tx.ledger_index
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return nftTransactions;
+    } catch (error) {
+      logger.error('Error getting NFT transaction history:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Extract NFTokenID from transaction metadata
    */
   extractNFTokenID(meta) {

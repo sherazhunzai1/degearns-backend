@@ -7,7 +7,6 @@ const { Op } = require('sequelize');
 
 /**
  * List/Register a collection on the marketplace
- * This stores the collection metadata in the database
  */
 const listCollection = async (req, res, next) => {
   try {
@@ -57,7 +56,8 @@ const listCollection = async (req, res, next) => {
 };
 
 /**
- * Get all collections with filters
+ * Get all collections with stats from database only
+ * For collections listing page
  */
 const getCollections = async (req, res, next) => {
   try {
@@ -89,7 +89,7 @@ const getCollections = async (req, res, next) => {
       include: [
         {
           association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage']
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
         }
       ],
       order: [[sortBy, order.toUpperCase()]],
@@ -97,9 +97,19 @@ const getCollections = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Return collections with stats from database
+    const collectionsWithStats = collections.map(collection => ({
+      ...collection.toJSON(),
+      stats: {
+        totalSupply: collection.totalSupply,
+        floorPrice: collection.floorPrice,
+        totalVolume: collection.totalVolume
+      }
+    }));
+
     res.status(200).json(
       new ApiResponse(200, {
-        collections,
+        collections: collectionsWithStats,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -114,7 +124,8 @@ const getCollections = async (req, res, next) => {
 };
 
 /**
- * Get single collection by ID or slug with NFTs from XRPL
+ * Get single collection with NFTs on sale from XRPL
+ * For collection detail page
  */
 const getCollection = async (req, res, next) => {
   try {
@@ -130,7 +141,7 @@ const getCollection = async (req, res, next) => {
       include: [
         {
           association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
         }
       ]
     });
@@ -139,37 +150,61 @@ const getCollection = async (req, res, next) => {
       throw new ApiError(404, 'Collection not found');
     }
 
-    // Fetch NFTs from XRPL using the creator's wallet address
-    let nfts = [];
+    // Fetch NFTs from XRPL and filter by taxon
+    let nftsOnSale = [];
     let totalSupply = 0;
+
     try {
       const accountNFTs = await xrplService.getAccountNFTs(collection.creatorWalletAddress);
 
-      // Filter NFTs by taxon to get only this collection's NFTs
-      nfts = accountNFTs.filter(nft => {
-        // Extract taxon from NFToken
-        // NFTokenID structure: https://xrpl.org/nftokenid.html
-        // We need to check if the taxon matches
+      // Filter NFTs by taxon
+      const collectionNFTs = accountNFTs.filter(nft => {
         const nftTaxon = nft.NFTokenTaxon || 0;
         return nftTaxon === collection.taxon;
       });
 
-      totalSupply = nfts.length;
+      totalSupply = collectionNFTs.length;
 
-      // Update collection stats
+      // Get only NFTs that have sell offers (on sale)
+      for (const nft of collectionNFTs) {
+        try {
+          const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+          if (sellOffers && sellOffers.length > 0) {
+            // NFT is on sale
+            nftsOnSale.push({
+              ...nft,
+              sellOffers: sellOffers,
+              lowestPrice: Math.min(...sellOffers.map(offer => parseInt(offer.Amount))).toString()
+            });
+          }
+        } catch (err) {
+          // Continue if we can't get offers for this NFT
+          logger.warn(`Could not fetch sell offers for NFT ${nft.NFTokenID}`);
+        }
+      }
+
+      // Update collection stats if changed
       if (collection.totalSupply !== totalSupply) {
         collection.totalSupply = totalSupply;
         await collection.save();
       }
+
     } catch (error) {
-      logger.warn(`Could not fetch NFTs from XRPL for collection ${collection.id}:`, error.message);
+      logger.error(`Error fetching NFTs from XRPL for collection ${collection.id}:`, error.message);
     }
 
     res.status(200).json(
       new ApiResponse(200, {
-        collection,
-        nfts,
-        totalSupply
+        collection: {
+          ...collection.toJSON(),
+          stats: {
+            totalSupply,
+            listedCount: nftsOnSale.length,
+            floorPrice: collection.floorPrice,
+            totalVolume: collection.totalVolume
+          }
+        },
+        nftsOnSale
       }, 'Collection retrieved successfully')
     );
   } catch (error) {
@@ -224,9 +259,10 @@ const updateCollection = async (req, res, next) => {
 };
 
 /**
- * Get collection statistics from XRPL
+ * Update collection statistics from XRPL
+ * This can be called periodically to sync stats
  */
-const getCollectionStats = async (req, res, next) => {
+const updateCollectionStats = async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -236,13 +272,11 @@ const getCollectionStats = async (req, res, next) => {
       throw new ApiError(404, 'Collection not found');
     }
 
-    // Fetch NFTs from XRPL to calculate stats
     let stats = {
-      totalSupply: collection.totalSupply,
+      totalSupply: 0,
       listedCount: 0,
       floorPrice: null,
-      totalVolume: collection.totalVolume,
-      owners: 0
+      totalVolume: collection.totalVolume
     };
 
     try {
@@ -254,7 +288,7 @@ const getCollectionStats = async (req, res, next) => {
 
       stats.totalSupply = collectionNFTs.length;
 
-      // Get sell offers for each NFT to calculate floor price
+      // Get sell offers to calculate floor price
       const prices = [];
       for (const nft of collectionNFTs) {
         try {
@@ -269,24 +303,28 @@ const getCollectionStats = async (req, res, next) => {
             });
           }
         } catch (err) {
-          // Continue if we can't get offers for this NFT
+          // Continue
         }
       }
 
       if (prices.length > 0) {
         stats.floorPrice = Math.min(...prices).toString();
-        collection.floorPrice = stats.floorPrice;
       }
 
+      // Update collection in database
       collection.totalSupply = stats.totalSupply;
+      collection.floorPrice = stats.floorPrice;
       await collection.save();
 
+      logger.info(`Collection stats updated: ${collection.name}`);
+
     } catch (error) {
-      logger.warn(`Could not fetch NFT stats from XRPL for collection ${collection.id}:`, error.message);
+      logger.error(`Error updating collection stats from XRPL:`, error.message);
+      throw new ApiError(500, 'Failed to fetch stats from XRPL');
     }
 
     res.status(200).json(
-      new ApiResponse(200, stats, 'Collection statistics retrieved successfully')
+      new ApiResponse(200, stats, 'Collection statistics updated successfully')
     );
   } catch (error) {
     next(error);
@@ -298,5 +336,5 @@ module.exports = {
   getCollections,
   getCollection,
   updateCollection,
-  getCollectionStats
+  updateCollectionStats
 };

@@ -5,7 +5,7 @@ const {
   getCollections,
   getCollection,
   updateCollection,
-  getCollectionStats
+  updateCollectionStats
 } = require('../controllers/collectionController');
 const { authenticate, optionalAuth } = require('../middleware/auth');
 
@@ -38,10 +38,10 @@ router.get('/:identifier', optionalAuth, getCollection);
 router.put('/:id', authenticate, updateCollection);
 
 /**
- * @route   GET /api/v1/collections/:id/stats
- * @desc    Get collection statistics
+ * @route   PUT /api/v1/collections/:id/stats
+ * @desc    Update collection statistics from XRPL
  * @access  Public
  */
-router.get('/:id/stats', getCollectionStats);
+router.put('/:id/stats', updateCollectionStats);
 
 module.exports = router;
