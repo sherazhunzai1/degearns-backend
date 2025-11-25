@@ -169,15 +169,17 @@ const getCollection = async (req, res, next) => {
       totalSupply = collectionNFTs.length;
 
       // Get only NFTs that have sell offers (on sale)
+      const nftsWithOffers = [];
       for (const nft of collectionNFTs) {
         try {
           const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
           if (sellOffers && sellOffers.length > 0) {
             // NFT is on sale
-            nftsOnSale.push({
-              ...nft,
-              sellOffers: sellOffers,
-              lowestPrice: Math.min(...sellOffers.map(offer => parseInt(offer.Amount))).toString()
+            nftsWithOffers.push({
+              nft,
+              sellOffers,
+              lowestPrice: Math.min(...sellOffers.map(offer => parseInt(offer.Amount))).toString(),
+              ownerAddress: sellOffers[0].owner // Get owner from sell offer
             });
           }
         } catch (err) {
@@ -185,6 +187,37 @@ const getCollection = async (req, res, next) => {
           logger.warn(`Could not fetch sell offers for NFT ${nft.NFTokenID}`);
         }
       }
+
+      // Fetch owner and issuer information for all NFTs
+      const ownerAddresses = [...new Set(nftsWithOffers.map(item => item.ownerAddress))];
+      const issuerAddresses = [...new Set(nftsWithOffers.map(item => item.nft.Issuer))];
+      const allAddresses = [...new Set([...ownerAddresses, ...issuerAddresses])];
+
+      const users = await User.findAll({
+        where: { walletAddress: allAddresses },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+
+      // Create a map for quick lookup
+      const userMap = {};
+      users.forEach(user => {
+        userMap[user.walletAddress] = {
+          walletAddress: user.walletAddress,
+          username: user.username,
+          profileImage: user.profileImage,
+          isVerified: user.isVerified
+        };
+      });
+
+      // Enrich NFTs with owner and issuer information
+      nftsOnSale = nftsWithOffers.map(item => ({
+        ...item.nft,
+        sellOffers: item.sellOffers,
+        lowestPrice: item.lowestPrice,
+        owner: item.ownerAddress,
+        ownerInfo: userMap[item.ownerAddress] || null,
+        issuerInfo: userMap[item.nft.Issuer] || null
+      }));
 
       // Update collection stats if changed
       if (collection.totalSupply !== totalSupply) {

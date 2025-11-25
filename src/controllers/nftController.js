@@ -1,4 +1,5 @@
 const xrplService = require('../services/xrplService');
+const { User } = require('../models');
 const logger = require('../utils/logger');
 
 /**
@@ -46,14 +47,26 @@ exports.getNFTDetail = async (req, res) => {
       });
     }
 
-    // Step 3: Get transaction history for this NFT
+    // Step 3: Get owner and issuer information from database
+    const [ownerUser, issuerUser] = await Promise.all([
+      User.findOne({
+        where: { walletAddress: ownerAddress },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
+      }),
+      User.findOne({
+        where: { walletAddress: nftData.Issuer },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      })
+    ]);
+
+    // Step 4: Get transaction history for this NFT
     const transactionHistory = await xrplService.getNFTTransactionHistory(
       ownerAddress,
       nftTokenId,
       50 // Get last 50 transactions
     );
 
-    // Step 4: Calculate stats from transaction history
+    // Step 5: Calculate stats from transaction history
     const sales = transactionHistory.filter(tx => tx.type === 'NFTokenSale');
     const totalVolume = sales.reduce((sum, sale) => {
       const amount = typeof sale.amount === 'string'
@@ -64,7 +77,7 @@ exports.getNFTDetail = async (req, res) => {
 
     const lastSale = sales.length > 0 ? sales[0] : null;
 
-    // Step 5: Format the response
+    // Step 6: Format the response
     const nftDetail = {
       nftTokenId: nftData.NFTokenID,
       uri: nftData.URI,
@@ -72,7 +85,20 @@ exports.getNFTDetail = async (req, res) => {
       flags: nftData.Flags,
       transferFee: nftData.TransferFee,
       issuer: nftData.Issuer,
+      issuerInfo: issuerUser ? {
+        walletAddress: issuerUser.walletAddress,
+        username: issuerUser.username,
+        profileImage: issuerUser.profileImage,
+        isVerified: issuerUser.isVerified
+      } : null,
       owner: ownerAddress,
+      ownerInfo: ownerUser ? {
+        walletAddress: ownerUser.walletAddress,
+        username: ownerUser.username,
+        profileImage: ownerUser.profileImage,
+        isVerified: ownerUser.isVerified,
+        bio: ownerUser.bio
+      } : null,
 
       // Sale information
       saleInfo: {
