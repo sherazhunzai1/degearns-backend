@@ -37,6 +37,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       comment: 'Wallet address of collection creator'
     },
+    taxon: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      unique: true,
+      comment: 'XRPL NFToken Taxon - unique identifier to query NFTs from XRPL'
+    },
     category: {
       type: DataTypes.ENUM('art', 'music', 'photography', 'sports', 'gaming', 'collectibles', 'other'),
       defaultValue: 'other',
@@ -96,6 +102,7 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: true,
     indexes: [
       { unique: true, fields: ['slug'] },
+      { unique: true, fields: ['taxon'] },
       { fields: ['creatorWalletAddress'] },
       { fields: ['category'] },
       { fields: ['createdAt'] }

@@ -62,17 +62,7 @@ const getMe = async (req, res, next) => {
       include: [
         {
           association: 'collections',
-          attributes: ['id', 'name', 'slug', 'image', 'totalSupply']
-        },
-        {
-          association: 'createdNFTs',
-          attributes: ['id', 'tokenId', 'name', 'image', 'currentPrice', 'isListed'],
-          limit: 10
-        },
-        {
-          association: 'ownedNFTs',
-          attributes: ['id', 'tokenId', 'name', 'image', 'currentPrice', 'isListed'],
-          limit: 10
+          attributes: ['id', 'name', 'slug', 'image', 'totalSupply', 'taxon']
         }
       ]
     });

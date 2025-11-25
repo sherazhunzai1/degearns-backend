@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-  createCollection,
+  listCollection,
   getCollections,
   getCollection,
   updateCollection,
@@ -10,11 +10,11 @@ const {
 const { authenticate, optionalAuth } = require('../middleware/auth');
 
 /**
- * @route   POST /api/v1/collections
- * @desc    Create a new collection
+ * @route   POST /api/v1/collections/list
+ * @desc    List/Register a collection on the marketplace
  * @access  Private
  */
-router.post('/', authenticate, createCollection);
+router.post('/list', authenticate, listCollection);
 
 /**
  * @route   GET /api/v1/collections

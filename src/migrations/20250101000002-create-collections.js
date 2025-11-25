@@ -46,6 +46,12 @@ module.exports = {
         onUpdate: 'CASCADE',
         onDelete: 'RESTRICT'
       },
+      taxon: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+        unique: true,
+        comment: 'XRPL NFToken Taxon - unique identifier to query NFTs from XRPL'
+      },
       category: {
         type: Sequelize.ENUM('art', 'music', 'photography', 'sports', 'gaming', 'collectibles', 'other'),
         defaultValue: 'other',
@@ -103,6 +109,11 @@ module.exports = {
     // Add indexes
     await queryInterface.addIndex('Collections', ['slug'], {
       name: 'idx_collections_slug',
+      unique: true
+    });
+
+    await queryInterface.addIndex('Collections', ['taxon'], {
+      name: 'idx_collections_taxon',
       unique: true
     });
 
