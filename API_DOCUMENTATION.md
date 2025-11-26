@@ -114,23 +114,31 @@ Get user profile by wallet address.
 
 **PUT** `/auth/profile`
 
-Update user profile information.
+Update user profile information including displayName, username, bio, email, and social media links.
 
 **Request Body:**
 ```json
 {
   "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
-  "username": "new_username",
-  "email": "newemail@example.com",
-  "bio": "Updated bio text",
-  "profileImage": "https://example.com/new-avatar.jpg",
-  "coverImage": "https://example.com/new-cover.jpg",
-  "socialLinks": {
-    "twitter": "https://twitter.com/newhandle",
-    "discord": "https://discord.gg/newserver"
-  }
+  "displayName": "John Doe",
+  "username": "johndoe",
+  "email": "john@example.com",
+  "bio": "NFT enthusiast and digital artist",
+  "facebook": "https://facebook.com/johndoe",
+  "twitter": "https://twitter.com/johndoe",
+  "instagram": "https://instagram.com/johndoe"
 }
 ```
+
+**Fields:**
+- `walletAddress` (required): User's wallet address for identification
+- `displayName` (optional): Display name (stored as username)
+- `username` (optional): Unique username
+- `email` (optional): User email address
+- `bio` (optional): User biography/description
+- `facebook` (optional): Facebook profile URL
+- `twitter` (optional): Twitter profile URL
+- `instagram` (optional): Instagram profile URL
 
 **Response (200):**
 ```json
@@ -141,15 +149,19 @@ Update user profile information.
   "data": {
     "id": "uuid",
     "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
-    "username": "new_username",
-    "email": "newemail@example.com",
-    "bio": "Updated bio text",
-    "profileImage": "https://example.com/new-avatar.jpg",
-    "coverImage": "https://example.com/new-cover.jpg",
+    "username": "johndoe",
+    "email": "john@example.com",
+    "bio": "NFT enthusiast and digital artist",
+    "profileImage": "https://example.com/avatar.jpg",
+    "coverImage": "https://example.com/cover.jpg",
+    "isVerified": false,
     "socialLinks": {
-      "twitter": "https://twitter.com/newhandle",
-      "discord": "https://discord.gg/newserver"
-    }
+      "facebook": "https://facebook.com/johndoe",
+      "twitter": "https://twitter.com/johndoe",
+      "instagram": "https://instagram.com/johndoe"
+    },
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
   }
 }
 ```
@@ -159,6 +171,92 @@ Update user profile information.
 {
   "success": false,
   "message": "Username already taken"
+}
+```
+
+**Error (400) - Email taken:**
+```json
+{
+  "success": false,
+  "message": "Email already taken"
+}
+```
+
+**Notes:**
+- All fields are optional except `walletAddress`
+- Social links are merged with existing ones (partial updates supported)
+- `displayName` and `username` are treated as the same field
+- Email and username must be unique across all users
+
+---
+
+### Update Profile Picture
+
+**PUT** `/auth/profile-picture`
+
+Update user's profile picture/avatar.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "profileImage": "https://example.com/new-avatar.jpg"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Profile picture updated successfully",
+  "data": {
+    "profileImage": "https://example.com/new-avatar.jpg"
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Profile image URL is required"
+}
+```
+
+---
+
+### Update Cover Picture
+
+**PUT** `/auth/cover-picture`
+
+Update user's cover/banner image.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "coverImage": "https://example.com/new-cover.jpg"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Cover picture updated successfully",
+  "data": {
+    "coverImage": "https://example.com/new-cover.jpg"
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Cover image URL is required"
 }
 ```
 
@@ -354,7 +452,7 @@ Collections store **metadata only** in the database. NFTs are fetched from the X
 
 **POST** `/collections/list`
 
-Register a new collection on the marketplace.
+Register a new collection on the marketplace. **This endpoint is idempotent** - calling it multiple times with the same `taxon` will return the existing collection instead of creating duplicates.
 
 **Request Body:**
 ```json
@@ -375,7 +473,7 @@ Register a new collection on the marketplace.
 }
 ```
 
-**Response (201):**
+**Response (201) - New collection created:**
 ```json
 {
   "statusCode": 201,
@@ -407,18 +505,51 @@ Register a new collection on the marketplace.
 }
 ```
 
-**Error (400) - Taxon already exists:**
+**Response (200) - Collection already exists:**
 ```json
 {
-  "success": false,
-  "message": "Collection with this taxon is already listed"
+  "statusCode": 200,
+  "success": true,
+  "message": "Collection already listed",
+  "data": {
+    "id": "uuid",
+    "name": "My Awesome Collection",
+    "slug": "my-awesome-collection",
+    "description": "A collection of unique digital artworks",
+    "image": "https://example.com/collection-image.jpg",
+    "bannerImage": "https://example.com/collection-banner.jpg",
+    "category": "art",
+    "royaltyPercentage": 5,
+    "taxon": 1234,
+    "creatorWalletAddress": "rCreatorWalletAddress",
+    "totalSupply": 100,
+    "floorPrice": "500000",
+    "totalVolume": "5000000",
+    "isVerified": false,
+    "socialLinks": {
+      "twitter": "https://twitter.com/collection",
+      "discord": "https://discord.gg/collection",
+      "website": "https://collection.com"
+    },
+    "creator": {
+      "walletAddress": "rCreatorWalletAddress",
+      "username": "creator_name",
+      "profileImage": "https://example.com/avatar.jpg",
+      "isVerified": true
+    },
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
+  }
 }
 ```
 
 **Notes:**
-- `taxon` is required and must be unique (used to identify NFTs on XRPL)
+- **Idempotent endpoint**: Safe to call multiple times with same `taxon`
+- If a collection with the same `taxon` exists, returns the existing collection (200) instead of creating a duplicate
+- `taxon` is required and identifies the collection on XRPL
 - Slug is auto-generated from the collection name
 - All fields except taxon, name, and creatorWalletAddress are optional
+- When returning existing collection, it includes creator info and current stats
 
 ---
 

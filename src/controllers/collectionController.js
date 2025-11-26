@@ -7,6 +7,8 @@ const { Op } = require('sequelize');
 
 /**
  * List/Register a collection on the marketplace
+ * If collection with same taxon already exists, returns the existing collection
+ * This makes the endpoint idempotent - safe to call multiple times
  */
 const listCollection = async (req, res, next) => {
   try {
@@ -20,21 +22,36 @@ const listCollection = async (req, res, next) => {
       throw new ApiError(400, 'Taxon is required to identify the collection on XRPL');
     }
 
-    // Check if taxon already exists
-    const existingCollection = await Collection.findOne({ where: { taxon } });
+    // Check if collection with this taxon already exists
+    const existingCollection = await Collection.findOne({
+      where: { taxon },
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
     if (existingCollection) {
-      throw new ApiError(400, 'Collection with this taxon is already listed');
+      logger.info(`Collection with taxon ${taxon} already listed, returning existing collection`);
+
+      // Return existing collection with 200 status
+      return res.status(200).json(
+        new ApiResponse(200, existingCollection, 'Collection already listed')
+      );
     }
 
     // Generate slug from name
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-    // Check if slug already exists
+    // Check if slug already exists (for new collections)
     const existingSlug = await Collection.findOne({ where: { slug } });
     if (existingSlug) {
       throw new ApiError(400, 'Collection with this name already exists');
     }
 
+    // Create new collection
     const collection = await Collection.create({
       name,
       slug,
