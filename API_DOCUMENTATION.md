@@ -354,7 +354,7 @@ Collections store **metadata only** in the database. NFTs are fetched from the X
 
 **POST** `/collections/list`
 
-Register a new collection on the marketplace.
+Register a new collection on the marketplace. **This endpoint is idempotent** - calling it multiple times with the same `taxon` will return the existing collection instead of creating duplicates.
 
 **Request Body:**
 ```json
@@ -375,7 +375,7 @@ Register a new collection on the marketplace.
 }
 ```
 
-**Response (201):**
+**Response (201) - New collection created:**
 ```json
 {
   "statusCode": 201,
@@ -407,18 +407,51 @@ Register a new collection on the marketplace.
 }
 ```
 
-**Error (400) - Taxon already exists:**
+**Response (200) - Collection already exists:**
 ```json
 {
-  "success": false,
-  "message": "Collection with this taxon is already listed"
+  "statusCode": 200,
+  "success": true,
+  "message": "Collection already listed",
+  "data": {
+    "id": "uuid",
+    "name": "My Awesome Collection",
+    "slug": "my-awesome-collection",
+    "description": "A collection of unique digital artworks",
+    "image": "https://example.com/collection-image.jpg",
+    "bannerImage": "https://example.com/collection-banner.jpg",
+    "category": "art",
+    "royaltyPercentage": 5,
+    "taxon": 1234,
+    "creatorWalletAddress": "rCreatorWalletAddress",
+    "totalSupply": 100,
+    "floorPrice": "500000",
+    "totalVolume": "5000000",
+    "isVerified": false,
+    "socialLinks": {
+      "twitter": "https://twitter.com/collection",
+      "discord": "https://discord.gg/collection",
+      "website": "https://collection.com"
+    },
+    "creator": {
+      "walletAddress": "rCreatorWalletAddress",
+      "username": "creator_name",
+      "profileImage": "https://example.com/avatar.jpg",
+      "isVerified": true
+    },
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
+  }
 }
 ```
 
 **Notes:**
-- `taxon` is required and must be unique (used to identify NFTs on XRPL)
+- **Idempotent endpoint**: Safe to call multiple times with same `taxon`
+- If a collection with the same `taxon` exists, returns the existing collection (200) instead of creating a duplicate
+- `taxon` is required and identifies the collection on XRPL
 - Slug is auto-generated from the collection name
 - All fields except taxon, name, and creatorWalletAddress are optional
+- When returning existing collection, it includes creator info and current stats
 
 ---
 
