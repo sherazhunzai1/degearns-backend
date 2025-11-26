@@ -5,8 +5,8 @@ class XRPLConfig {
   constructor() {
     this.client = null;
     this.adminWallet = null;
-    this.network = process.env.XRPL_NETWORK || 'testnet';
-    this.wssUrl = process.env.XRPL_WSS_URL || 'wss://s.altnet.rippletest.net:51233';
+    this.network = process.env.XRPL_NETWORK || 'mainnet';
+    this.wssUrl = process.env.XRPL_WSS_URL || 'wss://xrplcluster.com';
   }
 
   async connect() {
