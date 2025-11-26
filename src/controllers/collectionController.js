@@ -147,25 +147,19 @@ const getCollections = async (req, res, next) => {
 
 /**
  * Get single collection with NFTs from XRPL blockchain
- * identifier = taxon number
- * Optional query param: creatorWallet (required if collection not in DB)
+ * identifier = collection UUID (database ID)
+ * Fetches collection from DB, then gets all NFT data from XRPL
  */
 const getCollection = async (req, res, next) => {
   try {
-    const { identifier } = req.params; // Taxon number
-    const { creatorWallet } = req.query; // Optional creator wallet address
+    const { identifier } = req.params; // Collection UUID
 
-    const taxon = parseInt(identifier);
-    if (isNaN(taxon)) {
-      throw new ApiError(400, 'Invalid taxon number');
-    }
-
-    logger.info(`Fetching collection with taxon: ${taxon}`);
+    logger.info(`Fetching collection with ID: ${identifier}`);
     logger.info(`Using XRPL network: ${xrplConfig.getNetwork()}`);
 
-    // Try to find collection in database by taxon
+    // Find collection in database by UUID
     const dbCollection = await Collection.findOne({
-      where: { taxon },
+      where: { id: identifier },
       include: [
         {
           association: 'creator',
@@ -174,25 +168,22 @@ const getCollection = async (req, res, next) => {
       ]
     });
 
-    // Determine creator wallet address
-    let creatorWalletAddress;
-    if (dbCollection) {
-      creatorWalletAddress = dbCollection.creatorWalletAddress;
-      logger.info(`Collection found in database, creator: ${creatorWalletAddress}`);
-    } else if (creatorWallet) {
-      creatorWalletAddress = creatorWallet;
-      logger.info(`Collection not in database, using provided creator: ${creatorWalletAddress}`);
-    } else {
-      throw new ApiError(400, 'Collection not found in database. Please provide creatorWallet query parameter.');
+    if (!dbCollection) {
+      throw new ApiError(404, 'Collection not found');
     }
+
+    const taxon = dbCollection.taxon;
+    const creatorWalletAddress = dbCollection.creatorWalletAddress;
+
+    logger.info(`Collection found: ${dbCollection.name}, taxon: ${taxon}, creator: ${creatorWalletAddress}`);
 
     // Fetch NFTs from XRPL blockchain
     let nftsOnSale = [];
     let allNFTs = [];
     let totalSupply = 0;
-    let collectionTitle = dbCollection ? dbCollection.name : null;
-    let collectionImage = dbCollection ? dbCollection.image : null;
-    let collectionDescription = dbCollection ? dbCollection.description : null;
+    let collectionTitle = null;
+    let collectionImage = null;
+    let collectionDescription = null;
 
     try {
       const accountNFTs = await xrplService.getAccountNFTs(creatorWalletAddress);
@@ -207,43 +198,57 @@ const getCollection = async (req, res, next) => {
       totalSupply = collectionNFTs.length;
       logger.info(`Found ${totalSupply} NFTs with taxon ${taxon}`);
 
-      // If no collection metadata from DB, try to extract from first NFT
-      if (!collectionTitle || !collectionImage) {
-        if (collectionNFTs.length > 0) {
-          try {
-            const firstNFTMetadata = await xrplService.fetchNFTMetadata(collectionNFTs[0].URI);
-            if (firstNFTMetadata) {
-              // Extract collection name
-              if (!collectionTitle && firstNFTMetadata.collection) {
-                collectionTitle = typeof firstNFTMetadata.collection === 'string'
-                  ? firstNFTMetadata.collection
-                  : firstNFTMetadata.collection.name || firstNFTMetadata.collection.family || null;
-              }
-              if (!collectionTitle && firstNFTMetadata.name) {
-                collectionTitle = firstNFTMetadata.name;
-              }
+      // Extract collection metadata from XRPL NFT metadata (PRIMARY SOURCE)
+      if (collectionNFTs.length > 0) {
+        try {
+          const firstNFTMetadata = await xrplService.fetchNFTMetadata(collectionNFTs[0].URI);
+          if (firstNFTMetadata) {
+            logger.info(`Extracting collection metadata from XRPL NFT metadata`);
 
-              // Extract collection image
-              if (!collectionImage) {
-                let imageUrl = firstNFTMetadata.image || firstNFTMetadata.image_url || firstNFTMetadata.imageUrl;
-                if (imageUrl && imageUrl.startsWith('ipfs://')) {
-                  imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
-                }
-                collectionImage = imageUrl;
-              }
-
-              // Extract description
-              if (!collectionDescription && firstNFTMetadata.description) {
-                collectionDescription = firstNFTMetadata.description;
-              }
+            // Extract collection name from XRPL metadata
+            if (firstNFTMetadata.collection) {
+              collectionTitle = typeof firstNFTMetadata.collection === 'string'
+                ? firstNFTMetadata.collection
+                : firstNFTMetadata.collection.name || firstNFTMetadata.collection.family || null;
             }
-          } catch (err) {
-            logger.warn(`Could not fetch metadata for first NFT in collection`);
+            if (!collectionTitle && firstNFTMetadata.name) {
+              collectionTitle = firstNFTMetadata.name;
+            }
+
+            // Extract collection image from XRPL metadata
+            let imageUrl = firstNFTMetadata.image || firstNFTMetadata.image_url || firstNFTMetadata.imageUrl;
+            if (imageUrl && imageUrl.startsWith('ipfs://')) {
+              imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+            }
+            collectionImage = imageUrl;
+
+            // Extract description from XRPL metadata
+            if (firstNFTMetadata.description) {
+              collectionDescription = firstNFTMetadata.description;
+            }
+
+            logger.info(`XRPL metadata extracted - Title: ${collectionTitle}, Image: ${collectionImage ? 'Yes' : 'No'}, Description: ${collectionDescription ? 'Yes' : 'No'}`);
           }
+        } catch (err) {
+          logger.warn(`Could not fetch metadata from XRPL for collection taxon ${taxon}: ${err.message}`);
         }
       }
 
-      // Fallback title
+      // Fallback to database values if XRPL extraction failed
+      if (!collectionTitle && dbCollection) {
+        logger.info(`Using database fallback for collection title`);
+        collectionTitle = dbCollection.name;
+      }
+      if (!collectionImage && dbCollection) {
+        logger.info(`Using database fallback for collection image`);
+        collectionImage = dbCollection.image;
+      }
+      if (!collectionDescription && dbCollection) {
+        logger.info(`Using database fallback for collection description`);
+        collectionDescription = dbCollection.description;
+      }
+
+      // Final fallback title
       if (!collectionTitle) {
         collectionTitle = `Collection #${taxon}`;
       }
