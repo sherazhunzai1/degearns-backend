@@ -1,5 +1,6 @@
 const { Collection, User } = require('../models');
 const xrplService = require('../services/xrplService');
+const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -439,11 +440,15 @@ const getUserCollections = async (req, res, next) => {
     }
 
     logger.info(`Fetching collections for wallet: ${walletAddress}`);
+    logger.info(`Using XRPL network: ${xrplConfig.getNetwork()}`);
+    logger.info(`Using XRPL WebSocket: ${xrplConfig.wssUrl}`);
 
     // Get all NFTs owned by this wallet from XRPL
     const accountNFTs = await xrplService.getAccountNFTs(walletAddress);
+    logger.info(`Found ${accountNFTs?.length || 0} total NFTs for wallet ${walletAddress}`);
 
     if (!accountNFTs || accountNFTs.length === 0) {
+      logger.warn(`No NFTs found for wallet ${walletAddress} on ${xrplConfig.getNetwork()}`);
       return res.status(200).json(
         new ApiResponse(200, [], 'No collections found for this wallet')
       );
