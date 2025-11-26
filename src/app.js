@@ -7,7 +7,7 @@ require('express-async-errors');
 
 const routes = require('./routes');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
-const { apiLimiter } = require('./middleware/rateLimiter');
+// const { apiLimiter } = require('./middleware/rateLimiter'); // Rate limiting disabled
 const logger = require('./utils/logger');
 
 const app = express();
@@ -44,8 +44,8 @@ if (process.env.NODE_ENV === 'development') {
   }));
 }
 
-// Rate limiting
-app.use('/api', apiLimiter);
+// Rate limiting - DISABLED to allow unlimited requests
+// app.use('/api', apiLimiter);
 
 // API Routes
 app.use(`/api/${process.env.API_VERSION || 'v1'}`, routes);

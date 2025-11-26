@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { getOrCreateUser, getMe, updateProfile } = require('../controllers/authController');
-const { authLimiter } = require('../middleware/rateLimiter');
+// const { authLimiter } = require('../middleware/rateLimiter'); // Rate limiting disabled
 
 /**
  * @route   POST /api/v1/auth/wallet
  * @desc    Get or create user by wallet address (XAMAN login)
  * @access  Public
  */
-router.post('/wallet', authLimiter, getOrCreateUser);
+router.post('/wallet', getOrCreateUser);
 
 /**
  * @route   GET /api/v1/auth/me
