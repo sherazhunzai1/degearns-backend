@@ -773,15 +773,17 @@ All amounts are in **drops** (1 XRP = 1,000,000 drops)
 
 2. **No JWT Headers**: Remove `Authorization: Bearer` headers from API calls.
 
-3. **Real-time NFT Data**: NFT data is fetched from XRPL, so responses may be slightly slower but always up-to-date.
+3. **No Rate Limiting**: The API does not have any rate limiting. You can make unlimited requests without worrying about 429 errors.
 
-4. **Collection Taxon**: When creating collections, ensure you use a unique taxon number that matches your NFTs on XRPL.
+4. **Real-time NFT Data**: NFT data is fetched from XRPL, so responses may be slightly slower but always up-to-date.
 
-5. **Amounts in Drops**: All XRP amounts are in drops (divide by 1,000,000 to get XRP).
+5. **Collection Taxon**: When creating collections, ensure you use a unique taxon number that matches your NFTs on XRPL.
 
-6. **User Enrichment**: NFT and collection responses now include user profile data (username, avatar, verified status).
+6. **Amounts in Drops**: All XRP amounts are in drops (divide by 1,000,000 to get XRP).
 
-7. **Error Handling**: Always check the `success` field in responses. XRPL connection errors may occur.
+7. **User Enrichment**: NFT and collection responses now include user profile data (username, avatar, verified status).
+
+8. **Error Handling**: Always check the `success` field in responses. XRPL connection errors may occur.
 
 ---
 
