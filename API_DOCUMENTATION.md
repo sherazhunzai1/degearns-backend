@@ -652,12 +652,13 @@ Get all collections created by or owned by a specific wallet address. Fetches li
       "slug": "my-awesome-collection",
       "description": "A collection of unique digital artworks",
       "category": "art",
-      "isVerified": true
+      "isVerified": true,
+      "isRegistered": true
     },
     {
       "taxon": 5678,
       "title": "Collection #5678",
-      "image": null,
+      "image": "https://ipfs.io/ipfs/QmExample123",
       "floorPrice": "1000000",
       "items": 50,
       "listedCount": 10,
@@ -679,7 +680,8 @@ Get all collections created by or owned by a specific wallet address. Fetches li
       "slug": null,
       "description": null,
       "category": null,
-      "isVerified": false
+      "isVerified": false,
+      "isRegistered": false
     }
   ]
 }
@@ -698,7 +700,7 @@ Get all collections created by or owned by a specific wallet address. Fetches li
 **Field Descriptions:**
 - `taxon`: XRPL NFToken taxon identifier for the collection
 - `title`: Collection name from database, or `Collection #[taxon]` if not registered
-- `image`: Collection image URL from database
+- `image`: Collection image URL from database, or fetched from first NFT metadata if available
 - `floorPrice`: Lowest listed price in drops (from live XRPL data)
 - `items`: Total number of NFTs in this collection owned by the wallet
 - `listedCount`: Number of NFTs currently listed for sale
@@ -711,16 +713,24 @@ Get all collections created by or owned by a specific wallet address. Fetches li
 - `description`: Collection description (null if not registered)
 - `category`: Collection category (null if not registered)
 - `isVerified`: Whether collection is verified (false if not registered)
+- `isRegistered`: Boolean indicating if collection is registered in the database
 
 **Data Sources:**
 - **Live from XRPL Testnet**: items, floorPrice, listedCount, listedPercentage
 - **From Database**: title, image, volume, creator info, owner info, collection metadata
 - Collections are automatically grouped by taxon from owned NFTs
 
+**Filtering & Quality Control:**
+- Always includes all registered collections (in database)
+- For unregistered collections, applies quality filters:
+  - Must have at least 3 NFTs (filters out test/single NFTs)
+  - Must have at least one active listing or floor price
+  - Must have a collection image (from database or NFT metadata)
+- This ensures only meaningful collections with complete data are returned
+
 **Notes:**
-- Returns all collections where the wallet owns at least one NFT
-- Collections are sorted by number of items (largest first)
-- If a collection is not registered in the database, it still appears with basic data
+- Collections are sorted: registered first, then by number of items (largest first)
+- For unregistered collections, attempts to fetch image from first NFT metadata
 - Floor price is calculated from all current sell offers
 - Listed percentage shows what portion of owned NFTs are currently for sale
 
