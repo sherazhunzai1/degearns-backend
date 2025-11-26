@@ -430,6 +430,92 @@ class XRPLService {
     }
     return null;
   }
+
+  /**
+   * Convert hex-encoded URI to string
+   */
+  convertHexToString(hex) {
+    try {
+      if (!hex) return null;
+      // Remove '0x' prefix if present
+      const cleanHex = hex.startsWith('0x') ? hex.slice(2) : hex;
+      // Convert hex to string
+      let str = '';
+      for (let i = 0; i < cleanHex.length; i += 2) {
+        str += String.fromCharCode(parseInt(cleanHex.substr(i, 2), 16));
+      }
+      return str;
+    } catch (error) {
+      logger.error('Error converting hex to string:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch NFT metadata from URI
+   */
+  async fetchNFTMetadata(uri) {
+    try {
+      if (!uri) return null;
+
+      // Convert hex URI to string
+      const metadataUrl = this.convertHexToString(uri);
+      if (!metadataUrl) return null;
+
+      // Handle IPFS URLs
+      let fetchUrl = metadataUrl;
+      if (metadataUrl.startsWith('ipfs://')) {
+        fetchUrl = metadataUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+      }
+
+      // Fetch metadata with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
+      const response = await fetch(fetchUrl, {
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        logger.warn(`Failed to fetch metadata from ${fetchUrl}: ${response.status}`);
+        return null;
+      }
+
+      const metadata = await response.json();
+      return metadata;
+    } catch (error) {
+      logger.warn(`Error fetching NFT metadata:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get NFT image URL from metadata
+   */
+  async getNFTImage(uri) {
+    try {
+      const metadata = await this.fetchNFTMetadata(uri);
+      if (!metadata) return null;
+
+      // Try common image field names
+      let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+
+      // Handle IPFS image URLs
+      if (imageUrl && imageUrl.startsWith('ipfs://')) {
+        imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+      }
+
+      return imageUrl || null;
+    } catch (error) {
+      logger.warn('Error getting NFT image:', error.message);
+      return null;
+    }
+  }
 }
 
 module.exports = new XRPLService();

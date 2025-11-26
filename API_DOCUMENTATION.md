@@ -529,7 +529,7 @@ Get detailed collection information with NFTs currently on sale. Identifier can 
     "nftsOnSale": [
       {
         "NFTokenID": "00081388F0E4F3F8E8F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0",
-        "URI": "https://example.com/nft-metadata.json",
+        "URI": "68747470733A2F2F6578616D706C652E636F6D2F6E66742D6D657461646174612E6A736F6E",
         "NFTokenTaxon": 1234,
         "Flags": 8,
         "TransferFee": 5000,
@@ -556,6 +556,34 @@ Get detailed collection information with NFTs currently on sale. Identifier can 
           "username": "issuer_name",
           "profileImage": "https://example.com/issuer-avatar.jpg",
           "isVerified": true
+        },
+        "image": "https://example.com/nft-image.jpg",
+        "name": "Cool NFT #1",
+        "description": "A unique digital artwork",
+        "attributes": [
+          {
+            "trait_type": "Background",
+            "value": "Blue"
+          },
+          {
+            "trait_type": "Rarity",
+            "value": "Rare"
+          }
+        ],
+        "metadata": {
+          "name": "Cool NFT #1",
+          "description": "A unique digital artwork",
+          "image": "https://example.com/nft-image.jpg",
+          "attributes": [
+            {
+              "trait_type": "Background",
+              "value": "Blue"
+            },
+            {
+              "trait_type": "Rarity",
+              "value": "Rare"
+            }
+          ]
         }
       }
     ]
@@ -575,6 +603,10 @@ Get detailed collection information with NFTs currently on sale. Identifier can 
 - NFTs are fetched from XRPL in real-time and filtered by taxon
 - Only NFTs with active sell offers are included in `nftsOnSale`
 - Owner and issuer information is enriched from the database
+- **NFT metadata and images are automatically fetched** from the URI field
+- The `image` field contains the direct URL to the NFT image (IPFS URLs are converted to HTTP)
+- Full metadata is included in the `metadata` field, with commonly used fields extracted to top level (`name`, `description`, `attributes`)
+- URI field is hex-encoded; it's automatically decoded and fetched
 
 ---
 

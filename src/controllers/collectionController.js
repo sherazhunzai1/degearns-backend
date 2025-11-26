@@ -209,14 +209,53 @@ const getCollection = async (req, res, next) => {
         };
       });
 
-      // Enrich NFTs with owner and issuer information
-      nftsOnSale = nftsWithOffers.map(item => ({
+      // Fetch metadata and images for all NFTs
+      logger.info(`Fetching metadata for ${nftsWithOffers.length} NFTs...`);
+      const nftsWithMetadata = await Promise.all(
+        nftsWithOffers.map(async (item) => {
+          try {
+            // Fetch full metadata
+            const metadata = await xrplService.fetchNFTMetadata(item.nft.URI);
+
+            // Extract image URL
+            let imageUrl = null;
+            if (metadata) {
+              imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+              // Handle IPFS URLs
+              if (imageUrl && imageUrl.startsWith('ipfs://')) {
+                imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+              }
+            }
+
+            return {
+              ...item,
+              metadata,
+              image: imageUrl
+            };
+          } catch (error) {
+            logger.warn(`Error fetching metadata for NFT ${item.nft.NFTokenID}:`, error.message);
+            return {
+              ...item,
+              metadata: null,
+              image: null
+            };
+          }
+        })
+      );
+
+      // Enrich NFTs with owner, issuer information, and metadata
+      nftsOnSale = nftsWithMetadata.map(item => ({
         ...item.nft,
         sellOffers: item.sellOffers,
         lowestPrice: item.lowestPrice,
         owner: item.ownerAddress,
         ownerInfo: userMap[item.ownerAddress] || null,
-        issuerInfo: userMap[item.nft.Issuer] || null
+        issuerInfo: userMap[item.nft.Issuer] || null,
+        metadata: item.metadata,
+        image: item.image,
+        name: item.metadata?.name || null,
+        description: item.metadata?.description || null,
+        attributes: item.metadata?.attributes || null
       }));
 
       // Update collection stats if changed
