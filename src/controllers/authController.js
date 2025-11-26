@@ -87,10 +87,20 @@ const getMe = async (req, res, next) => {
 
 /**
  * Update user profile
+ * Supports updating: displayName, username, bio, email, and social links (facebook, twitter, instagram)
  */
 const updateProfile = async (req, res, next) => {
   try {
-    const { walletAddress, username, email, bio, profileImage, coverImage, socialLinks } = req.body;
+    const {
+      walletAddress,
+      displayName,
+      username,
+      email,
+      bio,
+      facebook,
+      twitter,
+      instagram
+    } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
@@ -102,21 +112,42 @@ const updateProfile = async (req, res, next) => {
       throw new ApiError(404, 'User not found');
     }
 
-    // Check if username is being changed and if it's already taken
-    if (username && username !== user.username) {
-      const existingUser = await User.findOne({ where: { username } });
+    // Handle username update (displayName is treated as username)
+    const newUsername = displayName || username;
+    if (newUsername && newUsername !== user.username) {
+      const existingUser = await User.findOne({ where: { username: newUsername } });
       if (existingUser) {
         throw new ApiError(400, 'Username already taken');
       }
-      user.username = username;
+      user.username = newUsername;
     }
 
-    // Update other fields
-    if (email !== undefined) user.email = email;
+    // Update basic fields
+    if (email !== undefined) {
+      // Check if email is being changed and if it's already taken
+      if (email && email !== user.email) {
+        const existingEmail = await User.findOne({ where: { email } });
+        if (existingEmail) {
+          throw new ApiError(400, 'Email already taken');
+        }
+      }
+      user.email = email;
+    }
+
     if (bio !== undefined) user.bio = bio;
-    if (profileImage !== undefined) user.profileImage = profileImage;
-    if (coverImage !== undefined) user.coverImage = coverImage;
-    if (socialLinks !== undefined) user.socialLinks = socialLinks;
+
+    // Handle social links - merge with existing
+    const currentSocialLinks = user.socialLinks || {};
+    const updatedSocialLinks = { ...currentSocialLinks };
+
+    if (facebook !== undefined) updatedSocialLinks.facebook = facebook;
+    if (twitter !== undefined) updatedSocialLinks.twitter = twitter;
+    if (instagram !== undefined) updatedSocialLinks.instagram = instagram;
+
+    // Only update if there are changes
+    if (facebook !== undefined || twitter !== undefined || instagram !== undefined) {
+      user.socialLinks = updatedSocialLinks;
+    }
 
     await user.save();
 
@@ -130,8 +161,78 @@ const updateProfile = async (req, res, next) => {
   }
 };
 
+/**
+ * Update user profile picture
+ */
+const updateProfilePicture = async (req, res, next) => {
+  try {
+    const { walletAddress, profileImage } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!profileImage) {
+      throw new ApiError(400, 'Profile image URL is required');
+    }
+
+    const user = await User.findOne({ where: { walletAddress } });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    user.profileImage = profileImage;
+    await user.save();
+
+    logger.info(`Profile picture updated for: ${user.walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, { profileImage: user.profileImage }, 'Profile picture updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update user cover picture
+ */
+const updateCoverPicture = async (req, res, next) => {
+  try {
+    const { walletAddress, coverImage } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!coverImage) {
+      throw new ApiError(400, 'Cover image URL is required');
+    }
+
+    const user = await User.findOne({ where: { walletAddress } });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    user.coverImage = coverImage;
+    await user.save();
+
+    logger.info(`Cover picture updated for: ${user.walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, { coverImage: user.coverImage }, 'Cover picture updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getOrCreateUser,
   getMe,
-  updateProfile
+  updateProfile,
+  updateProfilePicture,
+  updateCoverPicture
 };

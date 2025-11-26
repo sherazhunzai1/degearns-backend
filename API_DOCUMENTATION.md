@@ -114,23 +114,31 @@ Get user profile by wallet address.
 
 **PUT** `/auth/profile`
 
-Update user profile information.
+Update user profile information including displayName, username, bio, email, and social media links.
 
 **Request Body:**
 ```json
 {
   "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
-  "username": "new_username",
-  "email": "newemail@example.com",
-  "bio": "Updated bio text",
-  "profileImage": "https://example.com/new-avatar.jpg",
-  "coverImage": "https://example.com/new-cover.jpg",
-  "socialLinks": {
-    "twitter": "https://twitter.com/newhandle",
-    "discord": "https://discord.gg/newserver"
-  }
+  "displayName": "John Doe",
+  "username": "johndoe",
+  "email": "john@example.com",
+  "bio": "NFT enthusiast and digital artist",
+  "facebook": "https://facebook.com/johndoe",
+  "twitter": "https://twitter.com/johndoe",
+  "instagram": "https://instagram.com/johndoe"
 }
 ```
+
+**Fields:**
+- `walletAddress` (required): User's wallet address for identification
+- `displayName` (optional): Display name (stored as username)
+- `username` (optional): Unique username
+- `email` (optional): User email address
+- `bio` (optional): User biography/description
+- `facebook` (optional): Facebook profile URL
+- `twitter` (optional): Twitter profile URL
+- `instagram` (optional): Instagram profile URL
 
 **Response (200):**
 ```json
@@ -141,15 +149,19 @@ Update user profile information.
   "data": {
     "id": "uuid",
     "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
-    "username": "new_username",
-    "email": "newemail@example.com",
-    "bio": "Updated bio text",
-    "profileImage": "https://example.com/new-avatar.jpg",
-    "coverImage": "https://example.com/new-cover.jpg",
+    "username": "johndoe",
+    "email": "john@example.com",
+    "bio": "NFT enthusiast and digital artist",
+    "profileImage": "https://example.com/avatar.jpg",
+    "coverImage": "https://example.com/cover.jpg",
+    "isVerified": false,
     "socialLinks": {
-      "twitter": "https://twitter.com/newhandle",
-      "discord": "https://discord.gg/newserver"
-    }
+      "facebook": "https://facebook.com/johndoe",
+      "twitter": "https://twitter.com/johndoe",
+      "instagram": "https://instagram.com/johndoe"
+    },
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
   }
 }
 ```
@@ -159,6 +171,92 @@ Update user profile information.
 {
   "success": false,
   "message": "Username already taken"
+}
+```
+
+**Error (400) - Email taken:**
+```json
+{
+  "success": false,
+  "message": "Email already taken"
+}
+```
+
+**Notes:**
+- All fields are optional except `walletAddress`
+- Social links are merged with existing ones (partial updates supported)
+- `displayName` and `username` are treated as the same field
+- Email and username must be unique across all users
+
+---
+
+### Update Profile Picture
+
+**PUT** `/auth/profile-picture`
+
+Update user's profile picture/avatar.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "profileImage": "https://example.com/new-avatar.jpg"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Profile picture updated successfully",
+  "data": {
+    "profileImage": "https://example.com/new-avatar.jpg"
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Profile image URL is required"
+}
+```
+
+---
+
+### Update Cover Picture
+
+**PUT** `/auth/cover-picture`
+
+Update user's cover/banner image.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "coverImage": "https://example.com/new-cover.jpg"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Cover picture updated successfully",
+  "data": {
+    "coverImage": "https://example.com/new-cover.jpg"
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Cover image URL is required"
 }
 ```
 
