@@ -5,6 +5,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
+const crypto = require('crypto');
 
 /**
  * List/Register a collection on the marketplace
@@ -580,6 +581,7 @@ const getUserCollections = async (req, res, next) => {
 
         // Build collection object
         return {
+          id: dbCollection ? dbCollection.id : crypto.randomUUID(),
           taxon: taxonNum,
           title: collectionTitle,
           image: collectionImage,
