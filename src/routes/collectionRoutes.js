@@ -5,7 +5,8 @@ const {
   getCollections,
   getCollection,
   updateCollection,
-  updateCollectionStats
+  updateCollectionStats,
+  getUserCollections
 } = require('../controllers/collectionController');
 
 /**
@@ -21,6 +22,13 @@ router.post('/list', listCollection);
  * @access  Public
  */
 router.get('/', getCollections);
+
+/**
+ * @route   GET /api/v1/collections/wallet/:walletAddress
+ * @desc    Get collections created by or owned by wallet address
+ * @access  Public
+ */
+router.get('/wallet/:walletAddress', getUserCollections);
 
 /**
  * @route   GET /api/v1/collections/:identifier

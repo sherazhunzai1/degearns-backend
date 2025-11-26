@@ -426,10 +426,164 @@ const updateCollectionStats = async (req, res, next) => {
   }
 };
 
+/**
+ * Get collections created by or owned by a wallet address
+ * Fetches live data from XRPL and user info from database
+ */
+const getUserCollections = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    logger.info(`Fetching collections for wallet: ${walletAddress}`);
+
+    // Get all NFTs owned by this wallet from XRPL
+    const accountNFTs = await xrplService.getAccountNFTs(walletAddress);
+
+    if (!accountNFTs || accountNFTs.length === 0) {
+      return res.status(200).json(
+        new ApiResponse(200, [], 'No collections found for this wallet')
+      );
+    }
+
+    // Group NFTs by taxon (collection identifier)
+    const nftsByTaxon = {};
+    accountNFTs.forEach(nft => {
+      const taxon = nft.NFTokenTaxon || 0;
+      if (!nftsByTaxon[taxon]) {
+        nftsByTaxon[taxon] = [];
+      }
+      nftsByTaxon[taxon].push(nft);
+    });
+
+    // Get all collections from database that match these taxons
+    const taxons = Object.keys(nftsByTaxon).map(t => parseInt(t));
+    const dbCollections = await Collection.findAll({
+      where: {
+        taxon: taxons
+      },
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    // Create a map of taxon to collection
+    const collectionMap = {};
+    dbCollections.forEach(col => {
+      collectionMap[col.taxon] = col;
+    });
+
+    // Get all unique issuer addresses to fetch user info
+    const issuerAddresses = [...new Set(accountNFTs.map(nft => nft.Issuer))];
+    const users = await User.findAll({
+      where: { walletAddress: issuerAddresses },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user.walletAddress] = {
+        walletAddress: user.walletAddress,
+        username: user.username,
+        profileImage: user.profileImage,
+        isVerified: user.isVerified
+      };
+    });
+
+    // Build collection data for each taxon
+    const collections = await Promise.all(
+      Object.entries(nftsByTaxon).map(async ([taxon, nfts]) => {
+        const taxonNum = parseInt(taxon);
+        const dbCollection = collectionMap[taxonNum];
+
+        // Get first NFT to determine issuer
+        const firstNFT = nfts[0];
+        const issuer = firstNFT.Issuer;
+
+        // Calculate stats from XRPL
+        let listedCount = 0;
+        const prices = [];
+
+        // Check which NFTs are listed (have sell offers)
+        for (const nft of nfts) {
+          try {
+            const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+            if (sellOffers && sellOffers.length > 0) {
+              listedCount++;
+              sellOffers.forEach(offer => {
+                const amount = parseInt(offer.Amount);
+                if (!isNaN(amount) && amount > 0) {
+                  prices.push(amount);
+                }
+              });
+            }
+          } catch (err) {
+            // Continue if we can't get offers
+            logger.warn(`Could not fetch sell offers for NFT ${nft.NFTokenID}`);
+          }
+        }
+
+        const totalItems = nfts.length;
+        const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
+        const listedPercentage = totalItems > 0 ? ((listedCount / totalItems) * 100).toFixed(2) : '0';
+
+        // Build collection object
+        return {
+          taxon: taxonNum,
+          title: dbCollection ? dbCollection.name : `Collection #${taxonNum}`,
+          image: dbCollection ? dbCollection.image : null,
+          floorPrice: floorPrice,
+          items: totalItems,
+          listedCount: listedCount,
+          listedPercentage: listedPercentage,
+          volume: dbCollection ? dbCollection.totalVolume : '0',
+          creator: dbCollection ? dbCollection.creator : (userMap[issuer] || {
+            walletAddress: issuer,
+            username: issuer,
+            profileImage: null,
+            isVerified: false
+          }),
+          owner: userMap[walletAddress] || {
+            walletAddress: walletAddress,
+            username: walletAddress,
+            profileImage: null,
+            isVerified: false
+          },
+          // Include DB collection data if available
+          collectionId: dbCollection ? dbCollection.id : null,
+          slug: dbCollection ? dbCollection.slug : null,
+          description: dbCollection ? dbCollection.description : null,
+          category: dbCollection ? dbCollection.category : null,
+          isVerified: dbCollection ? dbCollection.isVerified : false
+        };
+      })
+    );
+
+    // Sort by total items (largest collections first)
+    collections.sort((a, b) => b.items - a.items);
+
+    logger.info(`Found ${collections.length} collections for wallet: ${walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, collections, 'Collections retrieved successfully')
+    );
+  } catch (error) {
+    logger.error('Error fetching user collections:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
   getCollection,
   updateCollection,
-  updateCollectionStats
+  updateCollectionStats,
+  getUserCollections
 };
