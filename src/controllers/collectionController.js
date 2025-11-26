@@ -533,11 +533,28 @@ const getUserCollections = async (req, res, next) => {
         const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
         const listedPercentage = totalItems > 0 ? ((listedCount / totalItems) * 100).toFixed(2) : '0';
 
+        // Try to get collection image from first NFT metadata if not in database
+        let collectionImage = dbCollection ? dbCollection.image : null;
+        if (!collectionImage && nfts.length > 0) {
+          try {
+            const metadata = await xrplService.fetchNFTMetadata(firstNFT.URI);
+            if (metadata && (metadata.image || metadata.image_url || metadata.imageUrl)) {
+              let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+              if (imageUrl.startsWith('ipfs://')) {
+                imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+              }
+              collectionImage = imageUrl;
+            }
+          } catch (err) {
+            logger.warn(`Could not fetch metadata for collection taxon ${taxonNum}`);
+          }
+        }
+
         // Build collection object
         return {
           taxon: taxonNum,
           title: dbCollection ? dbCollection.name : `Collection #${taxonNum}`,
-          image: dbCollection ? dbCollection.image : null,
+          image: collectionImage,
           floorPrice: floorPrice,
           items: totalItems,
           listedCount: listedCount,
@@ -560,18 +577,52 @@ const getUserCollections = async (req, res, next) => {
           slug: dbCollection ? dbCollection.slug : null,
           description: dbCollection ? dbCollection.description : null,
           category: dbCollection ? dbCollection.category : null,
-          isVerified: dbCollection ? dbCollection.isVerified : false
+          isVerified: dbCollection ? dbCollection.isVerified : false,
+          isRegistered: !!dbCollection
         };
       })
     );
 
-    // Sort by total items (largest collections first)
-    collections.sort((a, b) => b.items - a.items);
+    // Filter out incomplete collections
+    const filteredCollections = collections.filter(collection => {
+      // Always include registered collections (in database)
+      if (collection.isRegistered) {
+        return true;
+      }
 
-    logger.info(`Found ${collections.length} collections for wallet: ${walletAddress}`);
+      // For unregistered collections, apply stricter filters:
+      // 1. Must have at least 3 NFTs (filter out test/single NFTs)
+      if (collection.items < 3) {
+        logger.info(`Filtering out small unregistered collection taxon ${collection.taxon} with only ${collection.items} items`);
+        return false;
+      }
+
+      // 2. Must have at least some listed items or floor price
+      if (collection.listedCount === 0 && !collection.floorPrice) {
+        logger.info(`Filtering out unregistered collection taxon ${collection.taxon} with no listings`);
+        return false;
+      }
+
+      // 3. Prefer collections with images
+      if (!collection.image) {
+        logger.info(`Filtering out unregistered collection taxon ${collection.taxon} with no image`);
+        return false;
+      }
+
+      return true;
+    });
+
+    // Sort: registered collections first, then by total items (largest first)
+    filteredCollections.sort((a, b) => {
+      if (a.isRegistered && !b.isRegistered) return -1;
+      if (!a.isRegistered && b.isRegistered) return 1;
+      return b.items - a.items;
+    });
+
+    logger.info(`Found ${collections.length} collections for wallet: ${walletAddress}, ${filteredCollections.length} after filtering`);
 
     res.status(200).json(
-      new ApiResponse(200, collections, 'Collections retrieved successfully')
+      new ApiResponse(200, filteredCollections, 'Collections retrieved successfully')
     );
   } catch (error) {
     logger.error('Error fetching user collections:', error);
