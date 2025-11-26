@@ -7,19 +7,18 @@ http://localhost:5000/api/v1
 
 ## XRPL Integration
 
-This API uses **XRPL Meta** for enhanced XRP Ledger data fetching:
+This API connects directly to the **XRP Ledger Mainnet** using xrpl.js:
 
-- **Primary Data Source**: XRPL Meta API (sx.xrplmeta.org)
-- **Fallback**: Direct XRPL client (xrpl.js)
-- **Benefits**:
-  - Faster response times with caching
-  - Better metadata support for NFTs
-  - Enhanced historical data tracking
-  - More accurate collection and NFT information
+- **Network**: XRP Ledger Mainnet
+- **WebSocket**: wss://xrplcluster.com
+- **Library**: xrpl.js (official XRP Ledger JavaScript library)
+- **Features**:
+  - Real-time NFT data from mainnet
+  - Direct ledger queries for accuracy
+  - Account information and balances
+  - NFT minting, trading, and history
 
-All NFT data, account information, and transaction history is fetched through XRPL Meta API with automatic fallback to ensure reliability.
-
-**Network**: XRPL Testnet
+All operations interact with the live XRP Ledger mainnet for production-ready NFT marketplace functionality.
 
 ---
 
