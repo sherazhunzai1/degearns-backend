@@ -611,6 +611,126 @@ Get all collections with filtering, pagination, and sorting.
 
 ---
 
+### Get User Collections
+
+**GET** `/collections/wallet/:walletAddress`
+
+Get all collections created by or owned by a specific wallet address. Fetches live data from XRPL testnet and enriches with user information from the database.
+
+**Parameters:**
+- `walletAddress` (path parameter): The XRPL wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Collections retrieved successfully",
+  "data": [
+    {
+      "taxon": 1234,
+      "title": "My Awesome Collection",
+      "image": "https://example.com/collection-image.jpg",
+      "floorPrice": "500000",
+      "items": 100,
+      "listedCount": 25,
+      "listedPercentage": "25.00",
+      "volume": "50000000",
+      "creator": {
+        "walletAddress": "rCreatorWalletAddress",
+        "username": "creator_name",
+        "profileImage": "https://example.com/creator-avatar.jpg",
+        "isVerified": true
+      },
+      "owner": {
+        "walletAddress": "rOwnerWalletAddress",
+        "username": "owner_name",
+        "profileImage": "https://example.com/owner-avatar.jpg",
+        "isVerified": false
+      },
+      "collectionId": "uuid",
+      "slug": "my-awesome-collection",
+      "description": "A collection of unique digital artworks",
+      "category": "art",
+      "isVerified": true
+    },
+    {
+      "taxon": 5678,
+      "title": "Collection #5678",
+      "image": null,
+      "floorPrice": "1000000",
+      "items": 50,
+      "listedCount": 10,
+      "listedPercentage": "20.00",
+      "volume": "0",
+      "creator": {
+        "walletAddress": "rIssuerAddress",
+        "username": "rIssuerAddress",
+        "profileImage": null,
+        "isVerified": false
+      },
+      "owner": {
+        "walletAddress": "rOwnerWalletAddress",
+        "username": "owner_name",
+        "profileImage": "https://example.com/owner-avatar.jpg",
+        "isVerified": false
+      },
+      "collectionId": null,
+      "slug": null,
+      "description": null,
+      "category": null,
+      "isVerified": false
+    }
+  ]
+}
+```
+
+**Response (200) - No collections:**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "No collections found for this wallet",
+  "data": []
+}
+```
+
+**Field Descriptions:**
+- `taxon`: XRPL NFToken taxon identifier for the collection
+- `title`: Collection name from database, or `Collection #[taxon]` if not registered
+- `image`: Collection image URL from database
+- `floorPrice`: Lowest listed price in drops (from live XRPL data)
+- `items`: Total number of NFTs in this collection owned by the wallet
+- `listedCount`: Number of NFTs currently listed for sale
+- `listedPercentage`: Percentage of NFTs listed (listedCount / items * 100)
+- `volume`: Total trading volume from database
+- `creator`: Creator information from database (based on NFT issuer)
+- `owner`: Owner information from database (the wallet address provided)
+- `collectionId`: Database collection ID (null if not registered)
+- `slug`: Collection slug (null if not registered)
+- `description`: Collection description (null if not registered)
+- `category`: Collection category (null if not registered)
+- `isVerified`: Whether collection is verified (false if not registered)
+
+**Data Sources:**
+- **Live from XRPL Testnet**: items, floorPrice, listedCount, listedPercentage
+- **From Database**: title, image, volume, creator info, owner info, collection metadata
+- Collections are automatically grouped by taxon from owned NFTs
+
+**Notes:**
+- Returns all collections where the wallet owns at least one NFT
+- Collections are sorted by number of items (largest first)
+- If a collection is not registered in the database, it still appears with basic data
+- Floor price is calculated from all current sell offers
+- Listed percentage shows what portion of owned NFTs are currently for sale
+
+**Use Cases:**
+- Display user's collection portfolio
+- Show collections on user profile page
+- Track collection ownership statistics
+
+---
+
 ### Get Single Collection
 
 **GET** `/collections/:identifier`
