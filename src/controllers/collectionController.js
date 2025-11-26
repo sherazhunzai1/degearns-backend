@@ -595,20 +595,9 @@ const getUserCollections = async (req, res, next) => {
         return true;
       }
 
-      // For unregistered collections, apply stricter filters:
-      // 1. Must have at least 3 NFTs (filter out test/single NFTs)
-      if (collection.items < 3) {
-        logger.info(`Filtering out small unregistered collection taxon ${collection.taxon} with only ${collection.items} items`);
-        return false;
-      }
-
-      // 2. Must have at least some listed items or floor price
-      if (collection.listedCount === 0 && !collection.floorPrice) {
-        logger.info(`Filtering out unregistered collection taxon ${collection.taxon} with no listings`);
-        return false;
-      }
-
-      // 3. Prefer collections with images
+      // For unregistered collections, only filter out if no image available
+      // Removed: minimum NFT count requirement (now shows all collections)
+      // Removed: listing requirement (shows collections even without active sales)
       if (!collection.image) {
         logger.info(`Filtering out unregistered collection taxon ${collection.taxon} with no image`);
         return false;
