@@ -5,6 +5,24 @@
 http://localhost:5000/api/v1
 ```
 
+## XRPL Integration
+
+This API uses **XRPL Meta** for enhanced XRP Ledger data fetching:
+
+- **Primary Data Source**: XRPL Meta API (sx.xrplmeta.org)
+- **Fallback**: Direct XRPL client (xrpl.js)
+- **Benefits**:
+  - Faster response times with caching
+  - Better metadata support for NFTs
+  - Enhanced historical data tracking
+  - More accurate collection and NFT information
+
+All NFT data, account information, and transaction history is fetched through XRPL Meta API with automatic fallback to ensure reliability.
+
+**Network**: XRPL Testnet
+
+---
+
 ## Authentication
 
 **Important Changes:**

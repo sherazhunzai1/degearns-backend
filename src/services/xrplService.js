@@ -9,19 +9,87 @@ const {
 const xrplConfig = require('../config/xrpl');
 const logger = require('../utils/logger');
 
+// XRPL Meta API endpoints - more efficient and accurate data fetching
+const XRPL_META_ENDPOINTS = {
+  mainnet: 'https://s1.xrplmeta.org',
+  testnet: 'https://sx.xrplmeta.org', // NFT support endpoint
+  fullHistory: 'https://s2.xrplmeta.org'
+};
+
 class XRPLService {
+  constructor() {
+    // Use XRPL Meta endpoint based on network (testnet for now)
+    this.xrplMetaEndpoint = XRPL_META_ENDPOINTS.testnet;
+  }
+
   /**
-   * Get account information
+   * Make a request to XRPL Meta API
+   * XRPL Meta provides faster, cached responses with better metadata support
+   */
+  async requestXRPLMeta(method, params = {}) {
+    try {
+      const payload = {
+        method: method,
+        params: [params]
+      };
+
+      logger.info(`XRPL Meta request: ${method}`, params);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      const response = await fetch(this.xrplMetaEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`XRPL Meta API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(`XRPL Meta API error: ${data.error.message || data.error}`);
+      }
+
+      return data.result;
+    } catch (error) {
+      logger.error(`Error calling XRPL Meta API (${method}):`, error.message);
+      // Fallback to direct xrpl.js client if XRPL Meta fails
+      logger.warn('Falling back to direct XRPL client...');
+      throw error;
+    }
+  }
+  /**
+   * Get account information using XRPL Meta API
    */
   async getAccountInfo(address) {
     try {
-      const client = xrplConfig.getClient();
-      const response = await client.request({
-        command: 'account_info',
-        account: address,
-        ledger_index: 'validated'
-      });
-      return response.result;
+      // Try XRPL Meta API first
+      try {
+        const result = await this.requestXRPLMeta('account_info', {
+          account: address,
+          ledger_index: 'validated'
+        });
+        return result;
+      } catch (metaError) {
+        // Fallback to direct xrpl.js client
+        const client = xrplConfig.getClient();
+        const response = await client.request({
+          command: 'account_info',
+          account: address,
+          ledger_index: 'validated'
+        });
+        return response.result;
+      }
     } catch (error) {
       logger.error('Error getting account info:', error);
       throw error;
@@ -29,17 +97,30 @@ class XRPLService {
   }
 
   /**
-   * Get account NFTs
+   * Get account NFTs using XRPL Meta API
+   * XRPL Meta provides enhanced NFT data with better metadata and caching
    */
   async getAccountNFTs(address) {
     try {
-      const client = xrplConfig.getClient();
-      const response = await client.request({
-        command: 'account_nfts',
-        account: address,
-        ledger_index: 'validated'
-      });
-      return response.result.account_nfts || [];
+      // Try XRPL Meta API first for better performance and metadata
+      try {
+        const result = await this.requestXRPLMeta('account_nfts', {
+          account: address,
+          ledger_index: 'validated'
+        });
+        logger.info(`Fetched ${result.account_nfts?.length || 0} NFTs from XRPL Meta for ${address}`);
+        return result.account_nfts || [];
+      } catch (metaError) {
+        // Fallback to direct xrpl.js client
+        logger.warn('XRPL Meta failed, using direct XRPL client');
+        const client = xrplConfig.getClient();
+        const response = await client.request({
+          command: 'account_nfts',
+          account: address,
+          ledger_index: 'validated'
+        });
+        return response.result.account_nfts || [];
+      }
     } catch (error) {
       logger.error('Error getting account NFTs:', error);
       throw error;
@@ -263,18 +344,31 @@ class XRPLService {
   }
 
   /**
-   * Get NFT sell offers
+   * Get NFT sell offers using XRPL Meta API
+   * XRPL Meta provides faster access to offer data
    */
   async getNFTSellOffers(nftokenID) {
     try {
-      const client = xrplConfig.getClient();
-      const response = await client.request({
-        command: 'nft_sell_offers',
-        nft_id: nftokenID
-      });
-      return response.result.offers || [];
+      // Try XRPL Meta API first
+      try {
+        const result = await this.requestXRPLMeta('nft_sell_offers', {
+          nft_id: nftokenID
+        });
+        return result.offers || [];
+      } catch (metaError) {
+        // Fallback to direct xrpl.js client
+        const client = xrplConfig.getClient();
+        const response = await client.request({
+          command: 'nft_sell_offers',
+          nft_id: nftokenID
+        });
+        return response.result.offers || [];
+      }
     } catch (error) {
       if (error.data && error.data.error === 'objectNotFound') {
+        return [];
+      }
+      if (error.message && error.message.includes('objectNotFound')) {
         return [];
       }
       logger.error('Error getting NFT sell offers:', error);
@@ -283,18 +377,31 @@ class XRPLService {
   }
 
   /**
-   * Get NFT buy offers
+   * Get NFT buy offers using XRPL Meta API
+   * XRPL Meta provides faster access to offer data
    */
   async getNFTBuyOffers(nftokenID) {
     try {
-      const client = xrplConfig.getClient();
-      const response = await client.request({
-        command: 'nft_buy_offers',
-        nft_id: nftokenID
-      });
-      return response.result.offers || [];
+      // Try XRPL Meta API first
+      try {
+        const result = await this.requestXRPLMeta('nft_buy_offers', {
+          nft_id: nftokenID
+        });
+        return result.offers || [];
+      } catch (metaError) {
+        // Fallback to direct xrpl.js client
+        const client = xrplConfig.getClient();
+        const response = await client.request({
+          command: 'nft_buy_offers',
+          nft_id: nftokenID
+        });
+        return response.result.offers || [];
+      }
     } catch (error) {
       if (error.data && error.data.error === 'objectNotFound') {
+        return [];
+      }
+      if (error.message && error.message.includes('objectNotFound')) {
         return [];
       }
       logger.error('Error getting NFT buy offers:', error);
@@ -303,16 +410,25 @@ class XRPLService {
   }
 
   /**
-   * Get transaction details
+   * Get transaction details using XRPL Meta API
    */
   async getTransaction(txHash) {
     try {
-      const client = xrplConfig.getClient();
-      const response = await client.request({
-        command: 'tx',
-        transaction: txHash
-      });
-      return response.result;
+      // Try XRPL Meta API first
+      try {
+        const result = await this.requestXRPLMeta('tx', {
+          transaction: txHash
+        });
+        return result;
+      } catch (metaError) {
+        // Fallback to direct xrpl.js client
+        const client = xrplConfig.getClient();
+        const response = await client.request({
+          command: 'tx',
+          transaction: txHash
+        });
+        return response.result;
+      }
     } catch (error) {
       logger.error('Error getting transaction:', error);
       throw error;
@@ -320,57 +436,70 @@ class XRPLService {
   }
 
   /**
-   * Get account transactions related to a specific NFT
+   * Get account transactions related to a specific NFT using XRPL Meta API
+   * XRPL Meta provides better historical data with full history support
    */
   async getNFTTransactionHistory(ownerAddress, nftokenID, limit = 20) {
     try {
-      const client = xrplConfig.getClient();
-      const response = await client.request({
-        command: 'account_tx',
-        account: ownerAddress,
-        ledger_index_min: -1,
-        ledger_index_max: -1,
-        limit: limit
-      });
+      // Try XRPL Meta API first for better historical data
+      let transactions;
+      try {
+        const result = await this.requestXRPLMeta('account_tx', {
+          account: ownerAddress,
+          ledger_index_min: -1,
+          ledger_index_max: -1,
+          limit: limit
+        });
+        transactions = result.transactions || [];
+      } catch (metaError) {
+        // Fallback to direct xrpl.js client
+        const client = xrplConfig.getClient();
+        const response = await client.request({
+          command: 'account_tx',
+          account: ownerAddress,
+          ledger_index_min: -1,
+          ledger_index_max: -1,
+          limit: limit
+        });
+        transactions = response.result.transactions || [];
+      }
 
       // Filter transactions related to the specific NFT
       const nftTransactions = [];
-      if (response.result.transactions) {
-        for (const txData of response.result.transactions) {
-          const tx = txData.tx;
-          const meta = txData.meta;
+      for (const txData of transactions) {
+        const tx = txData.tx;
+        const meta = txData.meta;
 
-          // Check if transaction involves our NFT
-          if (tx.NFTokenID === nftokenID) {
-            nftTransactions.push({
-              hash: tx.hash,
-              type: tx.TransactionType,
-              date: tx.date,
-              account: tx.Account,
-              amount: tx.Amount,
-              destination: tx.Destination,
-              result: meta.TransactionResult,
-              ledgerIndex: txData.tx.ledger_index
-            });
-          }
+        // Check if transaction involves our NFT
+        if (tx.NFTokenID === nftokenID) {
+          nftTransactions.push({
+            hash: tx.hash,
+            type: tx.TransactionType,
+            date: tx.date,
+            account: tx.Account,
+            amount: tx.Amount,
+            destination: tx.Destination,
+            result: meta.TransactionResult,
+            ledgerIndex: txData.tx.ledger_index
+          });
+        }
 
-          // Also check for NFTokenAcceptOffer transactions
-          if (tx.TransactionType === 'NFTokenAcceptOffer' && meta.AffectedNodes) {
-            for (const node of meta.AffectedNodes) {
-              if (node.DeletedNode && node.DeletedNode.LedgerEntryType === 'NFTokenOffer') {
-                const offer = node.DeletedNode.FinalFields;
-                if (offer.NFTokenID === nftokenID) {
-                  nftTransactions.push({
-                    hash: tx.hash,
-                    type: 'NFTokenSale',
-                    date: tx.date,
-                    buyer: tx.Account,
-                    seller: offer.Owner,
-                    amount: offer.Amount,
-                    result: meta.TransactionResult,
-                    ledgerIndex: txData.tx.ledger_index
-                  });
-                }
+        // Also check for NFTokenAcceptOffer transactions
+        if (tx.TransactionType === 'NFTokenAcceptOffer' && meta.AffectedNodes) {
+          for (const node of meta.AffectedNodes) {
+            if (node.DeletedNode && node.DeletedNode.LedgerEntryType === 'NFTokenOffer') {
+              const offer = node.DeletedNode.FinalFields;
+              if (offer.NFTokenID === nftokenID) {
+                nftTransactions.push({
+                  hash: tx.hash,
+                  type: 'NFTokenSale',
+                  date: tx.date,
+                  buyer: tx.Account,
+                  seller: offer.Owner,
+                  amount: offer.Amount,
+                  result: meta.TransactionResult,
+                  ledgerIndex: txData.tx.ledger_index
+                });
               }
             }
           }
