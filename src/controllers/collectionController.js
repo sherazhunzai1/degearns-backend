@@ -147,35 +147,30 @@ const getCollections = async (req, res, next) => {
 
 /**
  * Get single collection with NFTs from XRPL blockchain
- * identifier = collection UUID (database ID)
- * Fetches collection from DB, then gets all NFT data from XRPL
+ * Fetches all data directly from XRPL - no database queries
+ * Requires taxon and wallet query parameters
  */
 const getCollection = async (req, res, next) => {
   try {
-    const { identifier } = req.params; // Collection UUID
+    const { identifier } = req.params; // Collection identifier (taxon or UUID)
+    const { wallet } = req.query; // Creator wallet address (required for XRPL queries)
 
-    logger.info(`Fetching collection with ID: ${identifier}`);
+    logger.info(`Fetching collection with identifier: ${identifier}, wallet: ${wallet}`);
     logger.info(`Using XRPL network: ${xrplConfig.getNetwork()}`);
 
-    // Find collection in database by UUID
-    const dbCollection = await Collection.findOne({
-      where: { id: identifier },
-      include: [
-        {
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
-        }
-      ]
-    });
+    // Parse identifier as taxon number
+    const taxon = parseInt(identifier);
 
-    if (!dbCollection) {
-      throw new ApiError(404, 'Collection not found');
+    if (isNaN(taxon)) {
+      throw new ApiError(400, 'Invalid collection identifier. Must be a taxon number.');
     }
 
-    const taxon = dbCollection.taxon;
-    const creatorWalletAddress = dbCollection.creatorWalletAddress;
+    if (!wallet) {
+      throw new ApiError(400, 'Wallet address is required as query parameter (?wallet=...)');
+    }
 
-    logger.info(`Collection found: ${dbCollection.name}, taxon: ${taxon}, creator: ${creatorWalletAddress}`);
+    const creatorWalletAddress = wallet;
+    logger.info(`Fetching collection with taxon: ${taxon}, creator: ${creatorWalletAddress}`);
 
     // Fetch NFTs from XRPL blockchain
     let nftsOnSale = [];
@@ -198,7 +193,7 @@ const getCollection = async (req, res, next) => {
       totalSupply = collectionNFTs.length;
       logger.info(`Found ${totalSupply} NFTs with taxon ${taxon}`);
 
-      // Extract collection metadata from XRPL NFT metadata (PRIMARY SOURCE)
+      // Extract collection metadata from XRPL NFT metadata (ONLY SOURCE)
       if (collectionNFTs.length > 0) {
         try {
           const firstNFTMetadata = await xrplService.fetchNFTMetadata(collectionNFTs[0].URI);
@@ -234,21 +229,7 @@ const getCollection = async (req, res, next) => {
         }
       }
 
-      // Fallback to database values if XRPL extraction failed
-      if (!collectionTitle && dbCollection) {
-        logger.info(`Using database fallback for collection title`);
-        collectionTitle = dbCollection.name;
-      }
-      if (!collectionImage && dbCollection) {
-        logger.info(`Using database fallback for collection image`);
-        collectionImage = dbCollection.image;
-      }
-      if (!collectionDescription && dbCollection) {
-        logger.info(`Using database fallback for collection description`);
-        collectionDescription = dbCollection.description;
-      }
-
-      // Final fallback title
+      // Fallback title if metadata extraction failed
       if (!collectionTitle) {
         collectionTitle = `Collection #${taxon}`;
       }
@@ -360,46 +341,25 @@ const getCollection = async (req, res, next) => {
         .map(nft => parseInt(nft.lowestPrice));
       const floorPrice = allPrices.length > 0 ? Math.min(...allPrices).toString() : null;
 
-      // Update collection stats in database if it exists
-      if (dbCollection && dbCollection.totalSupply !== totalSupply) {
-        dbCollection.totalSupply = totalSupply;
-        dbCollection.floorPrice = floorPrice;
-        await dbCollection.save();
-      }
-
     } catch (error) {
       logger.error(`Error fetching NFTs from XRPL for collection with taxon ${taxon}:`, error.message);
     }
 
-    // Build collection response from XRPL data
+    // Build collection response from XRPL data only
     const collectionData = {
-      id: dbCollection ? dbCollection.id : crypto.randomUUID(),
+      id: crypto.randomUUID(), // Generate fresh UUID for response
       taxon: taxon,
       name: collectionTitle,
       title: collectionTitle,
-      slug: dbCollection ? dbCollection.slug : null,
       description: collectionDescription,
       image: collectionImage,
-      bannerImage: dbCollection ? dbCollection.bannerImage : null,
-      category: dbCollection ? dbCollection.category : null,
-      royaltyPercentage: dbCollection ? dbCollection.royaltyPercentage : 0,
       creatorWalletAddress: creatorWalletAddress,
-      creator: dbCollection ? dbCollection.creator : {
-        walletAddress: creatorWalletAddress,
-        username: creatorWalletAddress,
-        profileImage: null,
-        isVerified: false
-      },
-      isVerified: dbCollection ? dbCollection.isVerified : false,
-      isRegistered: !!dbCollection,
-      socialLinks: dbCollection ? dbCollection.socialLinks : null,
       stats: {
         totalSupply: totalSupply,
         listedCount: nftsOnSale.length,
         floorPrice: allNFTs.filter(nft => nft.lowestPrice).length > 0
           ? Math.min(...allNFTs.filter(nft => nft.lowestPrice).map(nft => parseInt(nft.lowestPrice))).toString()
-          : null,
-        totalVolume: dbCollection ? dbCollection.totalVolume : '0'
+          : null
       }
     };
 
