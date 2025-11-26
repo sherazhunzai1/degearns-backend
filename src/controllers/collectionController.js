@@ -540,25 +540,48 @@ const getUserCollections = async (req, res, next) => {
 
         // Try to get collection image from first NFT metadata if not in database
         let collectionImage = dbCollection ? dbCollection.image : null;
-        if (!collectionImage && nfts.length > 0) {
+        let collectionTitle = dbCollection ? dbCollection.name : null;
+
+        if (!dbCollection && nfts.length > 0) {
           try {
             const metadata = await xrplService.fetchNFTMetadata(firstNFT.URI);
-            if (metadata && (metadata.image || metadata.image_url || metadata.imageUrl)) {
-              let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-              if (imageUrl.startsWith('ipfs://')) {
-                imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+            if (metadata) {
+              // Extract collection name from metadata
+              if (metadata.collection) {
+                // Collection can be a string or object with name field
+                collectionTitle = typeof metadata.collection === 'string'
+                  ? metadata.collection
+                  : metadata.collection.name || metadata.collection.family || null;
               }
-              collectionImage = imageUrl;
+
+              // If no collection field, try using the NFT name as fallback
+              if (!collectionTitle && metadata.name) {
+                collectionTitle = metadata.name;
+              }
+
+              // Extract image
+              if (metadata.image || metadata.image_url || metadata.imageUrl) {
+                let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+                if (imageUrl.startsWith('ipfs://')) {
+                  imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+                }
+                collectionImage = imageUrl;
+              }
             }
           } catch (err) {
             logger.warn(`Could not fetch metadata for collection taxon ${taxonNum}`);
           }
         }
 
+        // Fallback title if still no title found
+        if (!collectionTitle) {
+          collectionTitle = `Collection #${taxonNum}`;
+        }
+
         // Build collection object
         return {
           taxon: taxonNum,
-          title: dbCollection ? dbCollection.name : `Collection #${taxonNum}`,
+          title: collectionTitle,
           image: collectionImage,
           floorPrice: floorPrice,
           items: totalItems,
