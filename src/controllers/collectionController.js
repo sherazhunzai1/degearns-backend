@@ -119,8 +119,61 @@ const getCollections = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Check each collection for at least one NFT for sale on XRPL
+    const validCollections = [];
+    const collectionsToDelete = [];
+
+    for (const collection of collections) {
+      try {
+        const taxon = collection.taxon;
+        const creatorWallet = collection.creatorWalletAddress;
+
+        // Fetch NFTs from XRPL for this collection
+        const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
+        const collectionNFTs = accountNFTs.filter(nft => {
+          const nftTaxon = nft.NFTokenTaxon || 0;
+          return nftTaxon === taxon;
+        });
+
+        // Check if at least one NFT has sell offers
+        let hasListedNFT = false;
+        for (const nft of collectionNFTs) {
+          try {
+            const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+            if (sellOffers && sellOffers.length > 0) {
+              hasListedNFT = true;
+              break; // Found at least one listed NFT, no need to check further
+            }
+          } catch (err) {
+            // Continue checking other NFTs
+          }
+        }
+
+        if (hasListedNFT) {
+          // Collection has at least one NFT for sale, keep it
+          validCollections.push(collection);
+        } else {
+          // No NFTs for sale, mark for deletion
+          logger.info(`Collection ${collection.name} (taxon ${taxon}) has no NFTs for sale, marking for deletion`);
+          collectionsToDelete.push(collection);
+        }
+
+      } catch (error) {
+        logger.error(`Error checking collection ${collection.name} on XRPL:`, error.message);
+        // On error, keep the collection to avoid accidental deletion
+        validCollections.push(collection);
+      }
+    }
+
+    // Delete collections without listed NFTs
+    if (collectionsToDelete.length > 0) {
+      const idsToDelete = collectionsToDelete.map(c => c.id);
+      await Collection.destroy({ where: { id: idsToDelete } });
+      logger.info(`Deleted ${collectionsToDelete.length} collections without listed NFTs`);
+    }
+
     // Return collections with stats from database
-    const collectionsWithStats = collections.map(collection => ({
+    const collectionsWithStats = validCollections.map(collection => ({
       ...collection.toJSON(),
       stats: {
         totalSupply: collection.totalSupply,
@@ -135,8 +188,8 @@ const getCollections = async (req, res, next) => {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: count,
-          pages: Math.ceil(count / limit)
+          total: validCollections.length, // Use valid collections count
+          pages: Math.ceil(validCollections.length / limit)
         }
       }, 'Collections retrieved successfully')
     );
