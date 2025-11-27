@@ -332,13 +332,12 @@ const getCollection = async (req, res, next) => {
         isOnSale: item.isOnSale
       }));
 
-      // Separate NFTs on sale
-      nftsOnSale = allNFTs.filter(nft => nft.isOnSale);
+      // Set nftsOnSale to all NFTs (keeping key name for backward compatibility)
+      nftsOnSale = allNFTs;
 
-      // Calculate floor price from sell offers
-      const allPrices = nftsOnSale
-        .filter(nft => nft.lowestPrice)
-        .map(nft => parseInt(nft.lowestPrice));
+      // Calculate floor price from NFTs that have sell offers
+      const nftsWithPrices = allNFTs.filter(nft => nft.lowestPrice && nft.isOnSale);
+      const allPrices = nftsWithPrices.map(nft => parseInt(nft.lowestPrice));
       const floorPrice = allPrices.length > 0 ? Math.min(...allPrices).toString() : null;
 
     } catch (error) {
@@ -356,7 +355,7 @@ const getCollection = async (req, res, next) => {
       creatorWalletAddress: creatorWalletAddress,
       stats: {
         totalSupply: totalSupply,
-        listedCount: nftsOnSale.length,
+        listedCount: allNFTs.filter(nft => nft.isOnSale).length,
         floorPrice: allNFTs.filter(nft => nft.lowestPrice).length > 0
           ? Math.min(...allNFTs.filter(nft => nft.lowestPrice).map(nft => parseInt(nft.lowestPrice))).toString()
           : null
