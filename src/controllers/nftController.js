@@ -9,12 +9,13 @@ const logger = require('../utils/logger');
 exports.getNFTDetail = async (req, res) => {
   try {
     const { nftTokenId } = req.params;
+    const { wallet } = req.query; // Optional wallet parameter
 
     // Step 1: Get NFT sell offers to find current owner and sale info
     const sellOffers = await xrplService.getNFTSellOffers(nftTokenId);
     const buyOffers = await xrplService.getNFTBuyOffers(nftTokenId);
 
-    // Find the owner address from sell offers or buy offers
+    // Find the owner address from sell offers, wallet parameter, or buy offers
     let ownerAddress = null;
     let currentSellOffer = null;
 
@@ -22,17 +23,19 @@ exports.getNFTDetail = async (req, res) => {
       // If there are sell offers, the owner is in the offer
       currentSellOffer = sellOffers[0]; // Get the first/best offer
       ownerAddress = currentSellOffer.owner;
+    } else if (wallet) {
+      // Use provided wallet parameter if no sell offers
+      ownerAddress = wallet;
     } else if (buyOffers.length > 0) {
       // If only buy offers exist, we need to get the owner from the offer
       ownerAddress = buyOffers[0].owner;
     }
 
-    // If we still don't have owner, we need to search for the NFT in accounts
-    // For now, return error if we can't find the owner
+    // If we still don't have owner, return helpful error
     if (!ownerAddress) {
-      return res.status(404).json({
+      return res.status(400).json({
         success: false,
-        message: 'NFT not found or owner could not be determined'
+        message: 'Could not determine NFT owner. Please provide wallet address as query parameter: ?wallet=YOUR_WALLET_ADDRESS'
       });
     }
 
