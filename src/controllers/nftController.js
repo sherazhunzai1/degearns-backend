@@ -47,7 +47,37 @@ exports.getNFTDetail = async (req, res) => {
       });
     }
 
-    // Step 3: Get owner and issuer information from database
+    // Step 3: Fetch NFT metadata for title, description, and image
+    let nftTitle = null;
+    let nftDescription = null;
+    let nftImage = null;
+
+    try {
+      const metadata = await xrplService.fetchNFTMetadata(nftData.URI);
+      if (metadata) {
+        // Extract title from metadata
+        nftTitle = metadata.name || null;
+
+        // Extract description from metadata
+        nftDescription = metadata.description || null;
+
+        // Extract and format image URL
+        let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+        if (imageUrl) {
+          // Handle IPFS URLs
+          if (imageUrl.startsWith('ipfs://')) {
+            imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+          }
+          nftImage = imageUrl;
+        }
+
+        logger.info(`NFT metadata fetched - Title: ${nftTitle}, Image: ${nftImage ? 'Yes' : 'No'}`);
+      }
+    } catch (error) {
+      logger.warn(`Could not fetch metadata for NFT ${nftTokenId}:`, error.message);
+    }
+
+    // Step 4: Get owner and issuer information from database
     const [ownerUser, issuerUser] = await Promise.all([
       User.findOne({
         where: { walletAddress: ownerAddress },
@@ -80,6 +110,9 @@ exports.getNFTDetail = async (req, res) => {
     // Step 6: Format the response
     const nftDetail = {
       nftTokenId: nftData.NFTokenID,
+      title: nftTitle,
+      description: nftDescription,
+      image: nftImage,
       uri: nftData.URI,
       taxon: nftData.NFTokenTaxon,
       flags: nftData.Flags,
