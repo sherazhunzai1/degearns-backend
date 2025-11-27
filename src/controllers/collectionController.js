@@ -717,11 +717,222 @@ const getUserCollections = async (req, res, next) => {
   }
 };
 
+/**
+ * Get statistics for all collections
+ * Fetches collections from database and calculates stats from XRPL
+ */
+const getCollectionStats = async (req, res, next) => {
+  try {
+    logger.info('Fetching statistics for all collections');
+
+    // Fetch all collections from database
+    const collections = await Collection.findAll({
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ],
+      order: [['createdAt', 'DESC']]
+    });
+
+    if (!collections || collections.length === 0) {
+      return res.status(200).json(
+        new ApiResponse(200, [], 'No collections found')
+      );
+    }
+
+    logger.info(`Processing stats for ${collections.length} collections`);
+
+    // Process each collection to get stats from XRPL
+    const collectionsWithStats = await Promise.all(
+      collections.map(async (collection) => {
+        try {
+          const taxon = collection.taxon;
+          const creatorWallet = collection.creatorWalletAddress;
+
+          // Fetch NFTs from XRPL for this collection
+          const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
+          const collectionNFTs = accountNFTs.filter(nft => {
+            const nftTaxon = nft.NFTokenTaxon || 0;
+            return nftTaxon === taxon;
+          });
+
+          const totalSupply = collectionNFTs.length;
+
+          // Get NFTs with sell offers and calculate stats
+          let listedCount = 0;
+          let floorPrice = null;
+          const prices = [];
+          const owners = new Set();
+
+          for (const nft of collectionNFTs) {
+            try {
+              const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+
+              if (sellOffers && sellOffers.length > 0) {
+                listedCount++;
+                const owner = sellOffers[0].owner;
+                owners.add(owner);
+
+                // Collect prices for floor price calculation
+                sellOffers.forEach(offer => {
+                  const amount = parseInt(offer.amount);
+                  if (!isNaN(amount) && amount > 0) {
+                    prices.push(amount);
+                  }
+                });
+              } else {
+                // NFT not listed, but still has an owner (the issuer or current holder)
+                owners.add(nft.Issuer);
+              }
+            } catch (err) {
+              // If we can't get offers, assume NFT is held by issuer
+              owners.add(nft.Issuer);
+            }
+          }
+
+          // Calculate floor price
+          if (prices.length > 0) {
+            floorPrice = Math.min(...prices).toString();
+          }
+
+          // Get transaction history for volume and sales count
+          let totalVolume = '0';
+          let totalSales = 0;
+          let volumeChange = 0;
+
+          try {
+            // Get transaction history for the creator wallet
+            const history = await xrplService.getNFTTransactionHistory(
+              creatorWallet,
+              null,
+              100
+            );
+
+            // Filter transactions for this collection's NFTs
+            const collectionNFTIds = new Set(collectionNFTs.map(nft => nft.NFTokenID));
+            const collectionTransactions = history.filter(tx =>
+              tx.type === 'NFTokenSale' && collectionNFTIds.has(tx.nftTokenId)
+            );
+
+            totalSales = collectionTransactions.length;
+
+            // Calculate total volume
+            const volume = collectionTransactions.reduce((sum, tx) => {
+              const amount = typeof tx.amount === 'string'
+                ? parseInt(tx.amount)
+                : tx.amount;
+              return sum + (amount || 0);
+            }, 0);
+
+            totalVolume = volume.toString();
+
+            // Calculate volume change (last 30 days vs previous 30 days)
+            const now = Date.now();
+            const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+            const sixtyDaysAgo = now - (60 * 24 * 60 * 60 * 1000);
+
+            const recentVolume = collectionTransactions
+              .filter(tx => new Date(tx.date).getTime() > thirtyDaysAgo)
+              .reduce((sum, tx) => {
+                const amount = typeof tx.amount === 'string' ? parseInt(tx.amount) : tx.amount;
+                return sum + (amount || 0);
+              }, 0);
+
+            const previousVolume = collectionTransactions
+              .filter(tx => {
+                const txTime = new Date(tx.date).getTime();
+                return txTime > sixtyDaysAgo && txTime <= thirtyDaysAgo;
+              })
+              .reduce((sum, tx) => {
+                const amount = typeof tx.amount === 'string' ? parseInt(tx.amount) : tx.amount;
+                return sum + (amount || 0);
+              }, 0);
+
+            // Calculate percentage change
+            if (previousVolume > 0) {
+              volumeChange = ((recentVolume - previousVolume) / previousVolume) * 100;
+            } else if (recentVolume > 0) {
+              volumeChange = 100; // 100% increase if previous was 0
+            }
+
+          } catch (err) {
+            logger.warn(`Could not fetch transaction history for collection ${collection.name}:`, err.message);
+          }
+
+          return {
+            id: collection.id,
+            taxon: collection.taxon,
+            name: collection.name,
+            slug: collection.slug,
+            image: collection.image,
+            description: collection.description,
+            creator: collection.creator,
+            isVerified: collection.isVerified,
+            stats: {
+              totalSupply: totalSupply,
+              volume: totalVolume,
+              volumeChange: parseFloat(volumeChange.toFixed(2)),
+              floorPrice: floorPrice,
+              totalSales: totalSales,
+              owners: owners.size,
+              listed: listedCount
+            }
+          };
+
+        } catch (error) {
+          logger.error(`Error processing collection ${collection.name}:`, error.message);
+
+          // Return collection with basic info if stats fail
+          return {
+            id: collection.id,
+            taxon: collection.taxon,
+            name: collection.name,
+            slug: collection.slug,
+            image: collection.image,
+            description: collection.description,
+            creator: collection.creator,
+            isVerified: collection.isVerified,
+            stats: {
+              totalSupply: 0,
+              volume: '0',
+              volumeChange: 0,
+              floorPrice: null,
+              totalSales: 0,
+              owners: 0,
+              listed: 0
+            }
+          };
+        }
+      })
+    );
+
+    // Sort by volume (highest first)
+    collectionsWithStats.sort((a, b) => {
+      const volumeA = parseInt(a.stats.volume) || 0;
+      const volumeB = parseInt(b.stats.volume) || 0;
+      return volumeB - volumeA;
+    });
+
+    logger.info(`Successfully processed stats for ${collectionsWithStats.length} collections`);
+
+    res.status(200).json(
+      new ApiResponse(200, collectionsWithStats, 'Collection statistics retrieved successfully')
+    );
+
+  } catch (error) {
+    logger.error('Error fetching collection statistics:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
   getCollection,
   updateCollection,
   updateCollectionStats,
-  getUserCollections
+  getUserCollections,
+  getCollectionStats
 };
