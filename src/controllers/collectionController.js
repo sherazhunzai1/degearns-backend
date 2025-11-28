@@ -980,6 +980,159 @@ const getCollectionStats = async (req, res, next) => {
   }
 };
 
+/**
+ * Search for collections and NFTs by name
+ * Searches collections in database and NFTs on XRPL blockchain
+ */
+const searchCollectionsAndNFTs = async (req, res, next) => {
+  try {
+    const { name, limit = 50 } = req.query;
+
+    if (!name || name.trim().length === 0) {
+      throw new ApiError(400, 'Search name parameter is required');
+    }
+
+    const searchTerm = name.trim().toLowerCase();
+    logger.info(`Searching for collections and NFTs with name: ${searchTerm}`);
+
+    // Step 1: Search collections in database
+    const collections = await Collection.findAll({
+      where: {
+        [Op.or]: [
+          { name: { [Op.like]: `%${name}%` } },
+          { description: { [Op.like]: `%${name}%` } }
+        ]
+      },
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ],
+      limit: parseInt(limit)
+    });
+
+    logger.info(`Found ${collections.length} matching collections in database`);
+
+    // Step 2: Fetch NFTs from XRPL for each collection and search for matching NFT names
+    const matchingNFTs = [];
+    const matchingCollections = collections.map(col => ({
+      type: 'collection',
+      id: col.id,
+      taxon: col.taxon,
+      name: col.name,
+      slug: col.slug,
+      image: col.image,
+      description: col.description,
+      creator: col.creator,
+      isVerified: col.isVerified,
+      stats: {
+        totalSupply: col.totalSupply,
+        floorPrice: col.floorPrice,
+        totalVolume: col.totalVolume
+      }
+    }));
+
+    // Fetch NFTs from XRPL for all collections and search by name
+    for (const collection of collections) {
+      try {
+        const taxon = collection.taxon;
+        const creatorWallet = collection.creatorWalletAddress;
+
+        // Fetch NFTs from XRPL for this collection
+        const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
+        const collectionNFTs = accountNFTs.filter(nft => {
+          const nftTaxon = nft.NFTokenTaxon || 0;
+          return nftTaxon === taxon;
+        });
+
+        logger.info(`Checking ${collectionNFTs.length} NFTs from collection ${collection.name}`);
+
+        // Check each NFT's metadata for name match
+        for (const nft of collectionNFTs) {
+          try {
+            // Fetch metadata to get NFT name
+            const metadata = await xrplService.fetchNFTMetadata(nft.URI);
+
+            if (metadata && metadata.name) {
+              const nftName = metadata.name.toLowerCase();
+
+              // Check if NFT name matches search term
+              if (nftName.includes(searchTerm)) {
+                // Get sell offers for this NFT
+                let sellOffers = [];
+                let lowestPrice = null;
+                let isOnSale = false;
+
+                try {
+                  sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+                  if (sellOffers && sellOffers.length > 0) {
+                    isOnSale = true;
+                    const prices = sellOffers.map(offer => parseInt(offer.amount));
+                    lowestPrice = Math.min(...prices).toString();
+                  }
+                } catch (err) {
+                  logger.warn(`Could not fetch sell offers for NFT ${nft.NFTokenID}`);
+                }
+
+                // Extract image URL
+                let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+                if (imageUrl && imageUrl.startsWith('ipfs://')) {
+                  imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+                }
+
+                // Add matching NFT to results
+                matchingNFTs.push({
+                  type: 'nft',
+                  nftTokenId: nft.NFTokenID,
+                  name: metadata.name,
+                  description: metadata.description || null,
+                  image: imageUrl,
+                  taxon: nft.NFTokenTaxon,
+                  issuer: nft.Issuer,
+                  collection: {
+                    id: collection.id,
+                    name: collection.name,
+                    slug: collection.slug
+                  },
+                  isOnSale: isOnSale,
+                  lowestPrice: lowestPrice,
+                  uri: nft.URI
+                });
+
+                logger.info(`Found matching NFT: ${metadata.name} in collection ${collection.name}`);
+              }
+            }
+          } catch (err) {
+            logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}:`, err.message);
+          }
+        }
+      } catch (error) {
+        logger.error(`Error searching NFTs in collection ${collection.name}:`, error.message);
+      }
+    }
+
+    logger.info(`Search completed: ${matchingCollections.length} collections, ${matchingNFTs.length} NFTs`);
+
+    // Return combined results
+    res.status(200).json(
+      new ApiResponse(200, {
+        collections: matchingCollections,
+        nfts: matchingNFTs,
+        summary: {
+          totalCollections: matchingCollections.length,
+          totalNFTs: matchingNFTs.length,
+          searchTerm: name
+        }
+      }, 'Search completed successfully')
+    );
+
+  } catch (error) {
+    logger.error('Error searching collections and NFTs:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
@@ -987,5 +1140,6 @@ module.exports = {
   updateCollection,
   updateCollectionStats,
   getUserCollections,
-  getCollectionStats
+  getCollectionStats,
+  searchCollectionsAndNFTs
 };

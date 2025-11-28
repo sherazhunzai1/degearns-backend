@@ -7,7 +7,8 @@ const {
   updateCollection,
   updateCollectionStats,
   getUserCollections,
-  getCollectionStats
+  getCollectionStats,
+  searchCollectionsAndNFTs
 } = require('../controllers/collectionController');
 
 /**
@@ -37,6 +38,13 @@ router.get('/wallet/:walletAddress', getUserCollections);
  * @access  Public
  */
 router.get('/stats', getCollectionStats);
+
+/**
+ * @route   GET /api/v1/collections/search
+ * @desc    Search for collections and NFTs by name
+ * @access  Public
+ */
+router.get('/search', searchCollectionsAndNFTs);
 
 /**
  * @route   GET /api/v1/collections/:identifier
