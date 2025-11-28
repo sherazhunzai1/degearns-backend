@@ -1133,6 +1133,314 @@ const searchCollectionsAndNFTs = async (req, res, next) => {
   }
 };
 
+/**
+ * Get newest NFTs across all collections
+ * Fetches collections from database and NFTs from XRPL, sorted by listing date
+ */
+const getNewNFTs = async (req, res, next) => {
+  try {
+    const { limit = 20 } = req.query;
+
+    logger.info('Fetching newest NFTs across all collections');
+
+    // Fetch all collections from database
+    const collections = await Collection.findAll({
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    logger.info(`Processing ${collections.length} collections for newest NFTs`);
+
+    // Fetch NFTs from XRPL for all collections
+    const allNFTs = [];
+
+    for (const collection of collections) {
+      try {
+        const taxon = collection.taxon;
+        const creatorWallet = collection.creatorWalletAddress;
+
+        // Fetch NFTs from XRPL for this collection
+        const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
+        const collectionNFTs = accountNFTs.filter(nft => {
+          const nftTaxon = nft.NFTokenTaxon || 0;
+          return nftTaxon === taxon;
+        });
+
+        // Get NFTs with sell offers (listed NFTs)
+        for (const nft of collectionNFTs) {
+          try {
+            const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+
+            if (sellOffers && sellOffers.length > 0) {
+              // NFT is listed for sale
+              const lowestOffer = sellOffers.reduce((min, offer) =>
+                parseInt(offer.amount) < parseInt(min.amount) ? offer : min
+              , sellOffers[0]);
+
+              // Fetch metadata
+              let metadata = null;
+              let imageUrl = null;
+              let nftName = null;
+
+              try {
+                metadata = await xrplService.fetchNFTMetadata(nft.URI);
+                if (metadata) {
+                  nftName = metadata.name || null;
+                  imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+                  if (imageUrl && imageUrl.startsWith('ipfs://')) {
+                    imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+                  }
+                }
+              } catch (err) {
+                logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}`);
+              }
+
+              allNFTs.push({
+                nftTokenId: nft.NFTokenID,
+                name: nftName,
+                image: imageUrl,
+                description: metadata?.description || null,
+                price: lowestOffer.amount,
+                owner: lowestOffer.owner,
+                listedDate: lowestOffer.createdAt || new Date().toISOString(),
+                collection: {
+                  id: collection.id,
+                  name: collection.name,
+                  slug: collection.slug,
+                  image: collection.image,
+                  taxon: collection.taxon
+                },
+                uri: nft.URI
+              });
+            }
+          } catch (err) {
+            // Skip NFTs we can't get offers for
+          }
+        }
+      } catch (error) {
+        logger.error(`Error fetching NFTs from collection ${collection.name}:`, error.message);
+      }
+    }
+
+    // Sort by listed date (most recent first)
+    allNFTs.sort((a, b) => new Date(b.listedDate) - new Date(a.listedDate));
+
+    // Limit results
+    const limitedNFTs = allNFTs.slice(0, parseInt(limit));
+
+    logger.info(`Found ${allNFTs.length} listed NFTs, returning ${limitedNFTs.length}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        nfts: limitedNFTs,
+        total: allNFTs.length,
+        limit: parseInt(limit)
+      }, 'Newest NFTs retrieved successfully')
+    );
+
+  } catch (error) {
+    logger.error('Error fetching newest NFTs:', error);
+    next(error);
+  }
+};
+
+/**
+ * Get top sellers (users with most collections and highest volume)
+ * Fetches users from database who have listed most collections
+ */
+const getTopSellers = async (req, res, next) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    logger.info('Fetching top sellers');
+
+    // Get all collections grouped by creator
+    const collections = await Collection.findAll({
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    // Group collections by creator wallet
+    const sellerStats = {};
+
+    collections.forEach(collection => {
+      const wallet = collection.creatorWalletAddress;
+
+      if (!sellerStats[wallet]) {
+        sellerStats[wallet] = {
+          walletAddress: wallet,
+          username: collection.creator?.username || wallet,
+          profileImage: collection.creator?.profileImage || null,
+          isVerified: collection.creator?.isVerified || false,
+          collectionsCount: 0,
+          totalVolume: 0
+        };
+      }
+
+      sellerStats[wallet].collectionsCount++;
+      sellerStats[wallet].totalVolume += parseInt(collection.totalVolume || 0);
+    });
+
+    // Convert to array and sort by collections count and volume
+    const sellers = Object.values(sellerStats)
+      .sort((a, b) => {
+        // First sort by number of collections
+        if (b.collectionsCount !== a.collectionsCount) {
+          return b.collectionsCount - a.collectionsCount;
+        }
+        // Then by total volume
+        return b.totalVolume - a.totalVolume;
+      })
+      .slice(0, parseInt(limit))
+      .map(seller => ({
+        walletAddress: seller.walletAddress,
+        username: seller.username,
+        profileImage: seller.profileImage,
+        isVerified: seller.isVerified,
+        collectionsCount: seller.collectionsCount,
+        totalVolume: seller.totalVolume.toString()
+      }));
+
+    logger.info(`Found ${sellers.length} top sellers`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        sellers: sellers,
+        total: sellers.length
+      }, 'Top sellers retrieved successfully')
+    );
+
+  } catch (error) {
+    logger.error('Error fetching top sellers:', error);
+    next(error);
+  }
+};
+
+/**
+ * Get popular collections by category
+ * Fetches categories and finds collection with most NFTs minted
+ */
+const getPopularCollections = async (req, res, next) => {
+  try {
+    logger.info('Fetching popular collections by category');
+
+    // Get all collections with categories
+    const collections = await Collection.findAll({
+      where: {
+        category: {
+          [Op.ne]: null
+        }
+      },
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    logger.info(`Processing ${collections.length} collections with categories`);
+
+    // Group by category and find most minted collection in each
+    const categoryStats = {};
+
+    for (const collection of collections) {
+      const category = collection.category;
+
+      if (!category) continue;
+
+      try {
+        const taxon = collection.taxon;
+        const creatorWallet = collection.creatorWalletAddress;
+
+        // Fetch NFTs from XRPL to get total minted count
+        const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
+        const collectionNFTs = accountNFTs.filter(nft => {
+          const nftTaxon = nft.NFTokenTaxon || 0;
+          return nftTaxon === taxon;
+        });
+
+        const mintedCount = collectionNFTs.length;
+
+        if (!categoryStats[category] || mintedCount > categoryStats[category].mintedCount) {
+          // Get recent 4 minted NFTs
+          const recentNFTs = [];
+          const nftsToFetch = collectionNFTs.slice(0, 4);
+
+          for (const nft of nftsToFetch) {
+            try {
+              const metadata = await xrplService.fetchNFTMetadata(nft.URI);
+              let imageUrl = null;
+
+              if (metadata) {
+                imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+                if (imageUrl && imageUrl.startsWith('ipfs://')) {
+                  imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+                }
+
+                recentNFTs.push({
+                  nftTokenId: nft.NFTokenID,
+                  name: metadata.name || null,
+                  image: imageUrl,
+                  description: metadata.description || null
+                });
+              }
+            } catch (err) {
+              logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}`);
+            }
+          }
+
+          categoryStats[category] = {
+            category: category,
+            collection: {
+              id: collection.id,
+              name: collection.name,
+              slug: collection.slug,
+              image: collection.image,
+              description: collection.description,
+              taxon: collection.taxon,
+              creator: collection.creator,
+              isVerified: collection.isVerified,
+              totalSupply: mintedCount,
+              floorPrice: collection.floorPrice,
+              totalVolume: collection.totalVolume
+            },
+            mintedCount: mintedCount,
+            recentNFTs: recentNFTs
+          };
+        }
+      } catch (error) {
+        logger.error(`Error processing collection ${collection.name}:`, error.message);
+      }
+    }
+
+    // Convert to array and sort by minted count
+    const popularCollections = Object.values(categoryStats)
+      .sort((a, b) => b.mintedCount - a.mintedCount);
+
+    logger.info(`Found ${popularCollections.length} popular collections across categories`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        popularCollections: popularCollections,
+        total: popularCollections.length
+      }, 'Popular collections retrieved successfully')
+    );
+
+  } catch (error) {
+    logger.error('Error fetching popular collections:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
@@ -1141,5 +1449,8 @@ module.exports = {
   updateCollectionStats,
   getUserCollections,
   getCollectionStats,
-  searchCollectionsAndNFTs
+  searchCollectionsAndNFTs,
+  getNewNFTs,
+  getTopSellers,
+  getPopularCollections
 };

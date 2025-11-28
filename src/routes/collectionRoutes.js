@@ -8,7 +8,10 @@ const {
   updateCollectionStats,
   getUserCollections,
   getCollectionStats,
-  searchCollectionsAndNFTs
+  searchCollectionsAndNFTs,
+  getNewNFTs,
+  getTopSellers,
+  getPopularCollections
 } = require('../controllers/collectionController');
 
 /**
@@ -45,6 +48,27 @@ router.get('/stats', getCollectionStats);
  * @access  Public
  */
 router.get('/search', searchCollectionsAndNFTs);
+
+/**
+ * @route   GET /api/v1/collections/new-nfts
+ * @desc    Get newest NFTs across all collections
+ * @access  Public
+ */
+router.get('/new-nfts', getNewNFTs);
+
+/**
+ * @route   GET /api/v1/collections/top-sellers
+ * @desc    Get top sellers with most collections and highest volume
+ * @access  Public
+ */
+router.get('/top-sellers', getTopSellers);
+
+/**
+ * @route   GET /api/v1/collections/popular
+ * @desc    Get popular collections by category
+ * @access  Public
+ */
+router.get('/popular', getPopularCollections);
 
 /**
  * @route   GET /api/v1/collections/:identifier
