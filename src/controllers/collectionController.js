@@ -1422,9 +1422,10 @@ const getPopularCollections = async (req, res, next) => {
       }
     }
 
-    // Convert to array and sort by minted count
+    // Convert to array, sort by minted count, and limit to 6
     const popularCollections = Object.values(categoryStats)
-      .sort((a, b) => b.mintedCount - a.mintedCount);
+      .sort((a, b) => b.mintedCount - a.mintedCount)
+      .slice(0, 6);
 
     logger.info(`Found ${popularCollections.length} popular collections across categories`);
 
