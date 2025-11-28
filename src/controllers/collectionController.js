@@ -119,7 +119,7 @@ const getCollections = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
-    // Check each collection for at least one NFT for sale on XRPL
+    // Check each collection for at least one NFT for sale on XRPL and calculate accurate stats
     const validCollections = [];
     const collectionsToDelete = [];
 
@@ -135,14 +135,27 @@ const getCollections = async (req, res, next) => {
           return nftTaxon === taxon;
         });
 
-        // Check if at least one NFT has sell offers
+        // Calculate accurate stats from XRPL
+        const totalSupply = collectionNFTs.length;
+        let listedCount = 0;
+        const prices = [];
+
+        // Check each NFT for sell offers to calculate floor price and listed count
         let hasListedNFT = false;
         for (const nft of collectionNFTs) {
           try {
             const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
             if (sellOffers && sellOffers.length > 0) {
               hasListedNFT = true;
-              break; // Found at least one listed NFT, no need to check further
+              listedCount++;
+
+              // Collect prices for floor price calculation
+              sellOffers.forEach(offer => {
+                const amount = parseInt(offer.amount);
+                if (!isNaN(amount) && amount > 0) {
+                  prices.push(amount);
+                }
+              });
             }
           } catch (err) {
             // Continue checking other NFTs
@@ -150,8 +163,31 @@ const getCollections = async (req, res, next) => {
         }
 
         if (hasListedNFT) {
-          // Collection has at least one NFT for sale, keep it
-          validCollections.push(collection);
+          // Calculate floor price
+          const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
+
+          // Calculate listing percentage
+          const listingPercentage = totalSupply > 0
+            ? ((listedCount / totalSupply) * 100).toFixed(2)
+            : '0.00';
+
+          // Collection has at least one NFT for sale, keep it with accurate stats
+          validCollections.push({
+            collection,
+            stats: {
+              totalSupply,
+              floorPrice,
+              totalVolume: collection.totalVolume || '0', // Keep from database
+              listedCount,
+              listingPercentage
+            }
+          });
+
+          // Update collection stats in database
+          collection.totalSupply = totalSupply;
+          collection.floorPrice = floorPrice;
+          await collection.save();
+
         } else {
           // No NFTs for sale, mark for deletion
           logger.info(`Collection ${collection.name} (taxon ${taxon}) has no NFTs for sale, marking for deletion`);
@@ -160,8 +196,17 @@ const getCollections = async (req, res, next) => {
 
       } catch (error) {
         logger.error(`Error checking collection ${collection.name} on XRPL:`, error.message);
-        // On error, keep the collection to avoid accidental deletion
-        validCollections.push(collection);
+        // On error, keep the collection with database stats to avoid accidental deletion
+        validCollections.push({
+          collection,
+          stats: {
+            totalSupply: collection.totalSupply || 0,
+            floorPrice: collection.floorPrice,
+            totalVolume: collection.totalVolume || '0',
+            listedCount: 0,
+            listingPercentage: '0.00'
+          }
+        });
       }
     }
 
@@ -172,14 +217,10 @@ const getCollections = async (req, res, next) => {
       logger.info(`Deleted ${collectionsToDelete.length} collections without listed NFTs`);
     }
 
-    // Return collections with stats from database
-    const collectionsWithStats = validCollections.map(collection => ({
-      ...collection.toJSON(),
-      stats: {
-        totalSupply: collection.totalSupply,
-        floorPrice: collection.floorPrice,
-        totalVolume: collection.totalVolume
-      }
+    // Format response with accurate stats from XRPL
+    const collectionsWithStats = validCollections.map(item => ({
+      ...item.collection.toJSON(),
+      stats: item.stats
     }));
 
     res.status(200).json(
