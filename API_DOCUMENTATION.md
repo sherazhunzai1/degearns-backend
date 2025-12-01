@@ -5,6 +5,14 @@
 http://localhost:5000/api/v1
 ```
 
+## CORS Configuration
+
+The API allows requests from the following origins:
+- `https://degearns.com` (Production)
+- `http://localhost:3000` (Development)
+
+All other origins will receive CORS errors.
+
 ## XRPL Integration
 
 This API connects directly to the **XRP Ledger Mainnet** using xrpl.js:
@@ -285,12 +293,15 @@ Update user's cover/banner image.
 
 ### Get NFT Detail
 
-**GET** `/nfts/:nftTokenId`
+**GET** `/nfts/:nftTokenId?wallet=rOwnerWalletAddress`
 
-Get comprehensive NFT details including ownership, sale information, transaction history, and statistics.
+Get comprehensive NFT details including ownership, sale information, transaction history, statistics, and metadata (title, description, image).
 
 **Parameters:**
 - `nftTokenId` (path parameter): The XRPL NFT Token ID
+
+**Query Parameters:**
+- `wallet` (optional): Owner's wallet address. Required if NFT has no active sell offers.
 
 **Response (200):**
 ```json
@@ -298,6 +309,9 @@ Get comprehensive NFT details including ownership, sale information, transaction
   "success": true,
   "data": {
     "nftTokenId": "00081388F0E4F3F8E8F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0",
+    "title": "Cool NFT #123",
+    "description": "A unique digital artwork with special attributes",
+    "image": "https://ipfs.io/ipfs/QmExample...",
     "uri": "https://example.com/metadata.json",
     "taxon": 1234,
     "flags": 8,
@@ -760,12 +774,15 @@ Get all collections created by or owned by a specific wallet address. Fetches li
 
 ### Get Single Collection
 
-**GET** `/collections/:identifier`
+**GET** `/collections/:taxon?wallet=rCreatorWalletAddress`
 
-Get detailed collection information with NFTs currently on sale. Identifier can be either collection ID (UUID) or slug.
+Get detailed collection information with all NFTs. Fetches data directly from XRPL blockchain without database queries.
 
 **Parameters:**
-- `identifier` (path parameter): Collection ID or slug
+- `taxon` (path parameter): Collection taxon number
+
+**Query Parameters:**
+- `wallet` (required): Creator's wallet address
 
 **Response (200):**
 ```json
@@ -974,6 +991,288 @@ Sync collection statistics from XRPL blockchain. Updates total supply, floor pri
 - This endpoint fetches real-time data from XRPL
 - Updates the database with latest stats
 - Can be called periodically to keep stats in sync
+
+---
+
+### Get Collection Statistics
+
+**GET** `/collections/stats`
+
+Get comprehensive statistics for all collections including volume, sales, owners, and more.
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Collection statistics retrieved successfully",
+  "data": [
+    {
+      "id": "uuid",
+      "taxon": 1234,
+      "name": "Popular Collection",
+      "slug": "popular-collection",
+      "image": "https://example.com/collection.jpg",
+      "description": "A very popular collection",
+      "creator": {
+        "walletAddress": "rCreatorAddress",
+        "username": "creator_name",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "isVerified": true,
+      "stats": {
+        "totalSupply": 1000,
+        "volume": "50000000",
+        "volumeChange": 25.50,
+        "floorPrice": "500000",
+        "totalSales": 450,
+        "owners": 234,
+        "listed": 120
+      }
+    }
+  ]
+}
+```
+
+**Statistics Explained:**
+- `totalSupply`: Total number of NFTs in collection
+- `volume`: Total trading volume in drops (all-time)
+- `volumeChange`: Percentage change in volume (last 30 days vs previous 30 days)
+- `floorPrice`: Lowest listed price in drops
+- `totalSales`: Number of completed sales
+- `owners`: Number of unique NFT owners
+- `listed`: Number of NFTs currently listed for sale
+
+**Notes:**
+- Collections sorted by volume (highest first)
+- Volume change compares last 30 days to previous 30 days
+- Stats calculated from XRPL blockchain in real-time
+- May take time to process for large number of collections
+
+---
+
+### Search Collections and NFTs
+
+**GET** `/collections/search?name=dragon&limit=50`
+
+Search for collections and NFTs by name. Searches collection names in database and NFT titles from XRPL metadata.
+
+**Query Parameters:**
+- `name` (required): Search term to match
+- `limit` (optional): Maximum collections to search (default: 50)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Search completed successfully",
+  "data": {
+    "collections": [
+      {
+        "type": "collection",
+        "id": "uuid",
+        "taxon": 1234,
+        "name": "Dragon Collection",
+        "slug": "dragon-collection",
+        "image": "https://example.com/collection.jpg",
+        "description": "Collection of dragon NFTs",
+        "creator": {
+          "walletAddress": "rCreatorAddress",
+          "username": "creator_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "isVerified": true,
+        "stats": {
+          "totalSupply": 100,
+          "floorPrice": "500000",
+          "totalVolume": "5000000"
+        }
+      }
+    ],
+    "nfts": [
+      {
+        "type": "nft",
+        "nftTokenId": "00081388...",
+        "name": "Fire Dragon #123",
+        "description": "A fierce fire dragon",
+        "image": "https://ipfs.io/ipfs/QmExample...",
+        "taxon": 1234,
+        "issuer": "rIssuerAddress",
+        "collection": {
+          "id": "uuid",
+          "name": "Dragon Collection",
+          "slug": "dragon-collection"
+        },
+        "isOnSale": true,
+        "lowestPrice": "1500000",
+        "uri": "ipfs://QmExample..."
+      }
+    ],
+    "summary": {
+      "totalCollections": 1,
+      "totalNFTs": 25,
+      "searchTerm": "dragon"
+    }
+  }
+}
+```
+
+**Notes:**
+- Searches collection names and descriptions in database
+- Searches NFT titles from XRPL metadata
+- Case-insensitive search
+- IPFS URLs automatically converted to HTTPS
+- Returns both matching collections and NFTs
+
+---
+
+### Get New NFTs
+
+**GET** `/collections/new-nfts?limit=20`
+
+Get newest listed NFTs across all collections, sorted by listing date.
+
+**Query Parameters:**
+- `limit` (optional): Number of NFTs to return (default: 20)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Newest NFTs retrieved successfully",
+  "data": {
+    "nfts": [
+      {
+        "nftTokenId": "00081388...",
+        "name": "Cool NFT #123",
+        "image": "https://ipfs.io/ipfs/QmExample...",
+        "description": "A unique digital artwork",
+        "price": "1000000",
+        "owner": "rOwnerAddress",
+        "listedDate": "2025-01-15T10:30:00Z",
+        "collection": {
+          "id": "uuid",
+          "name": "Popular Collection",
+          "slug": "popular-collection",
+          "image": "https://example.com/collection.jpg",
+          "taxon": 1234
+        },
+        "uri": "ipfs://QmExample..."
+      }
+    ],
+    "total": 150,
+    "limit": 20
+  }
+}
+```
+
+**Notes:**
+- Only includes NFTs currently listed for sale
+- Sorted by listing date (most recent first)
+- Fetches from all collections in database
+- NFT metadata fetched from XRPL in real-time
+
+---
+
+### Get Top Sellers
+
+**GET** `/collections/top-sellers?limit=10`
+
+Get users with most collections and highest trading volume.
+
+**Query Parameters:**
+- `limit` (optional): Number of sellers to return (default: 10)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Top sellers retrieved successfully",
+  "data": {
+    "sellers": [
+      {
+        "walletAddress": "rCreatorAddress",
+        "username": "top_creator",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true,
+        "collectionsCount": 5,
+        "totalVolume": "50000000"
+      }
+    ],
+    "total": 10
+  }
+}
+```
+
+**Notes:**
+- Sorted by number of collections first, then by volume
+- Volume is sum of all collection volumes
+- Only includes users with listed collections
+- Profile data from database
+
+---
+
+### Get Popular Collections
+
+**GET** `/collections/popular`
+
+Get most popular collection in each category based on number of NFTs minted.
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Popular collections retrieved successfully",
+  "data": {
+    "popularCollections": [
+      {
+        "category": "art",
+        "collection": {
+          "id": "uuid",
+          "name": "Popular Art Collection",
+          "slug": "popular-art-collection",
+          "image": "https://example.com/collection.jpg",
+          "description": "Most popular art collection",
+          "taxon": 1234,
+          "creator": {
+            "walletAddress": "rCreatorAddress",
+            "username": "artist_name",
+            "profileImage": "https://example.com/avatar.jpg",
+            "isVerified": true
+          },
+          "isVerified": true,
+          "totalSupply": 1000,
+          "floorPrice": "500000",
+          "totalVolume": "50000000"
+        },
+        "mintedCount": 1000,
+        "recentNFTs": [
+          {
+            "nftTokenId": "00081388...",
+            "name": "Art NFT #1",
+            "image": "https://ipfs.io/ipfs/QmExample...",
+            "description": "Beautiful artwork"
+          }
+        ]
+      }
+    ],
+    "total": 5
+  }
+}
+```
+
+**Notes:**
+- Groups collections by category
+- Returns collection with most NFTs minted in each category
+- Includes 4 most recent NFTs from each popular collection
+- Sorted by minted count (highest first)
+- Only includes collections with categories
 
 ---
 
