@@ -1253,7 +1253,13 @@ const getNewNFTs = async (req, res, next) => {
                   name: collection.name,
                   slug: collection.slug,
                   image: collection.image,
-                  taxon: collection.taxon
+                  taxon: collection.taxon,
+                  creator: {
+                    walletAddress: collection.creator?.walletAddress || collection.creatorWalletAddress,
+                    username: collection.creator?.username || collection.creatorWalletAddress,
+                    profileImage: collection.creator?.profileImage || null,
+                    isVerified: collection.creator?.isVerified || false
+                  }
                 },
                 uri: nft.URI
               });
