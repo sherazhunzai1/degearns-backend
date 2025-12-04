@@ -6,10 +6,15 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       allowNull: false
     },
-    dropId: {
+    collectionId: {
       type: DataTypes.UUID,
       allowNull: false,
-      comment: 'Reference to Drop'
+      comment: 'Reference to Collection'
+    },
+    dropId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'Reference to Drop (null if not yet assigned to a drop)'
     },
     metadataUri: {
       type: DataTypes.STRING(500),
@@ -61,10 +66,11 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'DropNFTs',
     timestamps: true,
     indexes: [
+      { fields: ['collectionId'] },
       { fields: ['dropId'] },
       { fields: ['isMinted'] },
+      { fields: ['collectionId', 'dropId'] },
       { fields: ['dropId', 'isMinted'] },
-      { unique: true, fields: ['nftokenId'], where: { nftokenId: { [DataTypes.Op.ne]: null } } },
       { fields: ['mintedBy'] },
       { fields: ['mintedAt'] }
     ]

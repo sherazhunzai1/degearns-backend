@@ -5,28 +5,97 @@ const { Op } = require('sequelize');
 
 class DropController {
   /**
+   * Bulk upload NFT metadata to be used in drops
+   * POST /api/drops/bulk-upload-nfts
+   */
+  async bulkUploadNFTs(req, res, next) {
+    try {
+      const { creatorWalletAddress, collectionId, nfts } = req.body;
+
+      // Validate required fields
+      if (!creatorWalletAddress) {
+        throw new ApiError(400, 'creatorWalletAddress is required');
+      }
+      if (!collectionId) {
+        throw new ApiError(400, 'collectionId is required');
+      }
+      if (!nfts || !Array.isArray(nfts) || nfts.length === 0) {
+        throw new ApiError(400, 'nfts array is required and must not be empty');
+      }
+
+      // Check if collection exists and user is the creator
+      const collection = await Collection.findByPk(collectionId);
+      if (!collection) {
+        throw new ApiError(404, 'Collection not found');
+      }
+
+      if (collection.creatorWalletAddress !== creatorWalletAddress) {
+        throw new ApiError(403, 'You are not the creator of this collection');
+      }
+
+      // Validate each NFT has required fields
+      for (let i = 0; i < nfts.length; i++) {
+        const nft = nfts[i];
+        if (!nft.metadataUri) {
+          throw new ApiError(400, `NFT at index ${i} is missing metadataUri`);
+        }
+        if (!nft.metadata || typeof nft.metadata !== 'object') {
+          throw new ApiError(400, `NFT at index ${i} is missing or has invalid metadata`);
+        }
+      }
+
+      // Create DropNFT records with dropId=null (not yet assigned to a drop)
+      const createdNFTs = await Promise.all(
+        nfts.map(nft =>
+          DropNFT.create({
+            collectionId,
+            dropId: null,
+            metadataUri: nft.metadataUri,
+            metadata: nft.metadata,
+            isMinted: false
+          })
+        )
+      );
+
+      logger.info(`Bulk uploaded ${createdNFTs.length} NFTs for collection ${collectionId} by ${creatorWalletAddress}`);
+
+      res.status(201).json({
+        success: true,
+        data: createdNFTs,
+        message: `Successfully uploaded ${createdNFTs.length} NFTs`
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * Create a new drop
    * POST /api/drops
    */
   async createDrop(req, res, next) {
     try {
       const {
+        creatorWalletAddress,
         collectionId,
         name,
         description,
         price,
-        totalSupply,
         startDate,
         endDate,
-        nftMetadata,
         transferFee,
         flags,
-        maxMintsPerWallet
+        maxMintsPerWallet,
+        isPublic,
+        allowlist
       } = req.body;
 
       // Validate required fields
-      if (!collectionId || !name || !price || !totalSupply || !startDate || !endDate || !nftMetadata) {
-        throw new ApiError(400, 'Missing required fields: collectionId, name, price, totalSupply, startDate, endDate, nftMetadata');
+      if (!creatorWalletAddress) {
+        throw new ApiError(400, 'creatorWalletAddress is required');
+      }
+      if (!collectionId || !name || !price || !startDate || !endDate) {
+        throw new ApiError(400, 'Missing required fields: collectionId, name, price, startDate, endDate');
       }
 
       // Validate dates
@@ -42,8 +111,37 @@ class DropController {
         throw new ApiError(404, 'Collection not found');
       }
 
-      if (collection.creatorWalletAddress !== req.user.walletAddress) {
+      if (collection.creatorWalletAddress !== creatorWalletAddress) {
         throw new ApiError(403, 'You are not the creator of this collection');
+      }
+
+      // Count available DropNFTs for this collection (not yet assigned to a drop)
+      const availableNFTs = await DropNFT.findAll({
+        where: {
+          collectionId,
+          dropId: null,
+          isMinted: false
+        }
+      });
+
+      if (availableNFTs.length === 0) {
+        throw new ApiError(400, 'No NFTs available for this collection. Please upload NFTs first using /bulk-upload-nfts');
+      }
+
+      // Set totalSupply based on available NFTs
+      const totalSupply = availableNFTs.length;
+
+      // Validate allowlist if provided
+      if (allowlist) {
+        if (!Array.isArray(allowlist)) {
+          throw new ApiError(400, 'allowlist must be an array of wallet addresses');
+        }
+        // Validate each address format (basic check for XRPL addresses starting with 'r')
+        for (const addr of allowlist) {
+          if (typeof addr !== 'string' || !addr.startsWith('r')) {
+            throw new ApiError(400, 'Invalid wallet address in allowlist');
+          }
+        }
       }
 
       // Determine initial status based on dates
@@ -65,14 +163,25 @@ class DropController {
         startDate: start,
         endDate: end,
         status,
-        creatorWalletAddress: req.user.walletAddress,
-        nftMetadata,
+        creatorWalletAddress,
         transferFee: transferFee || 0,
         flags: flags || 8,
-        maxMintsPerWallet
+        maxMintsPerWallet,
+        isPublic: isPublic !== undefined ? isPublic : true,
+        allowlist: allowlist || null
       });
 
-      logger.info(`Drop created: ${drop.id} by ${req.user.walletAddress}`);
+      // Assign all available NFTs to this drop
+      await DropNFT.update(
+        { dropId: drop.id },
+        {
+          where: {
+            id: { [Op.in]: availableNFTs.map(nft => nft.id) }
+          }
+        }
+      );
+
+      logger.info(`Drop created: ${drop.id} with ${totalSupply} NFTs by ${creatorWalletAddress}`);
 
       res.status(201).json({
         success: true,
@@ -211,14 +320,19 @@ class DropController {
     try {
       const { id } = req.params;
       const {
+        walletAddress,
         name,
         description,
         price,
         startDate,
         endDate,
-        nftMetadata,
         maxMintsPerWallet
       } = req.body;
+
+      // Validate wallet address
+      if (!walletAddress) {
+        throw new ApiError(400, 'walletAddress is required');
+      }
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
@@ -226,7 +340,7 @@ class DropController {
       }
 
       // Check ownership
-      if (drop.creatorWalletAddress !== req.user.walletAddress) {
+      if (drop.creatorWalletAddress !== walletAddress) {
         throw new ApiError(403, 'You are not the creator of this drop');
       }
 
@@ -256,7 +370,6 @@ class DropController {
       if (price) updateData.price = price;
       if (startDate) updateData.startDate = new Date(startDate);
       if (endDate) updateData.endDate = new Date(endDate);
-      if (nftMetadata) updateData.nftMetadata = nftMetadata;
       if (maxMintsPerWallet !== undefined) updateData.maxMintsPerWallet = maxMintsPerWallet;
       if (req.body.totalSupply) updateData.totalSupply = req.body.totalSupply;
 
@@ -268,7 +381,7 @@ class DropController {
         await drop.save();
       }
 
-      logger.info(`Drop updated: ${drop.id} by ${req.user.walletAddress}`);
+      logger.info(`Drop updated: ${drop.id} by ${walletAddress}`);
 
       res.json({
         success: true,
@@ -286,6 +399,12 @@ class DropController {
   async deleteDrop(req, res, next) {
     try {
       const { id } = req.params;
+      const { walletAddress } = req.query;
+
+      // Validate wallet address
+      if (!walletAddress) {
+        throw new ApiError(400, 'walletAddress is required');
+      }
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
@@ -293,7 +412,7 @@ class DropController {
       }
 
       // Check ownership
-      if (drop.creatorWalletAddress !== req.user.walletAddress) {
+      if (drop.creatorWalletAddress !== walletAddress) {
         throw new ApiError(403, 'You are not the creator of this drop');
       }
 
@@ -302,9 +421,15 @@ class DropController {
         throw new ApiError(400, 'Cannot delete drop with minted NFTs');
       }
 
+      // Unassign DropNFTs from this drop (set dropId back to null)
+      await DropNFT.update(
+        { dropId: null },
+        { where: { dropId: id } }
+      );
+
       await drop.destroy();
 
-      logger.info(`Drop deleted: ${id} by ${req.user.walletAddress}`);
+      logger.info(`Drop deleted: ${id} by ${walletAddress}`);
 
       res.json({
         success: true,
@@ -322,20 +447,22 @@ class DropController {
   async mintFromDrop(req, res, next) {
     try {
       const { id } = req.params;
-      const { nftokenId, transactionHash } = req.body;
-      const minterWalletAddress = req.user.walletAddress;
+      const { minterWalletAddress, nftokenId, transactionHash, metadataUri } = req.body;
 
       // Validate required fields
-      if (!nftokenId || !transactionHash) {
-        throw new ApiError(400, 'nftokenId and transactionHash are required');
+      if (!minterWalletAddress) {
+        throw new ApiError(400, 'minterWalletAddress is required');
+      }
+      if (!nftokenId || !transactionHash || !metadataUri) {
+        throw new ApiError(400, 'nftokenId, transactionHash, and metadataUri are required');
       }
 
       // Check if this NFT was already recorded
-      const existingMint = await DropMint.findOne({
+      const existingNFT = await DropNFT.findOne({
         where: { nftokenId }
       });
 
-      if (existingMint) {
+      if (existingNFT) {
         throw new ApiError(400, 'This NFT has already been recorded');
       }
 
@@ -364,6 +491,13 @@ class DropController {
         throw new ApiError(400, 'Drop is not currently available for minting');
       }
 
+      // Check allowlist if drop is not public
+      if (!drop.isPublic) {
+        if (!drop.isAllowed(minterWalletAddress)) {
+          throw new ApiError(403, 'You are not allowed to mint from this drop');
+        }
+      }
+
       // Check if sold out
       if (drop.mintedCount >= drop.totalSupply) {
         drop.status = 'soldout';
@@ -373,10 +507,11 @@ class DropController {
 
       // Check max mints per wallet if set
       if (drop.maxMintsPerWallet) {
-        const userMintCount = await DropMint.count({
+        const userMintCount = await DropNFT.count({
           where: {
             dropId: id,
-            minterWalletAddress
+            mintedBy: minterWalletAddress,
+            isMinted: true
           }
         });
 
@@ -385,15 +520,29 @@ class DropController {
         }
       }
 
+      // Find the DropNFT by metadataUri
+      const dropNFT = await DropNFT.findOne({
+        where: {
+          dropId: id,
+          metadataUri,
+          isMinted: false
+        }
+      });
+
+      if (!dropNFT) {
+        throw new ApiError(404, 'NFT not found in this drop or already minted');
+      }
+
       // Calculate mint number
       const mintNumber = drop.mintedCount + 1;
 
-      // Record the mint
-      const dropMint = await DropMint.create({
-        dropId: id,
-        minterWalletAddress,
+      // Update the DropNFT record
+      await dropNFT.update({
         nftokenId,
+        mintedBy: minterWalletAddress,
+        mintedAt: new Date(),
         transactionHash,
+        isMinted: true,
         mintNumber
       });
 
@@ -410,7 +559,15 @@ class DropController {
       res.status(201).json({
         success: true,
         data: {
-          mint: dropMint,
+          mint: {
+            id: dropNFT.id,
+            dropId: id,
+            minterWalletAddress,
+            nftokenId,
+            transactionHash,
+            mintNumber,
+            metadataUri
+          },
           mintNumber,
           drop: {
             id: drop.id,
@@ -434,7 +591,7 @@ class DropController {
   async getMintMetadata(req, res, next) {
     try {
       const { id } = req.params;
-      const minterWalletAddress = req.user?.walletAddress;
+      const { walletAddress } = req.query;
 
       const drop = await Drop.findByPk(id, {
         include: [
@@ -459,17 +616,28 @@ class DropController {
         throw new ApiError(400, 'Drop is not currently available for minting');
       }
 
+      // Check allowlist if drop is not public
+      if (!drop.isPublic) {
+        if (!walletAddress) {
+          throw new ApiError(400, 'walletAddress is required for allowlist drops');
+        }
+        if (!drop.isAllowed(walletAddress)) {
+          throw new ApiError(403, 'You are not allowed to mint from this drop');
+        }
+      }
+
       // Check if sold out
       if (drop.mintedCount >= drop.totalSupply) {
         throw new ApiError(400, 'Drop is sold out');
       }
 
-      // Check max mints per wallet if set and user is authenticated
-      if (minterWalletAddress && drop.maxMintsPerWallet) {
-        const userMintCount = await DropMint.count({
+      // Check max mints per wallet if set and wallet address provided
+      if (walletAddress && drop.maxMintsPerWallet) {
+        const userMintCount = await DropNFT.count({
           where: {
             dropId: id,
-            minterWalletAddress
+            mintedBy: walletAddress,
+            isMinted: true
           }
         });
 
@@ -478,15 +646,27 @@ class DropController {
         }
       }
 
-      // Calculate next mint number
+      // Find ONE unminted DropNFT for this drop
+      const unmintedNFT = await DropNFT.findOne({
+        where: {
+          dropId: id,
+          isMinted: false
+        },
+        order: [['createdAt', 'ASC']] // First uploaded, first minted
+      });
+
+      if (!unmintedNFT) {
+        throw new ApiError(400, 'No unminted NFTs available in this drop');
+      }
+
+      // Calculate mint number (based on how many are already minted)
       const mintNumber = drop.mintedCount + 1;
 
-      // Prepare metadata with mint number
+      // Add mint number and drop info to metadata attributes
       const metadata = {
-        ...drop.nftMetadata,
-        name: `${drop.nftMetadata.name} #${mintNumber}`,
+        ...unmintedNFT.metadata,
         attributes: [
-          ...(drop.nftMetadata.attributes || []),
+          ...(unmintedNFT.metadata.attributes || []),
           {
             trait_type: 'Mint Number',
             value: mintNumber
@@ -505,6 +685,7 @@ class DropController {
           dropName: drop.name,
           mintNumber,
           metadata,
+          metadataUri: unmintedNFT.metadataUri,
           taxon: drop.collection.taxon,
           transferFee: drop.transferFee,
           flags: drop.flags,
@@ -570,11 +751,20 @@ class DropController {
    */
   async getMyMints(req, res, next) {
     try {
-      const { page = 1, limit = 20 } = req.query;
+      const { walletAddress, page = 1, limit = 20 } = req.query;
+
+      // Validate wallet address
+      if (!walletAddress) {
+        throw new ApiError(400, 'walletAddress query parameter is required');
+      }
+
       const offset = (page - 1) * limit;
 
-      const { count, rows: mints } = await DropMint.findAndCountAll({
-        where: { minterWalletAddress: req.user.walletAddress },
+      const { count, rows: mints } = await DropNFT.findAndCountAll({
+        where: {
+          mintedBy: walletAddress,
+          isMinted: true
+        },
         include: [
           {
             model: Drop,
@@ -590,7 +780,7 @@ class DropController {
         ],
         limit: parseInt(limit),
         offset: parseInt(offset),
-        order: [['createdAt', 'DESC']]
+        order: [['mintedAt', 'DESC']]
       });
 
       res.json({
@@ -617,7 +807,7 @@ class DropController {
   async canMint(req, res, next) {
     try {
       const { id } = req.params;
-      const walletAddress = req.user?.walletAddress;
+      const { walletAddress } = req.query;
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
@@ -628,7 +818,7 @@ class DropController {
       drop.updateStatus();
       await drop.save();
 
-      const canMint = drop.isMintable();
+      let canMint = drop.isMintable();
       const reason = [];
 
       if (!canMint) {
@@ -641,17 +831,30 @@ class DropController {
         }
       }
 
-      // Check user-specific constraints if authenticated
+      // Check allowlist if drop is not public
+      if (!drop.isPublic) {
+        if (!walletAddress) {
+          canMint = false;
+          reason.push('Wallet address is required for allowlist drops');
+        } else if (!drop.isAllowed(walletAddress)) {
+          canMint = false;
+          reason.push('You are not on the allowlist for this drop');
+        }
+      }
+
+      // Check user-specific constraints if wallet address provided
       let userMintCount = 0;
       if (walletAddress && drop.maxMintsPerWallet) {
-        userMintCount = await DropMint.count({
+        userMintCount = await DropNFT.count({
           where: {
             dropId: id,
-            minterWalletAddress: walletAddress
+            mintedBy: walletAddress,
+            isMinted: true
           }
         });
 
         if (userMintCount >= drop.maxMintsPerWallet) {
+          canMint = false;
           reason.push(`Maximum ${drop.maxMintsPerWallet} mints per wallet reached`);
         }
       }
@@ -659,11 +862,12 @@ class DropController {
       res.json({
         success: true,
         data: {
-          canMint: canMint && (drop.maxMintsPerWallet ? userMintCount < drop.maxMintsPerWallet : true),
+          canMint,
           status: drop.status,
           remaining: drop.totalSupply - drop.mintedCount,
           userMintCount,
           maxMintsPerWallet: drop.maxMintsPerWallet,
+          isPublic: drop.isPublic,
           reason: reason.length > 0 ? reason : null
         }
       });

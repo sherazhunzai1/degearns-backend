@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
+  bulkUploadNFTs,
   createDrop,
   getDrops,
   getDrop,
@@ -12,6 +13,13 @@ const {
   getMyMints,
   canMint
 } = require('../controllers/dropController');
+
+/**
+ * @route   POST /api/v1/drops/bulk-upload-nfts
+ * @desc    Bulk upload NFT metadata for drops
+ * @access  Public (wallet address required in body)
+ */
+router.post('/bulk-upload-nfts', bulkUploadNFTs);
 
 /**
  * @route   POST /api/v1/drops

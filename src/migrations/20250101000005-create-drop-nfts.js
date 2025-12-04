@@ -9,10 +9,21 @@ module.exports = {
         primaryKey: true,
         allowNull: false
       },
-      dropId: {
+      collectionId: {
         type: Sequelize.UUID,
         allowNull: false,
-        comment: 'Reference to Drop',
+        comment: 'Reference to Collection',
+        references: {
+          model: 'Collections',
+          key: 'id'
+        },
+        onUpdate: 'CASCADE',
+        onDelete: 'CASCADE'
+      },
+      dropId: {
+        type: Sequelize.UUID,
+        allowNull: true,
+        comment: 'Reference to Drop (null until assigned to a drop)',
         references: {
           model: 'Drops',
           key: 'id'
@@ -80,12 +91,20 @@ module.exports = {
     });
 
     // Add indexes
+    await queryInterface.addIndex('DropNFTs', ['collectionId'], {
+      name: 'idx_drop_nfts_collection'
+    });
+
     await queryInterface.addIndex('DropNFTs', ['dropId'], {
       name: 'idx_drop_nfts_drop'
     });
 
     await queryInterface.addIndex('DropNFTs', ['isMinted'], {
       name: 'idx_drop_nfts_is_minted'
+    });
+
+    await queryInterface.addIndex('DropNFTs', ['collectionId', 'dropId'], {
+      name: 'idx_drop_nfts_collection_drop'
     });
 
     await queryInterface.addIndex('DropNFTs', ['dropId', 'isMinted'], {

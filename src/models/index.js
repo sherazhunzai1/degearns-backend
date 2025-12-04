@@ -65,6 +65,16 @@ DropMint.belongsTo(User, {
   as: 'minter'
 });
 
+// Collection and DropNFT
+Collection.hasMany(DropNFT, {
+  foreignKey: 'collectionId',
+  as: 'dropNFTs'
+});
+DropNFT.belongsTo(Collection, {
+  foreignKey: 'collectionId',
+  as: 'collection'
+});
+
 // Drop and DropNFT
 Drop.hasMany(DropNFT, {
   foreignKey: 'dropId',
