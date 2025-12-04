@@ -7,6 +7,7 @@ const {
   updateDrop,
   deleteDrop,
   mintFromDrop,
+  getMintMetadata,
   getDropMints,
   getMyMints,
   canMint
@@ -56,8 +57,15 @@ router.put('/:id', authenticate, updateDrop);
 router.delete('/:id', authenticate, deleteDrop);
 
 /**
+ * @route   GET /api/v1/drops/:id/mint-metadata
+ * @desc    Get metadata and mint parameters for minting on frontend
+ * @access  Public (optional authentication for per-user checks)
+ */
+router.get('/:id/mint-metadata', optionalAuth, getMintMetadata);
+
+/**
  * @route   POST /api/v1/drops/:id/mint
- * @desc    Mint an NFT from a drop
+ * @desc    Record an NFT mint after frontend mints on XRPL
  * @access  Private (requires authentication)
  */
 router.post('/:id/mint', authenticate, mintFromDrop);

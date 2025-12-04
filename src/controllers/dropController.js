@@ -1,10 +1,7 @@
 const { Drop, DropMint, Collection, User } = require('../models');
-const xrplService = require('../services/xrplService');
-const xrplConfig = require('../config/xrpl');
 const { ValidationError, NotFoundError, ForbiddenError, BadRequestError } = require('../utils/errors');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
-const { convertStringToHex } = require('xrpl');
 
 class DropController {
   /**
@@ -319,13 +316,28 @@ class DropController {
   }
 
   /**
-   * Mint an NFT from a drop
+   * Record an NFT mint from a drop (after frontend mints on XRPL)
    * POST /api/drops/:id/mint
    */
   async mintFromDrop(req, res, next) {
     try {
       const { id } = req.params;
+      const { nftokenId, transactionHash } = req.body;
       const minterWalletAddress = req.user.walletAddress;
+
+      // Validate required fields
+      if (!nftokenId || !transactionHash) {
+        throw new ValidationError('nftokenId and transactionHash are required');
+      }
+
+      // Check if this NFT was already recorded
+      const existingMint = await DropMint.findOne({
+        where: { nftokenId }
+      });
+
+      if (existingMint) {
+        throw new BadRequestError('This NFT has already been recorded');
+      }
 
       // Get drop with lock to prevent race conditions
       const drop = await Drop.findByPk(id, {
@@ -333,7 +345,7 @@ class DropController {
           {
             model: Collection,
             as: 'collection',
-            attributes: ['taxon']
+            attributes: ['id', 'name', 'taxon']
           }
         ],
         lock: true
@@ -373,11 +385,103 @@ class DropController {
         }
       }
 
-      // Get admin wallet for minting
-      const adminWallet = xrplConfig.getAdminWallet();
-
-      // Prepare NFT metadata with mint number
+      // Calculate mint number
       const mintNumber = drop.mintedCount + 1;
+
+      // Record the mint
+      const dropMint = await DropMint.create({
+        dropId: id,
+        minterWalletAddress,
+        nftokenId,
+        transactionHash,
+        mintNumber
+      });
+
+      // Update drop minted count
+      await drop.increment('mintedCount');
+
+      // Check if sold out
+      if (drop.mintedCount + 1 >= drop.totalSupply) {
+        await drop.update({ status: 'soldout' });
+      }
+
+      logger.info(`NFT mint recorded for drop ${id}: ${nftokenId} by ${minterWalletAddress} (Mint #${mintNumber})`);
+
+      res.status(201).json({
+        success: true,
+        data: {
+          mint: dropMint,
+          mintNumber,
+          drop: {
+            id: drop.id,
+            name: drop.name,
+            mintedCount: drop.mintedCount + 1,
+            totalSupply: drop.totalSupply,
+            status: drop.mintedCount + 1 >= drop.totalSupply ? 'soldout' : drop.status
+          }
+        },
+        message: 'NFT mint recorded successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Get drop metadata for minting (for frontend to use when minting on XRPL)
+   * GET /api/drops/:id/mint-metadata
+   */
+  async getMintMetadata(req, res, next) {
+    try {
+      const { id } = req.params;
+      const minterWalletAddress = req.user?.walletAddress;
+
+      const drop = await Drop.findByPk(id, {
+        include: [
+          {
+            model: Collection,
+            as: 'collection',
+            attributes: ['id', 'name', 'taxon', 'royaltyPercentage']
+          }
+        ]
+      });
+
+      if (!drop) {
+        throw new NotFoundError('Drop not found');
+      }
+
+      // Update status
+      drop.updateStatus();
+      await drop.save();
+
+      // Validate drop is mintable
+      if (!drop.isMintable()) {
+        throw new BadRequestError('Drop is not currently available for minting');
+      }
+
+      // Check if sold out
+      if (drop.mintedCount >= drop.totalSupply) {
+        throw new BadRequestError('Drop is sold out');
+      }
+
+      // Check max mints per wallet if set and user is authenticated
+      if (minterWalletAddress && drop.maxMintsPerWallet) {
+        const userMintCount = await DropMint.count({
+          where: {
+            dropId: id,
+            minterWalletAddress
+          }
+        });
+
+        if (userMintCount >= drop.maxMintsPerWallet) {
+          throw new BadRequestError(`Maximum ${drop.maxMintsPerWallet} mints per wallet reached`);
+        }
+      }
+
+      // Calculate next mint number
+      const mintNumber = drop.mintedCount + 1;
+
+      // Prepare metadata with mint number
       const metadata = {
         ...drop.nftMetadata,
         name: `${drop.nftMetadata.name} #${mintNumber}`,
@@ -394,65 +498,19 @@ class DropController {
         ]
       };
 
-      // In production, you would upload this metadata to IPFS or another storage
-      // For now, we'll use a placeholder URI
-      // TODO: Implement metadata upload to IPFS
-      const metadataUri = `https://metadata.degearns.com/drops/${id}/${mintNumber}`;
-
-      // Mint NFT on XRPL
-      const mintResult = await xrplService.mintNFT({
-        wallet: adminWallet,
-        uri: metadataUri,
-        taxon: drop.collection.taxon,
-        transferFee: drop.transferFee,
-        flags: drop.flags
-      });
-
-      if (!mintResult.success) {
-        throw new Error('Failed to mint NFT on XRPL');
-      }
-
-      // Create sell offer to the minter at the drop price
-      // Convert XRP price to drops (1 XRP = 1,000,000 drops)
-      const priceInDrops = (parseFloat(drop.price) * 1000000).toString();
-
-      const offerResult = await xrplService.createSellOffer({
-        wallet: adminWallet,
-        nftokenID: mintResult.nftokenID,
-        amount: priceInDrops,
-        destination: minterWalletAddress
-      });
-
-      // Record the mint
-      const dropMint = await DropMint.create({
-        dropId: id,
-        minterWalletAddress,
-        nftokenId: mintResult.nftokenID,
-        transactionHash: mintResult.hash,
-        mintNumber
-      });
-
-      // Update drop minted count
-      await drop.increment('mintedCount');
-
-      // Check if sold out
-      if (drop.mintedCount + 1 >= drop.totalSupply) {
-        await drop.update({ status: 'soldout' });
-      }
-
-      logger.info(`NFT minted from drop ${id}: ${mintResult.nftokenID} for ${minterWalletAddress}`);
-
-      res.status(201).json({
+      res.json({
         success: true,
         data: {
-          mint: dropMint,
-          nftokenID: mintResult.nftokenID,
-          transactionHash: mintResult.hash,
-          offerID: offerResult.offerID,
+          dropId: drop.id,
+          dropName: drop.name,
+          mintNumber,
+          metadata,
+          taxon: drop.collection.taxon,
+          transferFee: drop.transferFee,
+          flags: drop.flags,
           price: drop.price,
-          metadata
-        },
-        message: 'NFT minted successfully. Accept the sell offer to complete the purchase.'
+          collectionName: drop.collection.name
+        }
       });
     } catch (error) {
       next(error);

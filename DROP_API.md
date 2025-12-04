@@ -4,6 +4,8 @@
 
 The NFT Drop System allows collection creators to schedule NFT drops with configurable pricing, supply limits, and minting windows. Users can mint NFTs from active drops according to the schedule set by the owner.
 
+**Important**: The backend manages drop configurations and records mints, but the actual XRPL blockchain minting operations are handled by the frontend. This allows users to mint NFTs directly from their wallets.
+
 ## Features
 
 - **Scheduled Drops**: Set start and end dates for minting periods
@@ -205,24 +207,89 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 ---
 
-### 6. Mint from Drop
+### 6. Get Mint Metadata
+
+**Endpoint**: `GET /api/v1/drops/:id/mint-metadata`
+
+**Authentication**: Optional (for per-user validation)
+
+**Description**: Get metadata and XRPL parameters needed for minting on the frontend
+
+**Process**:
+1. Validates drop is active and mintable
+2. Checks supply availability
+3. Validates wallet mint limit (if set and user authenticated)
+4. Returns metadata with mint number and XRPL parameters
+
+**Response**: `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "dropId": "uuid",
+    "dropName": "Genesis Drop",
+    "mintNumber": 42,
+    "metadata": {
+      "name": "Genesis NFT #42",
+      "description": "Genesis collection NFT",
+      "image": "https://example.com/image.png",
+      "attributes": [
+        {
+          "trait_type": "Rarity",
+          "value": "Common"
+        },
+        {
+          "trait_type": "Mint Number",
+          "value": 42
+        },
+        {
+          "trait_type": "Drop",
+          "value": "Genesis Drop"
+        }
+      ]
+    },
+    "taxon": 12345,
+    "transferFee": 1000,
+    "flags": 8,
+    "price": "10",
+    "collectionName": "Collection Name"
+  }
+}
+```
+
+**Frontend Usage**:
+Frontend should:
+1. Call this endpoint to get metadata and parameters
+2. Upload metadata to IPFS (or use data URI)
+3. Use returned parameters to mint NFT on XRPL
+4. Call the record mint endpoint with the result
+
+---
+
+### 7. Record NFT Mint
 
 **Endpoint**: `POST /api/v1/drops/:id/mint`
 
 **Authentication**: Required
 
-**Description**: Mint an NFT from a drop
+**Description**: Record an NFT mint after the frontend has minted on XRPL
 
-**Request Body**: None
+**Request Body**:
+```json
+{
+  "nftokenId": "00080000...",
+  "transactionHash": "ABC123..."
+}
+```
 
 **Process**:
 1. Validates drop is active and mintable
 2. Checks supply availability
 3. Validates wallet mint limit (if set)
-4. Mints NFT on XRPL using admin wallet
-5. Creates sell offer to user at drop price
-6. Records mint in database
-7. Updates drop minted count
+4. Checks NFT not already recorded
+5. Records mint in database
+6. Updates drop minted count
+7. Updates status if sold out
 
 **Response**: `201 Created`
 ```json
@@ -233,28 +300,31 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
       "id": "uuid",
       "dropId": "uuid",
       "minterWalletAddress": "r...",
-      "nftokenId": "000...",
-      "transactionHash": "ABC...",
+      "nftokenId": "00080000...",
+      "transactionHash": "ABC123...",
       "mintNumber": 42
     },
-    "nftokenID": "000...",
-    "transactionHash": "ABC...",
-    "offerID": "DEF...",
-    "price": "10",
-    "metadata": {...}
+    "mintNumber": 42,
+    "drop": {
+      "id": "uuid",
+      "name": "Genesis Drop",
+      "mintedCount": 42,
+      "totalSupply": 1000,
+      "status": "active"
+    }
   },
-  "message": "NFT minted successfully. Accept the sell offer to complete the purchase."
+  "message": "NFT mint recorded successfully"
 }
 ```
 
 **Notes**:
-- User must accept the sell offer on XRPL to receive the NFT
-- The sell offer is created at the drop price
-- Payment validation should be implemented in production
+- Frontend must mint the NFT on XRPL first
+- This endpoint only records the mint that already happened
+- Prevents double-recording with nftokenId uniqueness check
 
 ---
 
-### 7. Get Drop Mints
+### 8. Get Drop Mints
 
 **Endpoint**: `GET /api/v1/drops/:id/mints`
 
@@ -290,7 +360,7 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 ---
 
-### 8. Get My Mints
+### 9. Get My Mints
 
 **Endpoint**: `GET /api/v1/drops/my-mints`
 
@@ -306,7 +376,7 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 ---
 
-### 9. Check Can Mint
+### 10. Check Can Mint
 
 **Endpoint**: `GET /api/v1/drops/:id/can-mint`
 
@@ -386,42 +456,77 @@ Common error codes:
 
 ---
 
+## Minting Flow (Frontend to Backend)
+
+The complete minting flow works as follows:
+
+1. **Check Eligibility**:
+   ```
+   GET /api/v1/drops/:id/can-mint
+   ```
+   Verify drop is active and user can mint
+
+2. **Get Mint Metadata**:
+   ```
+   GET /api/v1/drops/:id/mint-metadata
+   ```
+   Retrieve metadata and XRPL parameters
+
+3. **Frontend Mints on XRPL**:
+   - Upload metadata to IPFS
+   - Use XRPL.js to mint NFT with provided parameters
+   - User signs transaction with their wallet (XAMAN)
+
+4. **Record Mint**:
+   ```
+   POST /api/v1/drops/:id/mint
+   {
+     "nftokenId": "...",
+     "transactionHash": "..."
+   }
+   ```
+   Backend records the mint in database
+
 ## Implementation Notes
+
+### Frontend Responsibilities
+
+1. **IPFS Upload**: Frontend must upload metadata to IPFS before minting
+2. **XRPL Minting**: Use XRPL.js to mint NFTs with user's wallet
+3. **Transaction Handling**: Handle transaction signing and errors
+4. **Payment**: User pays gas fees for minting transaction
+
+### Backend Responsibilities
+
+1. **Drop Management**: CRUD operations for drops
+2. **Validation**: Ensure drop rules (timing, supply, limits)
+3. **Mint Recording**: Track which NFTs were minted and by whom
+4. **Status Updates**: Automatically update drop status
 
 ### TODO for Production
 
-1. **IPFS Integration**: Currently uses placeholder URIs. Implement actual IPFS upload for NFT metadata:
-   ```javascript
-   // In dropController.mintFromDrop()
-   const metadataUri = await uploadToIPFS(metadata);
-   ```
-
-2. **Payment Validation**: Add payment verification before minting:
-   ```javascript
-   // Verify user sent correct amount to creator's wallet
-   const paymentValid = await verifyPayment(userWallet, creatorWallet, dropPrice);
-   ```
-
-3. **Background Jobs**: Implement scheduled tasks to update drop statuses:
+1. **Background Jobs**: Implement scheduled tasks to update drop statuses:
    - Cron job to activate upcoming drops
    - Cron job to end expired drops
 
-4. **Rate Limiting**: Add rate limiting to mint endpoint to prevent abuse
+2. **Rate Limiting**: Add rate limiting to mint endpoint to prevent spam
 
-5. **Webhooks**: Consider adding webhooks for drop events:
+3. **Transaction Verification**: Optionally verify transaction on XRPL before recording
+
+4. **Webhooks**: Consider adding webhooks for drop events:
    - Drop started
    - Drop ended
    - Drop sold out
    - NFT minted
 
-6. **Analytics**: Track drop performance metrics:
+5. **Analytics**: Track drop performance metrics:
    - Mint velocity
    - Revenue tracking
    - Popular drops
 
 ---
 
-## Usage Example
+## Usage Examples
 
 ### Creating a Drop
 
@@ -446,11 +551,53 @@ curl -X POST https://api.degearns.com/api/v1/drops \
   }'
 ```
 
-### Minting from a Drop
+### Minting Flow
 
+#### Step 1: Get Mint Metadata
+```bash
+curl -X GET https://api.degearns.com/api/v1/drops/drop-uuid/mint-metadata \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+#### Step 2: Frontend Mints on XRPL
+```javascript
+// Frontend code (using XRPL.js)
+import { Client, Wallet, convertStringToHex } from 'xrpl';
+
+// Upload metadata to IPFS first
+const metadataUri = await uploadToIPFS(metadata);
+
+// Mint NFT
+const client = new Client('wss://xrplcluster.com');
+await client.connect();
+
+const wallet = Wallet.fromSeed(userWalletSeed);
+const mintTx = {
+  TransactionType: 'NFTokenMint',
+  Account: wallet.address,
+  URI: convertStringToHex(metadataUri),
+  Flags: 8, // from mint-metadata response
+  TransferFee: 1000, // from mint-metadata response
+  NFTokenTaxon: 12345 // from mint-metadata response
+};
+
+const prepared = await client.autofill(mintTx);
+const signed = wallet.sign(prepared);
+const result = await client.submitAndWait(signed.tx_blob);
+
+const nftokenId = extractNFTokenID(result.result.meta);
+const transactionHash = result.result.hash;
+```
+
+#### Step 3: Record Mint
 ```bash
 curl -X POST https://api.degearns.com/api/v1/drops/drop-uuid/mint \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "nftokenId": "00080000...",
+    "transactionHash": "ABC123..."
+  }'
 ```
 
 ---
@@ -474,13 +621,15 @@ This will execute:
 Test the endpoints using the provided Postman collection or curl commands.
 
 Example test flow:
-1. Create a collection
+1. Create a collection (via frontend)
 2. Create a drop for that collection
 3. Query drops to see your drop
 4. Check can-mint status
-5. Mint from the drop
-6. View mints for the drop
-7. Check your mints
+5. Get mint metadata
+6. Mint NFT on XRPL (via frontend)
+7. Record the mint via API
+8. View mints for the drop
+9. Check your mints
 
 ---
 
