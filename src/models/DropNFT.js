@@ -7,9 +7,9 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     collectionId: {
-      type: DataTypes.UUID,
-      allowNull: false,
-      comment: 'Reference to Collection'
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Collection identifier (no FK constraint)'
     },
     dropId: {
       type: DataTypes.UUID,

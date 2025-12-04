@@ -21,17 +21,7 @@ Collection.belongsTo(User, {
   as: 'creator'
 });
 
-// Collection and Drop
-Collection.hasMany(Drop, {
-  foreignKey: 'collectionId',
-  as: 'drops'
-});
-Drop.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
-
-// User and Drop
+// User and Drop (no Collection association)
 User.hasMany(Drop, {
   foreignKey: 'creatorWalletAddress',
   sourceKey: 'walletAddress',
@@ -65,17 +55,7 @@ DropMint.belongsTo(User, {
   as: 'minter'
 });
 
-// Collection and DropNFT
-Collection.hasMany(DropNFT, {
-  foreignKey: 'collectionId',
-  as: 'dropNFTs'
-});
-DropNFT.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
-
-// Drop and DropNFT
+// Drop and DropNFT (no Collection association)
 Drop.hasMany(DropNFT, {
   foreignKey: 'dropId',
   as: 'nfts'

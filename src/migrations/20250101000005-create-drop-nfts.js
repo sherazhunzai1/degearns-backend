@@ -10,26 +10,14 @@ module.exports = {
         allowNull: false
       },
       collectionId: {
-        type: Sequelize.UUID,
-        allowNull: false,
-        comment: 'Reference to Collection',
-        references: {
-          model: 'Collections',
-          key: 'id'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'CASCADE'
+        type: Sequelize.STRING(100),
+        allowNull: true,
+        comment: 'Collection identifier (no FK constraint)'
       },
       dropId: {
         type: Sequelize.UUID,
         allowNull: true,
-        comment: 'Reference to Drop (null until assigned to a drop)',
-        references: {
-          model: 'Drops',
-          key: 'id'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'CASCADE'
+        comment: 'Reference to Drop (null until assigned to a drop)'
       },
       metadataUri: {
         type: Sequelize.STRING(500),
@@ -49,13 +37,7 @@ module.exports = {
       mintedBy: {
         type: Sequelize.STRING(100),
         allowNull: true,
-        comment: 'Wallet address of minter (null if not minted yet)',
-        references: {
-          model: 'Users',
-          key: 'walletAddress'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'SET NULL'
+        comment: 'Wallet address of minter (null if not minted yet)'
       },
       mintedAt: {
         type: Sequelize.DATE,

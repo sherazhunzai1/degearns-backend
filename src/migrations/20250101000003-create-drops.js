@@ -10,15 +10,19 @@ module.exports = {
         allowNull: false
       },
       collectionId: {
-        type: Sequelize.UUID,
-        allowNull: false,
-        comment: 'Reference to Collection',
-        references: {
-          model: 'Collections',
-          key: 'id'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'CASCADE'
+        type: Sequelize.STRING(100),
+        allowNull: true,
+        comment: 'Collection identifier (no FK constraint)'
+      },
+      collectionName: {
+        type: Sequelize.STRING(200),
+        allowNull: true,
+        comment: 'Collection name'
+      },
+      taxon: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        comment: 'XRPL NFT Taxon'
       },
       name: {
         type: Sequelize.STRING(200),
@@ -65,18 +69,7 @@ module.exports = {
       creatorWalletAddress: {
         type: Sequelize.STRING(100),
         allowNull: false,
-        comment: 'Wallet address of drop creator',
-        references: {
-          model: 'Users',
-          key: 'walletAddress'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'RESTRICT'
-      },
-      nftMetadata: {
-        type: Sequelize.JSON,
-        allowNull: false,
-        comment: 'Base metadata for NFTs in this drop (name, description, image, attributes)'
+        comment: 'Wallet address of drop creator'
       },
       transferFee: {
         type: Sequelize.INTEGER,

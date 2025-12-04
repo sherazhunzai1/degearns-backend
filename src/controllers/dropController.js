@@ -1,4 +1,4 @@
-const { Drop, DropMint, DropNFT, Collection, User } = require('../models');
+const { Drop, DropMint, DropNFT, User } = require('../models');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
@@ -16,21 +16,8 @@ class DropController {
       if (!creatorWalletAddress) {
         throw new ApiError(400, 'creatorWalletAddress is required');
       }
-      if (!collectionId) {
-        throw new ApiError(400, 'collectionId is required');
-      }
       if (!nfts || !Array.isArray(nfts) || nfts.length === 0) {
         throw new ApiError(400, 'nfts array is required and must not be empty');
-      }
-
-      // Check if collection exists and user is the creator
-      const collection = await Collection.findByPk(collectionId);
-      if (!collection) {
-        throw new ApiError(404, 'Collection not found');
-      }
-
-      if (collection.creatorWalletAddress !== creatorWalletAddress) {
-        throw new ApiError(403, 'You are not the creator of this collection');
       }
 
       // Validate each NFT has required fields
@@ -78,6 +65,8 @@ class DropController {
       const {
         creatorWalletAddress,
         collectionId,
+        collectionName,
+        taxon,
         name,
         description,
         price,
@@ -94,8 +83,8 @@ class DropController {
       if (!creatorWalletAddress) {
         throw new ApiError(400, 'creatorWalletAddress is required');
       }
-      if (!collectionId || !name || !price || !startDate || !endDate) {
-        throw new ApiError(400, 'Missing required fields: collectionId, name, price, startDate, endDate');
+      if (!name || !price || !startDate || !endDate) {
+        throw new ApiError(400, 'Missing required fields: name, price, startDate, endDate');
       }
 
       // Validate dates
@@ -103,16 +92,6 @@ class DropController {
       const end = new Date(endDate);
       if (start >= end) {
         throw new ApiError(400, 'startDate must be before endDate');
-      }
-
-      // Check if collection exists and user is the creator
-      const collection = await Collection.findByPk(collectionId);
-      if (!collection) {
-        throw new ApiError(404, 'Collection not found');
-      }
-
-      if (collection.creatorWalletAddress !== creatorWalletAddress) {
-        throw new ApiError(403, 'You are not the creator of this collection');
       }
 
       // Count available DropNFTs for this collection (not yet assigned to a drop)
@@ -156,6 +135,8 @@ class DropController {
       // Create drop
       const drop = await Drop.create({
         collectionId,
+        collectionName,
+        taxon,
         name,
         description,
         price,
@@ -225,11 +206,6 @@ class DropController {
         where,
         include: [
           {
-            model: Collection,
-            as: 'collection',
-            attributes: ['id', 'name', 'slug', 'image', 'taxon']
-          },
-          {
             model: User,
             as: 'creator',
             attributes: ['walletAddress', 'username', 'profileImage']
@@ -267,11 +243,6 @@ class DropController {
 
       const drop = await Drop.findByPk(id, {
         include: [
-          {
-            model: Collection,
-            as: 'collection',
-            attributes: ['id', 'name', 'slug', 'image', 'bannerImage', 'description', 'taxon', 'category', 'royaltyPercentage']
-          },
           {
             model: User,
             as: 'creator',
@@ -468,13 +439,6 @@ class DropController {
 
       // Get drop with lock to prevent race conditions
       const drop = await Drop.findByPk(id, {
-        include: [
-          {
-            model: Collection,
-            as: 'collection',
-            attributes: ['id', 'name', 'taxon']
-          }
-        ],
         lock: true
       });
 
@@ -593,15 +557,7 @@ class DropController {
       const { id } = req.params;
       const { walletAddress } = req.query;
 
-      const drop = await Drop.findByPk(id, {
-        include: [
-          {
-            model: Collection,
-            as: 'collection',
-            attributes: ['id', 'name', 'taxon', 'royaltyPercentage']
-          }
-        ]
-      });
+      const drop = await Drop.findByPk(id);
 
       if (!drop) {
         throw new ApiError(404, 'Drop not found');
@@ -686,11 +642,12 @@ class DropController {
           mintNumber,
           metadata,
           metadataUri: unmintedNFT.metadataUri,
-          taxon: drop.collection.taxon,
+          taxon: drop.taxon,
           transferFee: drop.transferFee,
           flags: drop.flags,
           price: drop.price,
-          collectionName: drop.collection.name
+          collectionName: drop.collectionName,
+          collectionId: drop.collectionId
         }
       });
     } catch (error) {
@@ -769,13 +726,7 @@ class DropController {
           {
             model: Drop,
             as: 'drop',
-            include: [
-              {
-                model: Collection,
-                as: 'collection',
-                attributes: ['id', 'name', 'slug', 'image']
-              }
-            ]
+            attributes: ['id', 'name', 'description', 'collectionId', 'collectionName', 'price', 'status']
           }
         ],
         limit: parseInt(limit),
