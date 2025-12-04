@@ -1,4 +1,4 @@
-const { Drop, DropMint, Collection, User } = require('../models');
+const { Drop, DropMint, DropNFT, Collection, User } = require('../models');
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');

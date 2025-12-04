@@ -64,12 +64,18 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       comment: 'Wallet address of drop creator'
     },
-    nftMetadata: {
-      type: DataTypes.JSON,
+    isPublic: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
       allowNull: false,
-      comment: 'Base metadata for NFTs in this drop (name, description, image, attributes)',
+      comment: 'Whether drop is public or allowlist-only'
+    },
+    allowlist: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      comment: 'Array of wallet addresses allowed to mint (null if public)',
       get() {
-        const rawValue = this.getDataValue('nftMetadata');
+        const rawValue = this.getDataValue('allowlist');
         return rawValue ? JSON.parse(JSON.stringify(rawValue)) : null;
       }
     },
@@ -136,6 +142,23 @@ module.exports = (sequelize, DataTypes) => {
     } else {
       this.status = 'active';
     }
+  };
+
+  Drop.prototype.isAllowed = function(walletAddress) {
+    // If public, everyone is allowed
+    if (this.isPublic) {
+      return true;
+    }
+
+    // If not public, check allowlist
+    if (!this.allowlist || !Array.isArray(this.allowlist)) {
+      return false;
+    }
+
+    // Check if wallet is in allowlist (case-insensitive)
+    return this.allowlist.some(
+      addr => addr.toLowerCase() === walletAddress.toLowerCase()
+    );
   };
 
   return Drop;
