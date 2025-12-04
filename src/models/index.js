@@ -4,6 +4,8 @@ const { DataTypes } = require('sequelize');
 // Import models
 const User = require('./User')(sequelize, DataTypes);
 const Collection = require('./Collection')(sequelize, DataTypes);
+const Drop = require('./Drop')(sequelize, DataTypes);
+const DropMint = require('./DropMint')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -18,8 +20,54 @@ Collection.belongsTo(User, {
   as: 'creator'
 });
 
+// Collection and Drop
+Collection.hasMany(Drop, {
+  foreignKey: 'collectionId',
+  as: 'drops'
+});
+Drop.belongsTo(Collection, {
+  foreignKey: 'collectionId',
+  as: 'collection'
+});
+
+// User and Drop
+User.hasMany(Drop, {
+  foreignKey: 'creatorWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'drops'
+});
+Drop.belongsTo(User, {
+  foreignKey: 'creatorWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'creator'
+});
+
+// Drop and DropMint
+Drop.hasMany(DropMint, {
+  foreignKey: 'dropId',
+  as: 'mints'
+});
+DropMint.belongsTo(Drop, {
+  foreignKey: 'dropId',
+  as: 'drop'
+});
+
+// User and DropMint
+User.hasMany(DropMint, {
+  foreignKey: 'minterWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'mints'
+});
+DropMint.belongsTo(User, {
+  foreignKey: 'minterWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'minter'
+});
+
 module.exports = {
   sequelize,
   User,
-  Collection
+  Collection,
+  Drop,
+  DropMint
 };

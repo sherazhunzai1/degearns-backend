@@ -4,11 +4,13 @@ const router = express.Router();
 const authRoutes = require('./authRoutes');
 const collectionRoutes = require('./collectionRoutes');
 const nftRoutes = require('./nftRoutes');
+const dropRoutes = require('./dropRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
 router.use('/collections', collectionRoutes);
 router.use('/nfts', nftRoutes);
+router.use('/drops', dropRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
