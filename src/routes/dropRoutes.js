@@ -12,14 +12,13 @@ const {
   getMyMints,
   canMint
 } = require('../controllers/dropController');
-const { authenticate, optionalAuth } = require('../middleware/auth');
 
 /**
  * @route   POST /api/v1/drops
  * @desc    Create a new NFT drop
- * @access  Private (requires authentication)
+ * @access  Public (wallet address required in body)
  */
-router.post('/', authenticate, createDrop);
+router.post('/', createDrop);
 
 /**
  * @route   GET /api/v1/drops
@@ -30,10 +29,10 @@ router.get('/', getDrops);
 
 /**
  * @route   GET /api/v1/drops/my-mints
- * @desc    Get current user's mints from all drops
- * @access  Private (requires authentication)
+ * @desc    Get user's mints from all drops
+ * @access  Public (wallet address required in query)
  */
-router.get('/my-mints', authenticate, getMyMints);
+router.get('/my-mints', getMyMints);
 
 /**
  * @route   GET /api/v1/drops/:id
@@ -44,31 +43,31 @@ router.get('/:id', getDrop);
 
 /**
  * @route   PUT /api/v1/drops/:id
- * @desc    Update a drop
- * @access  Private (requires authentication, owner only)
+ * @desc    Update a drop (owner only)
+ * @access  Public (wallet address required in body)
  */
-router.put('/:id', authenticate, updateDrop);
+router.put('/:id', updateDrop);
 
 /**
  * @route   DELETE /api/v1/drops/:id
- * @desc    Delete a drop
- * @access  Private (requires authentication, owner only)
+ * @desc    Delete a drop (owner only)
+ * @access  Public (wallet address required in query)
  */
-router.delete('/:id', authenticate, deleteDrop);
+router.delete('/:id', deleteDrop);
 
 /**
  * @route   GET /api/v1/drops/:id/mint-metadata
  * @desc    Get metadata and mint parameters for minting on frontend
- * @access  Public (optional authentication for per-user checks)
+ * @access  Public (wallet address optional for per-user checks)
  */
-router.get('/:id/mint-metadata', optionalAuth, getMintMetadata);
+router.get('/:id/mint-metadata', getMintMetadata);
 
 /**
  * @route   POST /api/v1/drops/:id/mint
  * @desc    Record an NFT mint after frontend mints on XRPL
- * @access  Private (requires authentication)
+ * @access  Public (wallet address required in body)
  */
-router.post('/:id/mint', authenticate, mintFromDrop);
+router.post('/:id/mint', mintFromDrop);
 
 /**
  * @route   GET /api/v1/drops/:id/mints
@@ -80,8 +79,8 @@ router.get('/:id/mints', getDropMints);
 /**
  * @route   GET /api/v1/drops/:id/can-mint
  * @desc    Check if user can mint from a drop
- * @access  Public (optional authentication for per-user checks)
+ * @access  Public (wallet address optional for per-user checks)
  */
-router.get('/:id/can-mint', optionalAuth, canMint);
+router.get('/:id/can-mint', canMint);
 
 module.exports = router;

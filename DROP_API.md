@@ -48,7 +48,7 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 **Endpoint**: `POST /api/v1/drops`
 
-**Authentication**: Required
+**Authentication**: Not required (wallet address in request)
 
 **Description**: Create a new NFT drop for a collection
 
@@ -165,7 +165,7 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 **Endpoint**: `PUT /api/v1/drops/:id`
 
-**Authentication**: Required (owner only)
+**Authentication**: Not required (wallet address in request) (owner only)
 
 **Request Body** (all fields optional):
 ```json
@@ -192,7 +192,7 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 **Endpoint**: `DELETE /api/v1/drops/:id`
 
-**Authentication**: Required (owner only)
+**Authentication**: Not required (wallet address in request) (owner only)
 
 **Notes**:
 - Can only delete drops with no minted NFTs
@@ -211,7 +211,7 @@ The NFT Drop System allows collection creators to schedule NFT drops with config
 
 **Endpoint**: `GET /api/v1/drops/:id/mint-metadata`
 
-**Authentication**: Optional (for per-user validation)
+**Authentication**: Not required (wallet address optional in query)
 
 **Description**: Get metadata and XRPL parameters needed for minting on the frontend
 
@@ -270,7 +270,7 @@ Frontend should:
 
 **Endpoint**: `POST /api/v1/drops/:id/mint`
 
-**Authentication**: Required
+**Authentication**: Not required (wallet address in request)
 
 **Description**: Record an NFT mint after the frontend has minted on XRPL
 
@@ -364,7 +364,7 @@ Frontend should:
 
 **Endpoint**: `GET /api/v1/drops/my-mints`
 
-**Authentication**: Required
+**Authentication**: Not required (wallet address in request)
 
 **Query Parameters**:
 - `page` - Page number (default: 1)
@@ -380,7 +380,7 @@ Frontend should:
 
 **Endpoint**: `GET /api/v1/drops/:id/can-mint`
 
-**Authentication**: Optional (for per-user checks)
+**Authentication**: Not required (wallet address optional in query)
 
 **Description**: Check if a drop is mintable and if the user can mint
 

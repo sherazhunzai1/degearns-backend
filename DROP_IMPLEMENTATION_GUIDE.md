@@ -13,9 +13,9 @@ Owner uploads all NFTs (images + metadata JSON) to IPFS externally, gets URIs fo
 ```bash
 POST /api/v1/drops/bulk-upload-nfts
 Content-Type: application/json
-Authorization: Bearer <token>
 
 {
+  "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
   "collectionId": "uuid",
   "nfts": [
     {
@@ -47,9 +47,9 @@ Response: Returns array of created DropNFT records (not yet assigned to a drop, 
 ```bash
 POST /api/v1/drops
 Content-Type: application/json
-Authorization: Bearer <token>
 
 {
+  "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
   "collectionId": "uuid",
   "name": "Genesis Drop",
   "description": "Limited genesis collection",
@@ -172,6 +172,7 @@ router.post('/bulk-upload-nfts', authenticate, bulkUploadNFTs);
 # 2. Store metadata in backend
 POST /api/v1/drops/bulk-upload-nfts
 {
+  "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
   "collectionId": "uuid",
   "nfts": [ { "metadataUri": "ipfs://...", "metadata": {...} }, ... ]
 }
@@ -179,6 +180,7 @@ POST /api/v1/drops/bulk-upload-nfts
 # 3. Create drop
 POST /api/v1/drops
 {
+  "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
   "collectionId": "uuid",
   "name": "Genesis Drop",
   "price": "10",
@@ -203,6 +205,7 @@ GET /api/v1/drops/:id/mint-metadata
 # 4. Record mint
 POST /api/v1/drops/:id/mint
 {
+  "minterWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
   "nftokenId": "00080000...",
   "transactionHash": "ABC123...",
   "metadataUri": "ipfs://QmHash..."  // to identify which DropNFT was minted

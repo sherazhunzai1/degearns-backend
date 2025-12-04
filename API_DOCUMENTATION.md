@@ -1288,7 +1288,7 @@ For detailed documentation, see [DROP_API.md](DROP_API.md).
 
 Create a new scheduled NFT drop for a collection.
 
-**Authentication**: Required (JWT token)
+**Authentication**: Not required (wallet address in request)
 
 **Request Body:**
 ```json
@@ -1494,7 +1494,7 @@ Get metadata and XRPL parameters needed for frontend to mint NFT.
 
 Record an NFT mint after frontend has minted on XRPL.
 
-**Authentication**: Required (JWT token)
+**Authentication**: Not required (wallet address in request)
 
 **Request Body:**
 ```json
@@ -1615,7 +1615,7 @@ Get all mints for a specific drop.
 
 Get all NFTs minted by the current user from all drops.
 
-**Authentication**: Required (JWT token)
+**Authentication**: Not required (wallet address in request)
 
 **Response (200):**
 ```json
@@ -1654,7 +1654,7 @@ Get all NFTs minted by the current user from all drops.
 
 Update a drop (owner only).
 
-**Authentication**: Required (JWT token)
+**Authentication**: Not required (wallet address in request)
 
 **Request Body:**
 ```json
@@ -1680,7 +1680,7 @@ Update a drop (owner only).
 
 Delete a drop (owner only).
 
-**Authentication**: Required (JWT token)
+**Authentication**: Not required (wallet address in request)
 
 **Response (200):**
 ```json
