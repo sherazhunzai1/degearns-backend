@@ -1,5 +1,5 @@
 const { Drop, DropMint, Collection, User } = require('../models');
-const { ValidationError, NotFoundError, ForbiddenError, BadRequestError } = require('../utils/errors');
+const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 
@@ -26,24 +26,24 @@ class DropController {
 
       // Validate required fields
       if (!collectionId || !name || !price || !totalSupply || !startDate || !endDate || !nftMetadata) {
-        throw new ValidationError('Missing required fields: collectionId, name, price, totalSupply, startDate, endDate, nftMetadata');
+        throw new ApiError(400, 'Missing required fields: collectionId, name, price, totalSupply, startDate, endDate, nftMetadata');
       }
 
       // Validate dates
       const start = new Date(startDate);
       const end = new Date(endDate);
       if (start >= end) {
-        throw new ValidationError('startDate must be before endDate');
+        throw new ApiError(400, 'startDate must be before endDate');
       }
 
       // Check if collection exists and user is the creator
       const collection = await Collection.findByPk(collectionId);
       if (!collection) {
-        throw new NotFoundError('Collection not found');
+        throw new ApiError(404, 'Collection not found');
       }
 
       if (collection.creatorWalletAddress !== req.user.walletAddress) {
-        throw new ForbiddenError('You are not the creator of this collection');
+        throw new ApiError(403, 'You are not the creator of this collection');
       }
 
       // Determine initial status based on dates
@@ -185,7 +185,7 @@ class DropController {
       });
 
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       // Update status if needed
@@ -222,22 +222,22 @@ class DropController {
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       // Check ownership
       if (drop.creatorWalletAddress !== req.user.walletAddress) {
-        throw new ForbiddenError('You are not the creator of this drop');
+        throw new ApiError(403, 'You are not the creator of this drop');
       }
 
       // Can't update if already ended or sold out
       if (drop.status === 'ended' || drop.status === 'soldout') {
-        throw new BadRequestError('Cannot update ended or sold out drops');
+        throw new ApiError(400, 'Cannot update ended or sold out drops');
       }
 
       // Can't reduce total supply below minted count
       if (req.body.totalSupply && req.body.totalSupply < drop.mintedCount) {
-        throw new BadRequestError('Cannot reduce total supply below minted count');
+        throw new ApiError(400, 'Cannot reduce total supply below minted count');
       }
 
       // Validate dates if provided
@@ -245,7 +245,7 @@ class DropController {
         const start = new Date(startDate);
         const end = new Date(endDate);
         if (start >= end) {
-          throw new ValidationError('startDate must be before endDate');
+          throw new ApiError(400, 'startDate must be before endDate');
         }
       }
 
@@ -289,17 +289,17 @@ class DropController {
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       // Check ownership
       if (drop.creatorWalletAddress !== req.user.walletAddress) {
-        throw new ForbiddenError('You are not the creator of this drop');
+        throw new ApiError(403, 'You are not the creator of this drop');
       }
 
       // Can't delete if any NFTs have been minted
       if (drop.mintedCount > 0) {
-        throw new BadRequestError('Cannot delete drop with minted NFTs');
+        throw new ApiError(400, 'Cannot delete drop with minted NFTs');
       }
 
       await drop.destroy();
@@ -327,7 +327,7 @@ class DropController {
 
       // Validate required fields
       if (!nftokenId || !transactionHash) {
-        throw new ValidationError('nftokenId and transactionHash are required');
+        throw new ApiError(400, 'nftokenId and transactionHash are required');
       }
 
       // Check if this NFT was already recorded
@@ -336,7 +336,7 @@ class DropController {
       });
 
       if (existingMint) {
-        throw new BadRequestError('This NFT has already been recorded');
+        throw new ApiError(400, 'This NFT has already been recorded');
       }
 
       // Get drop with lock to prevent race conditions
@@ -352,7 +352,7 @@ class DropController {
       });
 
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       // Update and check status
@@ -361,14 +361,14 @@ class DropController {
 
       // Validate drop is mintable
       if (!drop.isMintable()) {
-        throw new BadRequestError('Drop is not currently available for minting');
+        throw new ApiError(400, 'Drop is not currently available for minting');
       }
 
       // Check if sold out
       if (drop.mintedCount >= drop.totalSupply) {
         drop.status = 'soldout';
         await drop.save();
-        throw new BadRequestError('Drop is sold out');
+        throw new ApiError(400, 'Drop is sold out');
       }
 
       // Check max mints per wallet if set
@@ -381,7 +381,7 @@ class DropController {
         });
 
         if (userMintCount >= drop.maxMintsPerWallet) {
-          throw new BadRequestError(`Maximum ${drop.maxMintsPerWallet} mints per wallet reached`);
+          throw new ApiError(400, `Maximum ${drop.maxMintsPerWallet} mints per wallet reached`);
         }
       }
 
@@ -447,7 +447,7 @@ class DropController {
       });
 
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       // Update status
@@ -456,12 +456,12 @@ class DropController {
 
       // Validate drop is mintable
       if (!drop.isMintable()) {
-        throw new BadRequestError('Drop is not currently available for minting');
+        throw new ApiError(400, 'Drop is not currently available for minting');
       }
 
       // Check if sold out
       if (drop.mintedCount >= drop.totalSupply) {
-        throw new BadRequestError('Drop is sold out');
+        throw new ApiError(400, 'Drop is sold out');
       }
 
       // Check max mints per wallet if set and user is authenticated
@@ -474,7 +474,7 @@ class DropController {
         });
 
         if (userMintCount >= drop.maxMintsPerWallet) {
-          throw new BadRequestError(`Maximum ${drop.maxMintsPerWallet} mints per wallet reached`);
+          throw new ApiError(400, `Maximum ${drop.maxMintsPerWallet} mints per wallet reached`);
         }
       }
 
@@ -528,7 +528,7 @@ class DropController {
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       const offset = (page - 1) * limit;
@@ -621,7 +621,7 @@ class DropController {
 
       const drop = await Drop.findByPk(id);
       if (!drop) {
-        throw new NotFoundError('Drop not found');
+        throw new ApiError(404, 'Drop not found');
       }
 
       // Update status
