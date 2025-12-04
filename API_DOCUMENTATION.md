@@ -1276,6 +1276,436 @@ Get most popular collection in each category based on number of NFTs minted.
 
 ---
 
+## NFT Drop Endpoints
+
+NFT Drops allow creators to schedule timed NFT releases with configurable pricing, supply limits, and minting windows. The backend manages drop configurations and records mints, while the actual XRPL minting is handled by the frontend.
+
+For detailed documentation, see [DROP_API.md](DROP_API.md).
+
+### Create NFT Drop
+
+**POST** `/drops`
+
+Create a new scheduled NFT drop for a collection.
+
+**Authentication**: Required (JWT token)
+
+**Request Body:**
+```json
+{
+  "collectionId": "uuid",
+  "name": "Genesis Drop",
+  "description": "Limited edition genesis collection",
+  "price": "10",
+  "totalSupply": 1000,
+  "startDate": "2025-12-10T00:00:00Z",
+  "endDate": "2025-12-31T23:59:59Z",
+  "nftMetadata": {
+    "name": "Genesis NFT",
+    "description": "Genesis collection NFT",
+    "image": "https://example.com/image.png",
+    "attributes": [
+      {
+        "trait_type": "Rarity",
+        "value": "Common"
+      }
+    ]
+  },
+  "transferFee": 1000,
+  "flags": 8,
+  "maxMintsPerWallet": 5
+}
+```
+
+**Response (201):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "collectionId": "uuid",
+    "name": "Genesis Drop",
+    "price": "10",
+    "totalSupply": 1000,
+    "mintedCount": 0,
+    "startDate": "2025-12-10T00:00:00Z",
+    "endDate": "2025-12-31T23:59:59Z",
+    "status": "upcoming",
+    "creatorWalletAddress": "r...",
+    "nftMetadata": {...},
+    "transferFee": 1000,
+    "flags": 8,
+    "maxMintsPerWallet": 5
+  }
+}
+```
+
+---
+
+### Get All Drops
+
+**GET** `/drops?status=active&page=1&limit=20`
+
+Get all NFT drops with filtering and pagination.
+
+**Query Parameters:**
+- `status` (string): Filter by status (upcoming, active, ended, soldout)
+- `collectionId` (string): Filter by collection
+- `creatorWalletAddress` (string): Filter by creator
+- `page` (number): Page number (default: 1)
+- `limit` (number): Items per page (default: 20)
+- `sortBy` (string): Sort field (default: createdAt)
+- `sortOrder` (string): Sort order - ASC or DESC (default: DESC)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "drops": [
+      {
+        "id": "uuid",
+        "name": "Genesis Drop",
+        "price": "10",
+        "totalSupply": 1000,
+        "mintedCount": 42,
+        "status": "active",
+        "startDate": "2025-12-10T00:00:00Z",
+        "endDate": "2025-12-31T23:59:59Z",
+        "collection": {
+          "id": "uuid",
+          "name": "Collection Name",
+          "slug": "collection-slug",
+          "image": "https://...",
+          "taxon": 12345
+        },
+        "creator": {
+          "walletAddress": "r...",
+          "username": "creator",
+          "profileImage": "https://..."
+        }
+      }
+    ],
+    "pagination": {
+      "total": 100,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 5
+    }
+  }
+}
+```
+
+---
+
+### Get Single Drop
+
+**GET** `/drops/:id`
+
+Get detailed information about a specific drop.
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "name": "Genesis Drop",
+    "description": "Limited edition genesis collection",
+    "price": "10",
+    "totalSupply": 1000,
+    "mintedCount": 42,
+    "startDate": "2025-12-10T00:00:00Z",
+    "endDate": "2025-12-31T23:59:59Z",
+    "status": "active",
+    "nftMetadata": {...},
+    "transferFee": 1000,
+    "flags": 8,
+    "maxMintsPerWallet": 5,
+    "collection": {
+      "id": "uuid",
+      "name": "Collection Name",
+      "slug": "collection-slug",
+      "taxon": 12345
+    },
+    "creator": {
+      "walletAddress": "r...",
+      "username": "creator",
+      "profileImage": "https://..."
+    },
+    "mints": [...]
+  }
+}
+```
+
+---
+
+### Get Mint Metadata
+
+**GET** `/drops/:id/mint-metadata`
+
+Get metadata and XRPL parameters needed for frontend to mint NFT.
+
+**Authentication**: Optional (for per-user validation)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "dropId": "uuid",
+    "dropName": "Genesis Drop",
+    "mintNumber": 43,
+    "metadata": {
+      "name": "Genesis NFT #43",
+      "description": "Genesis collection NFT",
+      "image": "https://example.com/image.png",
+      "attributes": [
+        {
+          "trait_type": "Mint Number",
+          "value": 43
+        },
+        {
+          "trait_type": "Drop",
+          "value": "Genesis Drop"
+        }
+      ]
+    },
+    "taxon": 12345,
+    "transferFee": 1000,
+    "flags": 8,
+    "price": "10",
+    "collectionName": "Collection Name"
+  }
+}
+```
+
+**Usage:**
+1. Frontend calls this endpoint before minting
+2. Uploads metadata to IPFS
+3. Uses returned parameters to mint NFT on XRPL
+4. Calls record mint endpoint with result
+
+---
+
+### Record NFT Mint
+
+**POST** `/drops/:id/mint`
+
+Record an NFT mint after frontend has minted on XRPL.
+
+**Authentication**: Required (JWT token)
+
+**Request Body:**
+```json
+{
+  "nftokenId": "00080000...",
+  "transactionHash": "ABC123..."
+}
+```
+
+**Response (201):**
+```json
+{
+  "success": true,
+  "data": {
+    "mint": {
+      "id": "uuid",
+      "dropId": "uuid",
+      "minterWalletAddress": "r...",
+      "nftokenId": "00080000...",
+      "transactionHash": "ABC123...",
+      "mintNumber": 43
+    },
+    "mintNumber": 43,
+    "drop": {
+      "id": "uuid",
+      "name": "Genesis Drop",
+      "mintedCount": 43,
+      "totalSupply": 1000,
+      "status": "active"
+    }
+  },
+  "message": "NFT mint recorded successfully"
+}
+```
+
+---
+
+### Check Can Mint
+
+**GET** `/drops/:id/can-mint`
+
+Check if a drop is mintable and if the user can mint.
+
+**Authentication**: Optional (for per-user checks)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "canMint": true,
+    "status": "active",
+    "remaining": 957,
+    "userMintCount": 2,
+    "maxMintsPerWallet": 5,
+    "reason": null
+  }
+}
+```
+
+**Response (200) - Cannot mint:**
+```json
+{
+  "success": true,
+  "data": {
+    "canMint": false,
+    "status": "upcoming",
+    "remaining": 1000,
+    "userMintCount": 0,
+    "maxMintsPerWallet": 5,
+    "reason": ["Drop has not started yet"]
+  }
+}
+```
+
+---
+
+### Get Drop Mints
+
+**GET** `/drops/:id/mints?page=1&limit=20`
+
+Get all mints for a specific drop.
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "mints": [
+      {
+        "id": "uuid",
+        "nftokenId": "00080000...",
+        "transactionHash": "ABC...",
+        "mintNumber": 1,
+        "minter": {
+          "walletAddress": "r...",
+          "username": "user1",
+          "profileImage": "https://..."
+        },
+        "createdAt": "2025-12-10T12:00:00Z"
+      }
+    ],
+    "pagination": {
+      "total": 43,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 3
+    }
+  }
+}
+```
+
+---
+
+### Get My Mints
+
+**GET** `/drops/my-mints?page=1&limit=20`
+
+Get all NFTs minted by the current user from all drops.
+
+**Authentication**: Required (JWT token)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "mints": [
+      {
+        "id": "uuid",
+        "nftokenId": "00080000...",
+        "transactionHash": "ABC...",
+        "mintNumber": 42,
+        "drop": {
+          "id": "uuid",
+          "name": "Genesis Drop",
+          "collection": {
+            "id": "uuid",
+            "name": "Collection Name",
+            "slug": "collection-slug",
+            "image": "https://..."
+          }
+        },
+        "createdAt": "2025-12-10T12:00:00Z"
+      }
+    ],
+    "pagination": {...}
+  }
+}
+```
+
+---
+
+### Update Drop
+
+**PUT** `/drops/:id`
+
+Update a drop (owner only).
+
+**Authentication**: Required (JWT token)
+
+**Request Body:**
+```json
+{
+  "name": "Updated Drop Name",
+  "description": "Updated description",
+  "price": "15",
+  "startDate": "2025-12-11T00:00:00Z",
+  "endDate": "2025-12-31T23:59:59Z",
+  "maxMintsPerWallet": 10
+}
+```
+
+**Notes:**
+- Cannot update ended or sold out drops
+- Cannot reduce totalSupply below mintedCount
+
+---
+
+### Delete Drop
+
+**DELETE** `/drops/:id`
+
+Delete a drop (owner only).
+
+**Authentication**: Required (JWT token)
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "message": "Drop deleted successfully"
+}
+```
+
+**Notes:**
+- Can only delete drops with no minted NFTs
+
+---
+
+### Drop Status Flow
+
+Drops automatically transition through these statuses:
+
+- **upcoming**: Current time < startDate
+- **active**: startDate ≤ current time ≤ endDate AND mintedCount < totalSupply
+- **ended**: Current time > endDate
+- **soldout**: mintedCount ≥ totalSupply
+
+---
+
 ## Health Check
 
 ### Server Health
