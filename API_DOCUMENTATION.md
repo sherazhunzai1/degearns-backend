@@ -1276,6 +1276,474 @@ Get most popular collection in each category based on number of NFTs minted.
 
 ---
 
+## Chat Endpoints
+
+The Chat API enables real-time messaging between users. All chat operations are based on wallet addresses for user identification.
+
+### Get Chat Users
+
+**GET** `/chat/users/:walletAddress`
+
+Get all users with whom the logged-in user has had conversations, sorted by most recent message.
+
+**Parameters:**
+- `walletAddress` (path parameter): The logged-in user's XRPL wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Chat users retrieved successfully",
+  "data": {
+    "chatUsers": [
+      {
+        "conversationId": "uuid",
+        "user": {
+          "id": "uuid",
+          "walletAddress": "rOtherUserWalletAddress",
+          "username": "other_user",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "lastMessageAt": "2025-01-15T10:30:00.000Z",
+        "lastMessagePreview": "Hey, are you interested in...",
+        "unreadCount": 3
+      }
+    ],
+    "total": 5
+  }
+}
+```
+
+**Notes:**
+- Returns conversations sorted by last message timestamp (most recent first)
+- Includes unread message count for each conversation
+- `lastMessagePreview` shows first 100 characters of the last message
+
+---
+
+### Get All Users (For New Chat)
+
+**GET** `/chat/all-users/:walletAddress?search=john&page=1&limit=20`
+
+Get all available users for starting a new chat conversation. Excludes the current user.
+
+**Parameters:**
+- `walletAddress` (path parameter): The logged-in user's XRPL wallet address
+
+**Query Parameters:**
+- `search` (optional): Search term to filter by username or wallet address
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 20)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Users retrieved successfully",
+  "data": {
+    "users": [
+      {
+        "id": "uuid",
+        "walletAddress": "rUserWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 50,
+      "totalPages": 3
+    }
+  }
+}
+```
+
+**Notes:**
+- Use this endpoint to display a list of users when starting a new conversation
+- Search is case-insensitive and matches partial strings
+- Users are sorted alphabetically by username
+
+---
+
+### Get Messages
+
+**GET** `/chat/messages/:walletAddress/:otherWalletAddress?page=1&limit=50`
+
+Get messages between two users with pagination support.
+
+**Parameters:**
+- `walletAddress` (path parameter): The logged-in user's XRPL wallet address
+- `otherWalletAddress` (path parameter): The other user's XRPL wallet address
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Messages per page (default: 50)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Messages retrieved successfully",
+  "data": {
+    "messages": [
+      {
+        "id": "uuid",
+        "conversationId": "uuid",
+        "senderWalletAddress": "rSenderWalletAddress",
+        "receiverWalletAddress": "rReceiverWalletAddress",
+        "sender": {
+          "walletAddress": "rSenderWalletAddress",
+          "username": "sender_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "content": "Hello! Are you interested in this NFT?",
+        "messageType": "text",
+        "metadata": null,
+        "isRead": true,
+        "readAt": "2025-01-15T10:35:00.000Z",
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      },
+      {
+        "id": "uuid",
+        "conversationId": "uuid",
+        "senderWalletAddress": "rReceiverWalletAddress",
+        "receiverWalletAddress": "rSenderWalletAddress",
+        "sender": {
+          "walletAddress": "rReceiverWalletAddress",
+          "username": "receiver_name",
+          "profileImage": "https://example.com/avatar2.jpg",
+          "isVerified": false
+        },
+        "content": "Yes! Check out this NFT",
+        "messageType": "nft_share",
+        "metadata": {
+          "nftTokenId": "00081388...",
+          "collectionName": "Cool Collection",
+          "nftName": "Cool NFT #123",
+          "image": "https://example.com/nft.jpg"
+        },
+        "isRead": false,
+        "readAt": null,
+        "createdAt": "2025-01-15T10:32:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 50,
+      "total": 25,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+**Response (200) - No messages:**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "No messages found",
+  "data": {
+    "messages": [],
+    "pagination": {
+      "page": 1,
+      "limit": 50,
+      "total": 0,
+      "totalPages": 0
+    }
+  }
+}
+```
+
+**Notes:**
+- Messages are returned in chronological order (oldest first for display)
+- Pagination fetches from newest messages (page 1 = most recent)
+- Includes sender profile information with each message
+
+---
+
+### Send Message
+
+**POST** `/chat/send`
+
+Send a message to another user. Automatically creates a conversation if one doesn't exist.
+
+**Request Body:**
+```json
+{
+  "senderWalletAddress": "rSenderWalletAddress",
+  "receiverWalletAddress": "rReceiverWalletAddress",
+  "content": "Hello! I'm interested in your NFT.",
+  "messageType": "text",
+  "metadata": null
+}
+```
+
+**Request Body (NFT Share):**
+```json
+{
+  "senderWalletAddress": "rSenderWalletAddress",
+  "receiverWalletAddress": "rReceiverWalletAddress",
+  "content": "Check out this NFT!",
+  "messageType": "nft_share",
+  "metadata": {
+    "nftTokenId": "00081388...",
+    "collectionName": "Cool Collection",
+    "nftName": "Cool NFT #123",
+    "image": "https://example.com/nft.jpg",
+    "price": "1000000"
+  }
+}
+```
+
+**Fields:**
+- `senderWalletAddress` (required): Sender's XRPL wallet address
+- `receiverWalletAddress` (required): Receiver's XRPL wallet address
+- `content` (required): Message content (cannot be empty)
+- `messageType` (optional): Type of message - `text`, `image`, or `nft_share` (default: `text`)
+- `metadata` (optional): Additional data for image or NFT share messages
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Message sent successfully",
+  "data": {
+    "message": {
+      "id": "uuid",
+      "conversationId": "uuid",
+      "senderWalletAddress": "rSenderWalletAddress",
+      "receiverWalletAddress": "rReceiverWalletAddress",
+      "sender": {
+        "walletAddress": "rSenderWalletAddress",
+        "username": "sender_name",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Hello! I'm interested in your NFT.",
+      "messageType": "text",
+      "metadata": null,
+      "isRead": false,
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Message content is required"
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Sender not found"
+}
+```
+
+**Notes:**
+- Automatically creates conversation if first message between users
+- Automatically creates receiver user if they don't exist (new wallet)
+- Updates conversation's `lastMessageAt` and `lastMessagePreview`
+- Message types: `text` (default), `image`, `nft_share`
+
+---
+
+### Mark Messages as Read
+
+**PUT** `/chat/read`
+
+Mark all unread messages from a specific sender as read.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rReceiverWalletAddress",
+  "senderWalletAddress": "rSenderWalletAddress"
+}
+```
+
+**Fields:**
+- `walletAddress` (required): The logged-in user's wallet address (who is reading)
+- `senderWalletAddress` (required): The sender's wallet address (whose messages to mark as read)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Messages marked as read successfully",
+  "data": {
+    "markedAsRead": 5
+  }
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Conversation not found"
+}
+```
+
+**Notes:**
+- Only marks messages where the logged-in user is the receiver
+- Sets `isRead` to `true` and `readAt` to current timestamp
+- Returns count of messages that were marked as read
+
+---
+
+### Get Unread Messages Count
+
+**GET** `/chat/unread/:walletAddress`
+
+Get the total count of unread messages and breakdown by sender.
+
+**Parameters:**
+- `walletAddress` (path parameter): The logged-in user's XRPL wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Unread count retrieved successfully",
+  "data": {
+    "totalUnread": 12,
+    "unreadBySender": [
+      {
+        "conversationId": "uuid",
+        "senderWalletAddress": "rSender1WalletAddress",
+        "sender": {
+          "walletAddress": "rSender1WalletAddress",
+          "username": "user_one",
+          "profileImage": "https://example.com/avatar1.jpg"
+        },
+        "unreadCount": 5
+      },
+      {
+        "conversationId": "uuid",
+        "senderWalletAddress": "rSender2WalletAddress",
+        "sender": {
+          "walletAddress": "rSender2WalletAddress",
+          "username": "user_two",
+          "profileImage": "https://example.com/avatar2.jpg"
+        },
+        "unreadCount": 7
+      }
+    ]
+  }
+}
+```
+
+**Notes:**
+- `totalUnread` is the total count of all unread messages
+- `unreadBySender` provides breakdown by each sender
+- Use `totalUnread` for notification badges
+- Use `unreadBySender` to show per-conversation unread counts
+
+---
+
+### Message Types
+
+| Type | Description | Metadata |
+|------|-------------|----------|
+| `text` | Plain text message | None required |
+| `image` | Image message | `{ "imageUrl": "https://..." }` |
+| `nft_share` | NFT share | `{ "nftTokenId": "...", "collectionName": "...", "nftName": "...", "image": "...", "price": "..." }` |
+
+---
+
+### Chat Data Models
+
+**Conversation:**
+```json
+{
+  "id": "uuid",
+  "participant1WalletAddress": "rWallet1...",
+  "participant2WalletAddress": "rWallet2...",
+  "lastMessageAt": "2025-01-15T10:30:00.000Z",
+  "lastMessagePreview": "Last message content...",
+  "createdAt": "2025-01-01T00:00:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+**Message:**
+```json
+{
+  "id": "uuid",
+  "conversationId": "uuid",
+  "senderWalletAddress": "rSender...",
+  "receiverWalletAddress": "rReceiver...",
+  "content": "Message text...",
+  "messageType": "text|image|nft_share",
+  "metadata": {},
+  "isRead": false,
+  "readAt": null,
+  "createdAt": "2025-01-15T10:30:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Example Chat Integration Flow
+
+```javascript
+// 1. Get wallet address (from XAMAN connection)
+const walletAddress = localStorage.getItem('walletAddress');
+
+// 2. Get chat users (conversations list)
+const chatUsers = await fetch(`/api/v1/chat/users/${walletAddress}`);
+
+// 3. Get messages with a specific user
+const messages = await fetch(
+  `/api/v1/chat/messages/${walletAddress}/${otherWalletAddress}`
+);
+
+// 4. Send a message
+const sendMessage = await fetch('/api/v1/chat/send', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    senderWalletAddress: walletAddress,
+    receiverWalletAddress: otherWalletAddress,
+    content: 'Hello!',
+    messageType: 'text'
+  })
+});
+
+// 5. Mark messages as read when viewing a conversation
+await fetch('/api/v1/chat/read', {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    walletAddress: walletAddress,
+    senderWalletAddress: otherWalletAddress
+  })
+});
+
+// 6. Get unread count for notification badge
+const unreadCount = await fetch(`/api/v1/chat/unread/${walletAddress}`);
+```
+
+---
+
 ## Health Check
 
 ### Server Health
