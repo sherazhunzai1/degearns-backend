@@ -5,6 +5,22 @@ const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 
 /**
+ * Helper function to convert IPFS URLs to HTTP gateway URLs
+ * Supports both ipfs:// protocol and direct CID formats
+ */
+const convertIpfsUrl = (url) => {
+  if (!url) return url;
+
+  // Convert ipfs:// protocol to HTTP gateway
+  if (url.startsWith('ipfs://')) {
+    return url.replace('ipfs://', 'https://ipfs.io/ipfs/');
+  }
+
+  // Already an HTTP URL, return as-is
+  return url;
+};
+
+/**
  * Helper function to determine post type based on media
  */
 const determinePostType = (media) => {
@@ -189,14 +205,15 @@ const createPost = async (req, res, next) => {
     });
 
     // Create media attachments if provided
+    // Convert IPFS URLs to HTTP gateway URLs for consistent access
     let mediaItems = [];
     if (media && media.length > 0) {
       mediaItems = await Promise.all(media.map(async (item, index) => {
         return await PostMedia.create({
           postId: post.id,
           mediaType: item.mediaType,
-          mediaUrl: item.mediaUrl,
-          thumbnailUrl: item.thumbnailUrl || null,
+          mediaUrl: convertIpfsUrl(item.mediaUrl),
+          thumbnailUrl: convertIpfsUrl(item.thumbnailUrl) || null,
           mimeType: item.mimeType || null,
           fileSize: item.fileSize || null,
           width: item.width || null,
@@ -492,14 +509,14 @@ const updatePost = async (req, res, next) => {
         where: { postId: post.id }
       });
 
-      // Create new media attachments
+      // Create new media attachments with IPFS URL conversion
       if (media && media.length > 0) {
         await Promise.all(media.map(async (item, index) => {
           return await PostMedia.create({
             postId: post.id,
             mediaType: item.mediaType,
-            mediaUrl: item.mediaUrl,
-            thumbnailUrl: item.thumbnailUrl || null,
+            mediaUrl: convertIpfsUrl(item.mediaUrl),
+            thumbnailUrl: convertIpfsUrl(item.thumbnailUrl) || null,
             mimeType: item.mimeType || null,
             fileSize: item.fileSize || null,
             width: item.width || null,
