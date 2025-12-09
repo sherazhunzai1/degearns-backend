@@ -6,6 +6,8 @@ const User = require('./User')(sequelize, DataTypes);
 const Collection = require('./Collection')(sequelize, DataTypes);
 const Conversation = require('./Conversation')(sequelize, DataTypes);
 const Message = require('./Message')(sequelize, DataTypes);
+const Post = require('./Post')(sequelize, DataTypes);
+const PostMedia = require('./PostMedia')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -74,10 +76,34 @@ Message.belongsTo(User, {
   as: 'receiver'
 });
 
+// User and Post associations
+User.hasMany(Post, {
+  foreignKey: 'authorWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'posts'
+});
+Post.belongsTo(User, {
+  foreignKey: 'authorWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'author'
+});
+
+// Post and PostMedia associations
+Post.hasMany(PostMedia, {
+  foreignKey: 'postId',
+  as: 'media'
+});
+PostMedia.belongsTo(Post, {
+  foreignKey: 'postId',
+  as: 'post'
+});
+
 module.exports = {
   sequelize,
   User,
   Collection,
   Conversation,
-  Message
+  Message,
+  Post,
+  PostMedia
 };
