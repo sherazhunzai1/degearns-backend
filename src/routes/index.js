@@ -5,12 +5,14 @@ const authRoutes = require('./authRoutes');
 const collectionRoutes = require('./collectionRoutes');
 const nftRoutes = require('./nftRoutes');
 const chatRoutes = require('./chatRoutes');
+const postRoutes = require('./postRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
 router.use('/collections', collectionRoutes);
 router.use('/nfts', nftRoutes);
 router.use('/chat', chatRoutes);
+router.use('/posts', postRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

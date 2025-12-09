@@ -1744,6 +1744,1132 @@ const unreadCount = await fetch(`/api/v1/chat/unread/${walletAddress}`);
 
 ---
 
+## Post Endpoints
+
+The Posts API enables users to create and share content similar to social media platforms. Users can create posts with text, images, videos, or any combination.
+
+### Create Post
+
+**POST** `/posts`
+
+Create a new post with text, images, videos, or any combination.
+
+**Request Body (Text Only):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "This is my first post!",
+  "visibility": "public"
+}
+```
+
+**Request Body (Single Image):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Check out this amazing photo!",
+  "media": [
+    {
+      "mediaType": "image",
+      "mediaUrl": "https://example.com/image.jpg",
+      "mimeType": "image/jpeg",
+      "width": 1920,
+      "height": 1080,
+      "altText": "Beautiful sunset"
+    }
+  ],
+  "visibility": "public"
+}
+```
+
+**Request Body (Multiple Images):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "My vacation photos!",
+  "media": [
+    {
+      "mediaType": "image",
+      "mediaUrl": "https://example.com/photo1.jpg",
+      "displayOrder": 0
+    },
+    {
+      "mediaType": "image",
+      "mediaUrl": "https://example.com/photo2.jpg",
+      "displayOrder": 1
+    },
+    {
+      "mediaType": "image",
+      "mediaUrl": "https://example.com/photo3.jpg",
+      "displayOrder": 2
+    }
+  ],
+  "visibility": "public"
+}
+```
+
+**Request Body (Video):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Watch this!",
+  "media": [
+    {
+      "mediaType": "video",
+      "mediaUrl": "https://example.com/video.mp4",
+      "thumbnailUrl": "https://example.com/thumbnail.jpg",
+      "mimeType": "video/mp4",
+      "duration": 120,
+      "width": 1920,
+      "height": 1080
+    }
+  ],
+  "visibility": "public"
+}
+```
+
+**Request Body (Mixed Media - Images and Videos):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Photos and videos from the event!",
+  "media": [
+    {
+      "mediaType": "image",
+      "mediaUrl": "https://example.com/photo.jpg",
+      "displayOrder": 0
+    },
+    {
+      "mediaType": "video",
+      "mediaUrl": "https://example.com/video.mp4",
+      "thumbnailUrl": "https://example.com/thumb.jpg",
+      "displayOrder": 1
+    }
+  ],
+  "visibility": "public",
+  "metadata": {
+    "location": "New York",
+    "tags": ["event", "fun"]
+  }
+}
+```
+
+**Fields:**
+- `authorWalletAddress` (required): Author's XRPL wallet address
+- `content` (optional if media provided): Post text content
+- `media` (optional if content provided): Array of media items
+  - `mediaType` (required): `image` or `video`
+  - `mediaUrl` (required): URL of the media file
+  - `thumbnailUrl` (optional): Thumbnail URL for videos
+  - `mimeType` (optional): MIME type (e.g., `image/jpeg`, `video/mp4`)
+  - `fileSize` (optional): File size in bytes
+  - `width` (optional): Width in pixels
+  - `height` (optional): Height in pixels
+  - `duration` (optional): Duration in seconds (for videos)
+  - `displayOrder` (optional): Display order (0-based, defaults to array index)
+  - `altText` (optional): Alternative text for accessibility
+- `visibility` (optional): `public` or `private` (default: `public`)
+- `metadata` (optional): Additional metadata (location, tags, etc.)
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Post created successfully",
+  "data": {
+    "post": {
+      "id": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Check out this amazing photo!",
+      "postType": "image",
+      "visibility": "public",
+      "media": [
+        {
+          "id": "uuid",
+          "mediaType": "image",
+          "mediaUrl": "https://example.com/image.jpg",
+          "thumbnailUrl": null,
+          "mimeType": "image/jpeg",
+          "fileSize": null,
+          "width": 1920,
+          "height": 1080,
+          "duration": null,
+          "displayOrder": 0,
+          "altText": "Beautiful sunset"
+        }
+      ],
+      "likesCount": 0,
+      "commentsCount": 0,
+      "sharesCount": 0,
+      "metadata": null,
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Post must have either text content or media"
+}
+```
+
+**Notes:**
+- Maximum 10 media items per post
+- `postType` is automatically determined: `text`, `image`, `video`, or `mixed`
+- At least `content` or `media` must be provided
+
+---
+
+### Get All Posts (Feed)
+
+**GET** `/posts/feed?page=1&limit=20&postType=image&viewerWalletAddress=rViewerAddress`
+
+Get all public posts sorted by most recent (feed).
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Posts per page (default: 20)
+- `postType` (optional): Filter by type - `text`, `image`, `video`, or `mixed`
+- `viewerWalletAddress` (optional): Wallet address of the viewer to check if they liked each post
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Posts retrieved successfully",
+  "data": {
+    "posts": [
+      {
+        "id": "uuid",
+        "authorWalletAddress": "rAuthorWalletAddress",
+        "author": {
+          "walletAddress": "rAuthorWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "content": "Check out this amazing photo!",
+        "postType": "image",
+        "visibility": "public",
+        "media": [
+          {
+            "id": "uuid",
+            "mediaType": "image",
+            "mediaUrl": "https://example.com/image.jpg",
+            "thumbnailUrl": null,
+            "mimeType": "image/jpeg",
+            "width": 1920,
+            "height": 1080,
+            "displayOrder": 0
+          }
+        ],
+        "likesCount": 42,
+        "commentsCount": 5,
+        "sharesCount": 3,
+        "metadata": null,
+        "isLiked": true,
+        "recentComments": [
+          {
+            "id": "uuid",
+            "content": "Great post!",
+            "authorWalletAddress": "rCommenterAddress",
+            "author": {
+              "walletAddress": "rCommenterAddress",
+              "username": "commenter",
+              "profileImage": "https://example.com/avatar.jpg",
+              "isVerified": false
+            },
+            "createdAt": "2025-01-15T11:00:00.000Z"
+          }
+        ],
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 150,
+      "totalPages": 8
+    }
+  }
+}
+```
+
+**Notes:**
+- Only returns public posts
+- Sorted by creation date (newest first)
+- Filter by post type to get only specific content
+- `isLiked` is `true` if the viewer (identified by `viewerWalletAddress`) has liked the post, `false` otherwise, or omitted if no viewer wallet provided
+- `recentComments` includes up to 3 most recent comments for quick preview
+
+---
+
+### Get User Posts
+
+**GET** `/posts/user/:walletAddress?page=1&limit=20`
+
+Get all posts by a specific user.
+
+**Parameters:**
+- `walletAddress` (path parameter): User's XRPL wallet address
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Posts per page (default: 20)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Posts retrieved successfully",
+  "data": {
+    "posts": [
+      {
+        "id": "uuid",
+        "authorWalletAddress": "rAuthorWalletAddress",
+        "author": {
+          "walletAddress": "rAuthorWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "content": "My latest NFT collection!",
+        "postType": "mixed",
+        "visibility": "public",
+        "media": [
+          {
+            "id": "uuid",
+            "mediaType": "image",
+            "mediaUrl": "https://example.com/nft1.jpg",
+            "displayOrder": 0
+          },
+          {
+            "id": "uuid",
+            "mediaType": "video",
+            "mediaUrl": "https://example.com/promo.mp4",
+            "thumbnailUrl": "https://example.com/thumb.jpg",
+            "displayOrder": 1
+          }
+        ],
+        "likesCount": 100,
+        "commentsCount": 25,
+        "sharesCount": 10,
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 45,
+      "totalPages": 3
+    }
+  }
+}
+```
+
+**Notes:**
+- Returns all active posts by the user
+- Sorted by creation date (newest first)
+
+---
+
+### Get Post by ID
+
+**GET** `/posts/:postId`
+
+Get a single post by its ID.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post retrieved successfully",
+  "data": {
+    "post": {
+      "id": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true,
+        "bio": "NFT creator and collector"
+      },
+      "content": "Check out this amazing photo!",
+      "postType": "image",
+      "visibility": "public",
+      "media": [
+        {
+          "id": "uuid",
+          "mediaType": "image",
+          "mediaUrl": "https://example.com/image.jpg",
+          "width": 1920,
+          "height": 1080,
+          "displayOrder": 0
+        }
+      ],
+      "likesCount": 42,
+      "commentsCount": 5,
+      "sharesCount": 3,
+      "metadata": null,
+      "createdAt": "2025-01-15T10:30:00.000Z",
+      "updatedAt": "2025-01-15T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Post not found"
+}
+```
+
+---
+
+### Update Post
+
+**PUT** `/posts/:postId`
+
+Update an existing post. Only the author can update their post.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body:**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Updated post content!",
+  "media": [
+    {
+      "mediaType": "image",
+      "mediaUrl": "https://example.com/new-image.jpg"
+    }
+  ],
+  "visibility": "public"
+}
+```
+
+**Fields:**
+- `authorWalletAddress` (required): For authorization verification
+- `content` (optional): Updated text content
+- `media` (optional): Updated media array (replaces existing media)
+- `visibility` (optional): Updated visibility setting
+- `metadata` (optional): Updated metadata
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post updated successfully",
+  "data": {
+    "post": {
+      "id": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Updated post content!",
+      "postType": "image",
+      "visibility": "public",
+      "media": [...],
+      "likesCount": 42,
+      "commentsCount": 5,
+      "sharesCount": 3,
+      "createdAt": "2025-01-15T10:30:00.000Z",
+      "updatedAt": "2025-01-15T11:00:00.000Z"
+    }
+  }
+}
+```
+
+**Error (403):**
+```json
+{
+  "success": false,
+  "message": "You are not authorized to update this post"
+}
+```
+
+**Notes:**
+- Only the post author can update their post
+- When updating media, all existing media is replaced
+- Post must still have content or media after update
+
+---
+
+### Delete Post
+
+**DELETE** `/posts/:postId`
+
+Delete a post (soft delete). Only the author can delete their post.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body:**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post deleted successfully",
+  "data": {
+    "postId": "uuid"
+  }
+}
+```
+
+**Error (403):**
+```json
+{
+  "success": false,
+  "message": "You are not authorized to delete this post"
+}
+```
+
+**Notes:**
+- Performs soft delete (sets `isActive` to `false`)
+- Only the post author can delete their post
+- Deleted posts will not appear in feed or user posts
+
+---
+
+## Post Like Endpoints
+
+### Like a Post
+
+**POST** `/posts/:postId/like`
+
+Like a post. A user can only like a post once.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body:**
+```json
+{
+  "userWalletAddress": "rUserWalletAddress"
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Post liked successfully",
+  "data": {
+    "like": {
+      "id": "uuid",
+      "postId": "uuid",
+      "userWalletAddress": "rUserWalletAddress",
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    },
+    "likesCount": 43
+  }
+}
+```
+
+**Error (400) - Already liked:**
+```json
+{
+  "success": false,
+  "message": "You have already liked this post"
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Post not found"
+}
+```
+
+---
+
+### Unlike a Post
+
+**DELETE** `/posts/:postId/like`
+
+Remove a like from a post.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body:**
+```json
+{
+  "userWalletAddress": "rUserWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post unliked successfully",
+  "data": {
+    "likesCount": 42
+  }
+}
+```
+
+**Error (400) - Not liked:**
+```json
+{
+  "success": false,
+  "message": "You have not liked this post"
+}
+```
+
+---
+
+### Get Post Likes
+
+**GET** `/posts/:postId/likes?page=1&limit=20`
+
+Get all users who liked a post.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 20)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post likes retrieved successfully",
+  "data": {
+    "likes": [
+      {
+        "id": "uuid",
+        "userWalletAddress": "rUserWalletAddress",
+        "user": {
+          "walletAddress": "rUserWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 42,
+      "totalPages": 3
+    }
+  }
+}
+```
+
+---
+
+## Post Comment Endpoints
+
+### Add Comment
+
+**POST** `/posts/:postId/comments`
+
+Add a comment to a post. Supports nested replies.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body (Top-level comment):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Great post! Love the artwork."
+}
+```
+
+**Request Body (Reply to comment):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "I agree with you!",
+  "parentCommentId": "uuid-of-parent-comment"
+}
+```
+
+**Fields:**
+- `authorWalletAddress` (required): Commenter's wallet address
+- `content` (required): Comment text
+- `parentCommentId` (optional): UUID of parent comment for replies
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Comment added successfully",
+  "data": {
+    "comment": {
+      "id": "uuid",
+      "postId": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Great post! Love the artwork.",
+      "parentCommentId": null,
+      "likesCount": 0,
+      "repliesCount": 0,
+      "isEdited": false,
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    },
+    "commentsCount": 6
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Comment content is required"
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Parent comment not found"
+}
+```
+
+---
+
+### Get Post Comments
+
+**GET** `/posts/:postId/comments?page=1&limit=20&parentCommentId=null`
+
+Get comments for a post with pagination. Supports fetching top-level comments or replies to a specific comment.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Comments per page (default: 20)
+- `parentCommentId` (optional): Filter by parent comment ID. Use `null` for top-level comments, or a UUID for replies
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Comments retrieved successfully",
+  "data": {
+    "comments": [
+      {
+        "id": "uuid",
+        "postId": "uuid",
+        "authorWalletAddress": "rAuthorWalletAddress",
+        "author": {
+          "walletAddress": "rAuthorWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "content": "Great post! Love the artwork.",
+        "parentCommentId": null,
+        "likesCount": 5,
+        "repliesCount": 2,
+        "isEdited": false,
+        "createdAt": "2025-01-15T10:30:00.000Z",
+        "replies": [
+          {
+            "id": "uuid",
+            "authorWalletAddress": "rReplyAuthorAddress",
+            "author": {
+              "walletAddress": "rReplyAuthorAddress",
+              "username": "jane_doe",
+              "profileImage": "https://example.com/avatar2.jpg",
+              "isVerified": false
+            },
+            "content": "I agree!",
+            "parentCommentId": "parent-uuid",
+            "likesCount": 1,
+            "repliesCount": 0,
+            "isEdited": false,
+            "createdAt": "2025-01-15T11:00:00.000Z"
+          }
+        ]
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+**Notes:**
+- Top-level comments include up to 3 nested replies for preview
+- Use `parentCommentId` query param to fetch more replies
+- Comments are sorted by creation date (oldest first)
+
+---
+
+### Update Comment
+
+**PUT** `/posts/comments/:commentId`
+
+Update a comment. Only the author can update their comment.
+
+**Parameters:**
+- `commentId` (path parameter): Comment UUID
+
+**Request Body:**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Updated comment text"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Comment updated successfully",
+  "data": {
+    "comment": {
+      "id": "uuid",
+      "postId": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Updated comment text",
+      "parentCommentId": null,
+      "likesCount": 5,
+      "repliesCount": 2,
+      "isEdited": true,
+      "createdAt": "2025-01-15T10:30:00.000Z",
+      "updatedAt": "2025-01-15T12:00:00.000Z"
+    }
+  }
+}
+```
+
+**Error (403):**
+```json
+{
+  "success": false,
+  "message": "You are not authorized to update this comment"
+}
+```
+
+---
+
+### Delete Comment
+
+**DELETE** `/posts/comments/:commentId`
+
+Delete a comment (soft delete). Only the author can delete their comment.
+
+**Parameters:**
+- `commentId` (path parameter): Comment UUID
+
+**Request Body:**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Comment deleted successfully",
+  "data": {
+    "commentId": "uuid",
+    "commentsCount": 4
+  }
+}
+```
+
+**Error (403):**
+```json
+{
+  "success": false,
+  "message": "You are not authorized to delete this comment"
+}
+```
+
+**Notes:**
+- Performs soft delete (sets `isActive` to `false`)
+- Deleting a parent comment does not delete its replies
+- Updates the post's `commentsCount`
+
+---
+
+### Post Like Data Model
+
+**PostLike:**
+```json
+{
+  "id": "uuid",
+  "postId": "uuid",
+  "userWalletAddress": "rWallet...",
+  "createdAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Post Comment Data Model
+
+**PostComment:**
+```json
+{
+  "id": "uuid",
+  "postId": "uuid",
+  "authorWalletAddress": "rWallet...",
+  "content": "Comment text...",
+  "parentCommentId": null,
+  "likesCount": 0,
+  "repliesCount": 0,
+  "isEdited": false,
+  "isActive": true,
+  "createdAt": "2025-01-15T10:30:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Example Like & Comment Integration Flow
+
+```javascript
+// 1. Get wallet address (from XAMAN connection)
+const walletAddress = localStorage.getItem('walletAddress');
+
+// 2. Like a post
+const likePost = await fetch(`/api/v1/posts/${postId}/like`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    userWalletAddress: walletAddress
+  })
+});
+
+// 3. Unlike a post
+const unlikePost = await fetch(`/api/v1/posts/${postId}/like`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    userWalletAddress: walletAddress
+  })
+});
+
+// 4. Get users who liked a post
+const likes = await fetch(`/api/v1/posts/${postId}/likes?page=1&limit=20`);
+
+// 5. Add a comment
+const addComment = await fetch(`/api/v1/posts/${postId}/comments`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'Great post!'
+  })
+});
+
+// 6. Reply to a comment
+const replyToComment = await fetch(`/api/v1/posts/${postId}/comments`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'I agree!',
+    parentCommentId: parentCommentId
+  })
+});
+
+// 7. Get post comments
+const comments = await fetch(`/api/v1/posts/${postId}/comments?page=1&limit=20`);
+
+// 8. Update a comment
+const updateComment = await fetch(`/api/v1/posts/comments/${commentId}`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'Updated comment'
+  })
+});
+
+// 9. Delete a comment
+const deleteComment = await fetch(`/api/v1/posts/comments/${commentId}`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress
+  })
+});
+
+// 10. Get feed with like status (pass viewerWalletAddress)
+const feed = await fetch(
+  `/api/v1/posts/feed?page=1&limit=20&viewerWalletAddress=${walletAddress}`
+);
+```
+
+---
+
+### Post Types
+
+| Type | Description |
+|------|-------------|
+| `text` | Text-only post (no media) |
+| `image` | Post with one or more images |
+| `video` | Post with one or more videos |
+| `mixed` | Post with both images and videos |
+
+---
+
+### Post Data Models
+
+**Post:**
+```json
+{
+  "id": "uuid",
+  "authorWalletAddress": "rWallet...",
+  "content": "Post text...",
+  "postType": "text|image|video|mixed",
+  "visibility": "public|private",
+  "likesCount": 0,
+  "commentsCount": 0,
+  "sharesCount": 0,
+  "metadata": {},
+  "isActive": true,
+  "createdAt": "2025-01-15T10:30:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+**PostMedia:**
+```json
+{
+  "id": "uuid",
+  "postId": "uuid",
+  "mediaType": "image|video",
+  "mediaUrl": "https://...",
+  "thumbnailUrl": "https://...",
+  "mimeType": "image/jpeg",
+  "fileSize": 1024000,
+  "width": 1920,
+  "height": 1080,
+  "duration": 120,
+  "displayOrder": 0,
+  "altText": "Description...",
+  "createdAt": "2025-01-15T10:30:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Example Post Integration Flow
+
+```javascript
+// 1. Get wallet address (from XAMAN connection)
+const walletAddress = localStorage.getItem('walletAddress');
+
+// 2. Create a text post
+const textPost = await fetch('/api/v1/posts', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'Hello world!'
+  })
+});
+
+// 3. Create a post with images
+const imagePost = await fetch('/api/v1/posts', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'Check out my photos!',
+    media: [
+      { mediaType: 'image', mediaUrl: 'https://example.com/photo1.jpg' },
+      { mediaType: 'image', mediaUrl: 'https://example.com/photo2.jpg' }
+    ]
+  })
+});
+
+// 4. Get feed
+const feed = await fetch('/api/v1/posts/feed?page=1&limit=20');
+
+// 5. Get user's posts
+const userPosts = await fetch(`/api/v1/posts/user/${walletAddress}`);
+
+// 6. Delete a post
+await fetch(`/api/v1/posts/${postId}`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress
+  })
+});
+```
+
+---
+
 ## Health Check
 
 ### Server Health
