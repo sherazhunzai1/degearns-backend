@@ -1859,8 +1859,8 @@ Create a new post with text, images, videos, or any combination.
 - `content` (optional if media provided): Post text content
 - `media` (optional if content provided): Array of media items
   - `mediaType` (required): `image` or `video`
-  - `mediaUrl` (required): URL of the media file
-  - `thumbnailUrl` (optional): Thumbnail URL for videos
+  - `mediaUrl` (required): URL of the media file (supports IPFS URLs)
+  - `thumbnailUrl` (optional): Thumbnail URL for videos (supports IPFS URLs)
   - `mimeType` (optional): MIME type (e.g., `image/jpeg`, `video/mp4`)
   - `fileSize` (optional): File size in bytes
   - `width` (optional): Width in pixels
@@ -1927,6 +1927,7 @@ Create a new post with text, images, videos, or any combination.
 - Maximum 10 media items per post
 - `postType` is automatically determined: `text`, `image`, `video`, or `mixed`
 - At least `content` or `media` must be provided
+- **IPFS Support**: URLs starting with `ipfs://` are automatically converted to HTTP gateway URLs (`https://ipfs.io/ipfs/...`) for consistent browser access
 
 ---
 
