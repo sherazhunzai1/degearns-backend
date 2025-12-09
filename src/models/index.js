@@ -8,6 +8,8 @@ const Conversation = require('./Conversation')(sequelize, DataTypes);
 const Message = require('./Message')(sequelize, DataTypes);
 const Post = require('./Post')(sequelize, DataTypes);
 const PostMedia = require('./PostMedia')(sequelize, DataTypes);
+const PostLike = require('./PostLike')(sequelize, DataTypes);
+const PostComment = require('./PostComment')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -98,6 +100,60 @@ PostMedia.belongsTo(Post, {
   as: 'post'
 });
 
+// Post and PostLike associations
+Post.hasMany(PostLike, {
+  foreignKey: 'postId',
+  as: 'likes'
+});
+PostLike.belongsTo(Post, {
+  foreignKey: 'postId',
+  as: 'post'
+});
+
+// User and PostLike associations
+User.hasMany(PostLike, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'postLikes'
+});
+PostLike.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// Post and PostComment associations
+Post.hasMany(PostComment, {
+  foreignKey: 'postId',
+  as: 'comments'
+});
+PostComment.belongsTo(Post, {
+  foreignKey: 'postId',
+  as: 'post'
+});
+
+// User and PostComment associations
+User.hasMany(PostComment, {
+  foreignKey: 'authorWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'comments'
+});
+PostComment.belongsTo(User, {
+  foreignKey: 'authorWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'author'
+});
+
+// PostComment self-referencing for replies
+PostComment.hasMany(PostComment, {
+  foreignKey: 'parentCommentId',
+  as: 'replies'
+});
+PostComment.belongsTo(PostComment, {
+  foreignKey: 'parentCommentId',
+  as: 'parentComment'
+});
+
 module.exports = {
   sequelize,
   User,
@@ -105,5 +161,7 @@ module.exports = {
   Conversation,
   Message,
   Post,
-  PostMedia
+  PostMedia,
+  PostLike,
+  PostComment
 };

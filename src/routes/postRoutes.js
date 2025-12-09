@@ -6,7 +6,14 @@ const {
   getAllPosts,
   getPostById,
   updatePost,
-  deletePost
+  deletePost,
+  likePost,
+  unlikePost,
+  getPostLikes,
+  addComment,
+  getPostComments,
+  updateComment,
+  deleteComment
 } = require('../controllers/postController');
 
 /**
@@ -50,5 +57,58 @@ router.put('/:postId', updatePost);
  * @access  Public
  */
 router.delete('/:postId', deletePost);
+
+// ==================== LIKE ROUTES ====================
+
+/**
+ * @route   POST /api/v1/posts/:postId/like
+ * @desc    Like a post
+ * @access  Public
+ */
+router.post('/:postId/like', likePost);
+
+/**
+ * @route   DELETE /api/v1/posts/:postId/like
+ * @desc    Unlike a post
+ * @access  Public
+ */
+router.delete('/:postId/like', unlikePost);
+
+/**
+ * @route   GET /api/v1/posts/:postId/likes
+ * @desc    Get all users who liked a post
+ * @access  Public
+ */
+router.get('/:postId/likes', getPostLikes);
+
+// ==================== COMMENT ROUTES ====================
+
+/**
+ * @route   POST /api/v1/posts/:postId/comments
+ * @desc    Add a comment to a post
+ * @access  Public
+ */
+router.post('/:postId/comments', addComment);
+
+/**
+ * @route   GET /api/v1/posts/:postId/comments
+ * @desc    Get all comments for a post
+ * @access  Public
+ */
+router.get('/:postId/comments', getPostComments);
+
+/**
+ * @route   PUT /api/v1/posts/comments/:commentId
+ * @desc    Update a comment (only by author)
+ * @access  Public
+ */
+router.put('/comments/:commentId', updateComment);
+
+/**
+ * @route   DELETE /api/v1/posts/comments/:commentId
+ * @desc    Delete a comment (only by author)
+ * @access  Public
+ */
+router.delete('/comments/:commentId', deleteComment);
 
 module.exports = router;

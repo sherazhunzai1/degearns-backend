@@ -1,4 +1,4 @@
-const { User, Post, PostMedia } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -24,6 +24,106 @@ const determinePostType = (media) => {
   }
 
   return 'text';
+};
+
+/**
+ * Helper function to check if user has liked a post
+ */
+const checkUserLiked = async (postId, userWalletAddress) => {
+  if (!userWalletAddress) return false;
+  const like = await PostLike.findOne({
+    where: { postId, userWalletAddress }
+  });
+  return !!like;
+};
+
+/**
+ * Helper function to get recent comments for a post
+ */
+const getRecentComments = async (postId, limit = 3) => {
+  const comments = await PostComment.findAll({
+    where: {
+      postId,
+      isActive: true,
+      parentCommentId: null // Only top-level comments
+    },
+    order: [['createdAt', 'DESC']],
+    limit
+  });
+
+  if (comments.length === 0) return [];
+
+  // Get comment authors
+  const authorAddresses = [...new Set(comments.map(c => c.authorWalletAddress))];
+  const authors = await User.findAll({
+    where: { walletAddress: { [Op.in]: authorAddresses } },
+    attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+  });
+
+  const authorMap = {};
+  authors.forEach(a => { authorMap[a.walletAddress] = a; });
+
+  return comments.map(comment => {
+    const author = authorMap[comment.authorWalletAddress];
+    return {
+      id: comment.id,
+      authorWalletAddress: comment.authorWalletAddress,
+      author: author ? {
+        walletAddress: author.walletAddress,
+        username: author.username,
+        profileImage: author.profileImage,
+        isVerified: author.isVerified
+      } : null,
+      content: comment.content,
+      likesCount: comment.likesCount,
+      repliesCount: comment.repliesCount,
+      createdAt: comment.createdAt
+    };
+  }).reverse(); // Oldest first for display
+};
+
+/**
+ * Helper function to format post with likes/comments info
+ */
+const formatPostWithEngagement = async (post, author, userWalletAddress = null, includeRecentComments = true) => {
+  const isLiked = await checkUserLiked(post.id, userWalletAddress);
+  const recentComments = includeRecentComments ? await getRecentComments(post.id, 3) : [];
+
+  return {
+    id: post.id,
+    authorWalletAddress: post.authorWalletAddress,
+    author: author ? {
+      walletAddress: author.walletAddress,
+      username: author.username,
+      profileImage: author.profileImage,
+      isVerified: author.isVerified,
+      ...(author.bio !== undefined && { bio: author.bio })
+    } : null,
+    content: post.content,
+    postType: post.postType,
+    visibility: post.visibility,
+    media: post.media ? post.media.map(m => ({
+      id: m.id,
+      mediaType: m.mediaType,
+      mediaUrl: m.mediaUrl,
+      thumbnailUrl: m.thumbnailUrl,
+      mimeType: m.mimeType,
+      fileSize: m.fileSize,
+      width: m.width,
+      height: m.height,
+      duration: m.duration,
+      displayOrder: m.displayOrder,
+      altText: m.altText
+    })).sort((a, b) => a.displayOrder - b.displayOrder) : [],
+    likesCount: post.likesCount,
+    commentsCount: post.commentsCount,
+    sharesCount: post.sharesCount,
+    isLiked,
+    recentComments,
+    metadata: post.metadata,
+    createdAt: post.createdAt,
+    ...(post.updatedAt && { updatedAt: post.updatedAt })
+  };
 };
 
 /**
@@ -108,42 +208,15 @@ const createPost = async (req, res, next) => {
       }));
     }
 
+    // Attach media to post object for formatting
+    post.media = mediaItems;
+
     logger.info(`New post created by ${authorWalletAddress}, type: ${postType}`);
 
+    const formattedPost = await formatPostWithEngagement(post, author, authorWalletAddress, false);
+
     res.status(201).json(
-      new ApiResponse(201, {
-        post: {
-          id: post.id,
-          authorWalletAddress: post.authorWalletAddress,
-          author: {
-            walletAddress: author.walletAddress,
-            username: author.username,
-            profileImage: author.profileImage,
-            isVerified: author.isVerified
-          },
-          content: post.content,
-          postType: post.postType,
-          visibility: post.visibility,
-          media: mediaItems.map(m => ({
-            id: m.id,
-            mediaType: m.mediaType,
-            mediaUrl: m.mediaUrl,
-            thumbnailUrl: m.thumbnailUrl,
-            mimeType: m.mimeType,
-            fileSize: m.fileSize,
-            width: m.width,
-            height: m.height,
-            duration: m.duration,
-            displayOrder: m.displayOrder,
-            altText: m.altText
-          })),
-          likesCount: post.likesCount,
-          commentsCount: post.commentsCount,
-          sharesCount: post.sharesCount,
-          metadata: post.metadata,
-          createdAt: post.createdAt
-        }
-      }, 'Post created successfully')
+      new ApiResponse(201, { post: formattedPost }, 'Post created successfully')
     );
   } catch (error) {
     next(error);
@@ -157,7 +230,7 @@ const createPost = async (req, res, next) => {
 const getUserPosts = async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
-    const { page = 1, limit = 20 } = req.query;
+    const { page = 1, limit = 20, viewerWalletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
@@ -189,38 +262,10 @@ const getUserPosts = async (req, res, next) => {
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
     });
 
-    // Format posts
-    const formattedPosts = posts.map(post => ({
-      id: post.id,
-      authorWalletAddress: post.authorWalletAddress,
-      author: author ? {
-        walletAddress: author.walletAddress,
-        username: author.username,
-        profileImage: author.profileImage,
-        isVerified: author.isVerified
-      } : null,
-      content: post.content,
-      postType: post.postType,
-      visibility: post.visibility,
-      media: post.media ? post.media.map(m => ({
-        id: m.id,
-        mediaType: m.mediaType,
-        mediaUrl: m.mediaUrl,
-        thumbnailUrl: m.thumbnailUrl,
-        mimeType: m.mimeType,
-        fileSize: m.fileSize,
-        width: m.width,
-        height: m.height,
-        duration: m.duration,
-        displayOrder: m.displayOrder,
-        altText: m.altText
-      })).sort((a, b) => a.displayOrder - b.displayOrder) : [],
-      likesCount: post.likesCount,
-      commentsCount: post.commentsCount,
-      sharesCount: post.sharesCount,
-      metadata: post.metadata,
-      createdAt: post.createdAt
-    }));
+    // Format posts with engagement data
+    const formattedPosts = await Promise.all(
+      posts.map(post => formatPostWithEngagement(post, author, viewerWalletAddress))
+    );
 
     logger.info(`Posts fetched for wallet: ${walletAddress}`);
 
@@ -247,7 +292,7 @@ const getUserPosts = async (req, res, next) => {
  */
 const getAllPosts = async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, postType } = req.query;
+    const { page = 1, limit = 20, postType, viewerWalletAddress } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -296,41 +341,13 @@ const getAllPosts = async (req, res, next) => {
       authorMap[author.walletAddress] = author;
     });
 
-    // Format posts
-    const formattedPosts = posts.map(post => {
-      const author = authorMap[post.authorWalletAddress];
-      return {
-        id: post.id,
-        authorWalletAddress: post.authorWalletAddress,
-        author: author ? {
-          walletAddress: author.walletAddress,
-          username: author.username,
-          profileImage: author.profileImage,
-          isVerified: author.isVerified
-        } : null,
-        content: post.content,
-        postType: post.postType,
-        visibility: post.visibility,
-        media: post.media ? post.media.map(m => ({
-          id: m.id,
-          mediaType: m.mediaType,
-          mediaUrl: m.mediaUrl,
-          thumbnailUrl: m.thumbnailUrl,
-          mimeType: m.mimeType,
-          fileSize: m.fileSize,
-          width: m.width,
-          height: m.height,
-          duration: m.duration,
-          displayOrder: m.displayOrder,
-          altText: m.altText
-        })).sort((a, b) => a.displayOrder - b.displayOrder) : [],
-        likesCount: post.likesCount,
-        commentsCount: post.commentsCount,
-        sharesCount: post.sharesCount,
-        metadata: post.metadata,
-        createdAt: post.createdAt
-      };
-    });
+    // Format posts with engagement data
+    const formattedPosts = await Promise.all(
+      posts.map(post => {
+        const author = authorMap[post.authorWalletAddress];
+        return formatPostWithEngagement(post, author, viewerWalletAddress);
+      })
+    );
 
     logger.info(`All posts fetched, page: ${page}`);
 
@@ -356,6 +373,7 @@ const getAllPosts = async (req, res, next) => {
 const getPostById = async (req, res, next) => {
   try {
     const { postId } = req.params;
+    const { viewerWalletAddress } = req.query;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -387,42 +405,10 @@ const getPostById = async (req, res, next) => {
 
     logger.info(`Post fetched: ${postId}`);
 
+    const formattedPost = await formatPostWithEngagement(post, author, viewerWalletAddress);
+
     res.status(200).json(
-      new ApiResponse(200, {
-        post: {
-          id: post.id,
-          authorWalletAddress: post.authorWalletAddress,
-          author: author ? {
-            walletAddress: author.walletAddress,
-            username: author.username,
-            profileImage: author.profileImage,
-            isVerified: author.isVerified,
-            bio: author.bio
-          } : null,
-          content: post.content,
-          postType: post.postType,
-          visibility: post.visibility,
-          media: post.media ? post.media.map(m => ({
-            id: m.id,
-            mediaType: m.mediaType,
-            mediaUrl: m.mediaUrl,
-            thumbnailUrl: m.thumbnailUrl,
-            mimeType: m.mimeType,
-            fileSize: m.fileSize,
-            width: m.width,
-            height: m.height,
-            duration: m.duration,
-            displayOrder: m.displayOrder,
-            altText: m.altText
-          })).sort((a, b) => a.displayOrder - b.displayOrder) : [],
-          likesCount: post.likesCount,
-          commentsCount: post.commentsCount,
-          sharesCount: post.sharesCount,
-          metadata: post.metadata,
-          createdAt: post.createdAt,
-          updatedAt: post.updatedAt
-        }
-      }, 'Post retrieved successfully')
+      new ApiResponse(200, { post: formattedPost }, 'Post retrieved successfully')
     );
   } catch (error) {
     next(error);
@@ -557,41 +543,10 @@ const updatePost = async (req, res, next) => {
 
     logger.info(`Post updated: ${postId} by ${authorWalletAddress}`);
 
+    const formattedPost = await formatPostWithEngagement(updatedPost, author, authorWalletAddress);
+
     res.status(200).json(
-      new ApiResponse(200, {
-        post: {
-          id: updatedPost.id,
-          authorWalletAddress: updatedPost.authorWalletAddress,
-          author: author ? {
-            walletAddress: author.walletAddress,
-            username: author.username,
-            profileImage: author.profileImage,
-            isVerified: author.isVerified
-          } : null,
-          content: updatedPost.content,
-          postType: updatedPost.postType,
-          visibility: updatedPost.visibility,
-          media: updatedPost.media ? updatedPost.media.map(m => ({
-            id: m.id,
-            mediaType: m.mediaType,
-            mediaUrl: m.mediaUrl,
-            thumbnailUrl: m.thumbnailUrl,
-            mimeType: m.mimeType,
-            fileSize: m.fileSize,
-            width: m.width,
-            height: m.height,
-            duration: m.duration,
-            displayOrder: m.displayOrder,
-            altText: m.altText
-          })).sort((a, b) => a.displayOrder - b.displayOrder) : [],
-          likesCount: updatedPost.likesCount,
-          commentsCount: updatedPost.commentsCount,
-          sharesCount: updatedPost.sharesCount,
-          metadata: updatedPost.metadata,
-          createdAt: updatedPost.createdAt,
-          updatedAt: updatedPost.updatedAt
-        }
-      }, 'Post updated successfully')
+      new ApiResponse(200, { post: formattedPost }, 'Post updated successfully')
     );
   } catch (error) {
     next(error);
@@ -647,11 +602,536 @@ const deletePost = async (req, res, next) => {
   }
 };
 
+/**
+ * Like a post
+ */
+const likePost = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { userWalletAddress } = req.body;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    if (!userWalletAddress) {
+      throw new ApiError(400, 'User wallet address is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Check if user exists
+    const user = await User.findOne({
+      where: { walletAddress: userWalletAddress }
+    });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    // Check if already liked
+    const existingLike = await PostLike.findOne({
+      where: { postId, userWalletAddress }
+    });
+
+    if (existingLike) {
+      throw new ApiError(400, 'You have already liked this post');
+    }
+
+    // Create like
+    await PostLike.create({ postId, userWalletAddress });
+
+    // Increment likes count
+    await post.increment('likesCount');
+    await post.reload();
+
+    logger.info(`Post ${postId} liked by ${userWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        likesCount: post.likesCount,
+        isLiked: true
+      }, 'Post liked successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Unlike a post
+ */
+const unlikePost = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { userWalletAddress } = req.body;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    if (!userWalletAddress) {
+      throw new ApiError(400, 'User wallet address is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Check if like exists
+    const existingLike = await PostLike.findOne({
+      where: { postId, userWalletAddress }
+    });
+
+    if (!existingLike) {
+      throw new ApiError(400, 'You have not liked this post');
+    }
+
+    // Remove like
+    await existingLike.destroy();
+
+    // Decrement likes count
+    if (post.likesCount > 0) {
+      await post.decrement('likesCount');
+      await post.reload();
+    }
+
+    logger.info(`Post ${postId} unliked by ${userWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        likesCount: post.likesCount,
+        isLiked: false
+      }, 'Post unliked successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get users who liked a post
+ */
+const getPostLikes = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get likes with pagination
+    const { count, rows: likes } = await PostLike.findAndCountAll({
+      where: { postId },
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset
+    });
+
+    // Get user details
+    const userAddresses = likes.map(l => l.userWalletAddress);
+    const users = await User.findAll({
+      where: { walletAddress: { [Op.in]: userAddresses } },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    const userMap = {};
+    users.forEach(u => { userMap[u.walletAddress] = u; });
+
+    const formattedLikes = likes.map(like => {
+      const user = userMap[like.userWalletAddress];
+      return {
+        userWalletAddress: like.userWalletAddress,
+        user: user ? {
+          walletAddress: user.walletAddress,
+          username: user.username,
+          profileImage: user.profileImage,
+          isVerified: user.isVerified
+        } : null,
+        likedAt: like.createdAt
+      };
+    });
+
+    logger.info(`Likes fetched for post: ${postId}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        likes: formattedLikes,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Likes retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add a comment to a post
+ */
+const addComment = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { authorWalletAddress, content, parentCommentId } = req.body;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    if (!authorWalletAddress) {
+      throw new ApiError(400, 'Author wallet address is required');
+    }
+
+    if (!content || content.trim() === '') {
+      throw new ApiError(400, 'Comment content is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Verify author exists
+    const author = await User.findOne({
+      where: { walletAddress: authorWalletAddress }
+    });
+
+    if (!author) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    // If replying to a comment, verify parent exists
+    let parentComment = null;
+    if (parentCommentId) {
+      parentComment = await PostComment.findOne({
+        where: { id: parentCommentId, postId, isActive: true }
+      });
+
+      if (!parentComment) {
+        throw new ApiError(404, 'Parent comment not found');
+      }
+    }
+
+    // Create comment
+    const comment = await PostComment.create({
+      postId,
+      authorWalletAddress,
+      content: content.trim(),
+      parentCommentId: parentCommentId || null
+    });
+
+    // Increment comments count on post
+    await post.increment('commentsCount');
+
+    // If it's a reply, increment replies count on parent
+    if (parentComment) {
+      await parentComment.increment('repliesCount');
+    }
+
+    await post.reload();
+
+    logger.info(`Comment added to post ${postId} by ${authorWalletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        comment: {
+          id: comment.id,
+          postId: comment.postId,
+          authorWalletAddress: comment.authorWalletAddress,
+          author: {
+            walletAddress: author.walletAddress,
+            username: author.username,
+            profileImage: author.profileImage,
+            isVerified: author.isVerified
+          },
+          content: comment.content,
+          parentCommentId: comment.parentCommentId,
+          likesCount: comment.likesCount,
+          repliesCount: comment.repliesCount,
+          createdAt: comment.createdAt
+        },
+        postCommentsCount: post.commentsCount
+      }, 'Comment added successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get comments for a post
+ */
+const getPostComments = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { page = 1, limit = 20, parentCommentId } = req.query;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Build where clause
+    const whereClause = {
+      postId,
+      isActive: true
+    };
+
+    // If parentCommentId is provided, get replies; otherwise get top-level comments
+    if (parentCommentId) {
+      whereClause.parentCommentId = parentCommentId;
+    } else {
+      whereClause.parentCommentId = null;
+    }
+
+    // Get comments with pagination
+    const { count, rows: comments } = await PostComment.findAndCountAll({
+      where: whereClause,
+      order: [['createdAt', 'ASC']],
+      limit: parseInt(limit),
+      offset
+    });
+
+    // Get author details
+    const authorAddresses = [...new Set(comments.map(c => c.authorWalletAddress))];
+    const authors = await User.findAll({
+      where: { walletAddress: { [Op.in]: authorAddresses } },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    const authorMap = {};
+    authors.forEach(a => { authorMap[a.walletAddress] = a; });
+
+    const formattedComments = comments.map(comment => {
+      const author = authorMap[comment.authorWalletAddress];
+      return {
+        id: comment.id,
+        postId: comment.postId,
+        authorWalletAddress: comment.authorWalletAddress,
+        author: author ? {
+          walletAddress: author.walletAddress,
+          username: author.username,
+          profileImage: author.profileImage,
+          isVerified: author.isVerified
+        } : null,
+        content: comment.content,
+        parentCommentId: comment.parentCommentId,
+        likesCount: comment.likesCount,
+        repliesCount: comment.repliesCount,
+        isEdited: comment.isEdited,
+        createdAt: comment.createdAt,
+        updatedAt: comment.updatedAt
+      };
+    });
+
+    logger.info(`Comments fetched for post: ${postId}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        comments: formattedComments,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Comments retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update a comment
+ */
+const updateComment = async (req, res, next) => {
+  try {
+    const { commentId } = req.params;
+    const { authorWalletAddress, content } = req.body;
+
+    if (!commentId) {
+      throw new ApiError(400, 'Comment ID is required');
+    }
+
+    if (!authorWalletAddress) {
+      throw new ApiError(400, 'Author wallet address is required');
+    }
+
+    if (!content || content.trim() === '') {
+      throw new ApiError(400, 'Comment content is required');
+    }
+
+    const comment = await PostComment.findOne({
+      where: { id: commentId, isActive: true }
+    });
+
+    if (!comment) {
+      throw new ApiError(404, 'Comment not found');
+    }
+
+    // Verify ownership
+    if (comment.authorWalletAddress !== authorWalletAddress) {
+      throw new ApiError(403, 'You are not authorized to update this comment');
+    }
+
+    // Update comment
+    comment.content = content.trim();
+    comment.isEdited = true;
+    await comment.save();
+
+    // Get author info
+    const author = await User.findOne({
+      where: { walletAddress: authorWalletAddress },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    logger.info(`Comment ${commentId} updated by ${authorWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        comment: {
+          id: comment.id,
+          postId: comment.postId,
+          authorWalletAddress: comment.authorWalletAddress,
+          author: author ? {
+            walletAddress: author.walletAddress,
+            username: author.username,
+            profileImage: author.profileImage,
+            isVerified: author.isVerified
+          } : null,
+          content: comment.content,
+          parentCommentId: comment.parentCommentId,
+          likesCount: comment.likesCount,
+          repliesCount: comment.repliesCount,
+          isEdited: comment.isEdited,
+          createdAt: comment.createdAt,
+          updatedAt: comment.updatedAt
+        }
+      }, 'Comment updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete a comment (soft delete)
+ */
+const deleteComment = async (req, res, next) => {
+  try {
+    const { commentId } = req.params;
+    const { authorWalletAddress } = req.body;
+
+    if (!commentId) {
+      throw new ApiError(400, 'Comment ID is required');
+    }
+
+    if (!authorWalletAddress) {
+      throw new ApiError(400, 'Author wallet address is required');
+    }
+
+    const comment = await PostComment.findOne({
+      where: { id: commentId, isActive: true }
+    });
+
+    if (!comment) {
+      throw new ApiError(404, 'Comment not found');
+    }
+
+    // Verify ownership
+    if (comment.authorWalletAddress !== authorWalletAddress) {
+      throw new ApiError(403, 'You are not authorized to delete this comment');
+    }
+
+    // Soft delete
+    comment.isActive = false;
+    await comment.save();
+
+    // Decrement comments count on post
+    const post = await Post.findByPk(comment.postId);
+    if (post && post.commentsCount > 0) {
+      await post.decrement('commentsCount');
+    }
+
+    // If it's a reply, decrement replies count on parent
+    if (comment.parentCommentId) {
+      const parentComment = await PostComment.findByPk(comment.parentCommentId);
+      if (parentComment && parentComment.repliesCount > 0) {
+        await parentComment.decrement('repliesCount');
+      }
+    }
+
+    logger.info(`Comment ${commentId} deleted by ${authorWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        commentId: comment.id
+      }, 'Comment deleted successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createPost,
   getUserPosts,
   getAllPosts,
   getPostById,
   updatePost,
-  deletePost
+  deletePost,
+  likePost,
+  unlikePost,
+  getPostLikes,
+  addComment,
+  getPostComments,
+  updateComment,
+  deleteComment
 };

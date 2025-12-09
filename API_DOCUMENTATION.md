@@ -1932,7 +1932,7 @@ Create a new post with text, images, videos, or any combination.
 
 ### Get All Posts (Feed)
 
-**GET** `/posts/feed?page=1&limit=20&postType=image`
+**GET** `/posts/feed?page=1&limit=20&postType=image&viewerWalletAddress=rViewerAddress`
 
 Get all public posts sorted by most recent (feed).
 
@@ -1940,6 +1940,7 @@ Get all public posts sorted by most recent (feed).
 - `page` (optional): Page number (default: 1)
 - `limit` (optional): Posts per page (default: 20)
 - `postType` (optional): Filter by type - `text`, `image`, `video`, or `mixed`
+- `viewerWalletAddress` (optional): Wallet address of the viewer to check if they liked each post
 
 **Response (200):**
 ```json
@@ -1977,6 +1978,21 @@ Get all public posts sorted by most recent (feed).
         "commentsCount": 5,
         "sharesCount": 3,
         "metadata": null,
+        "isLiked": true,
+        "recentComments": [
+          {
+            "id": "uuid",
+            "content": "Great post!",
+            "authorWalletAddress": "rCommenterAddress",
+            "author": {
+              "walletAddress": "rCommenterAddress",
+              "username": "commenter",
+              "profileImage": "https://example.com/avatar.jpg",
+              "isVerified": false
+            },
+            "createdAt": "2025-01-15T11:00:00.000Z"
+          }
+        ],
         "createdAt": "2025-01-15T10:30:00.000Z"
       }
     ],
@@ -1994,6 +2010,8 @@ Get all public posts sorted by most recent (feed).
 - Only returns public posts
 - Sorted by creation date (newest first)
 - Filter by post type to get only specific content
+- `isLiked` is `true` if the viewer (identified by `viewerWalletAddress`) has liked the post, `false` otherwise, or omitted if no viewer wallet provided
+- `recentComments` includes up to 3 most recent comments for quick preview
 
 ---
 
@@ -2243,6 +2261,511 @@ Delete a post (soft delete). Only the author can delete their post.
 - Performs soft delete (sets `isActive` to `false`)
 - Only the post author can delete their post
 - Deleted posts will not appear in feed or user posts
+
+---
+
+## Post Like Endpoints
+
+### Like a Post
+
+**POST** `/posts/:postId/like`
+
+Like a post. A user can only like a post once.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body:**
+```json
+{
+  "userWalletAddress": "rUserWalletAddress"
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Post liked successfully",
+  "data": {
+    "like": {
+      "id": "uuid",
+      "postId": "uuid",
+      "userWalletAddress": "rUserWalletAddress",
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    },
+    "likesCount": 43
+  }
+}
+```
+
+**Error (400) - Already liked:**
+```json
+{
+  "success": false,
+  "message": "You have already liked this post"
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Post not found"
+}
+```
+
+---
+
+### Unlike a Post
+
+**DELETE** `/posts/:postId/like`
+
+Remove a like from a post.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body:**
+```json
+{
+  "userWalletAddress": "rUserWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post unliked successfully",
+  "data": {
+    "likesCount": 42
+  }
+}
+```
+
+**Error (400) - Not liked:**
+```json
+{
+  "success": false,
+  "message": "You have not liked this post"
+}
+```
+
+---
+
+### Get Post Likes
+
+**GET** `/posts/:postId/likes?page=1&limit=20`
+
+Get all users who liked a post.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 20)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Post likes retrieved successfully",
+  "data": {
+    "likes": [
+      {
+        "id": "uuid",
+        "userWalletAddress": "rUserWalletAddress",
+        "user": {
+          "walletAddress": "rUserWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 42,
+      "totalPages": 3
+    }
+  }
+}
+```
+
+---
+
+## Post Comment Endpoints
+
+### Add Comment
+
+**POST** `/posts/:postId/comments`
+
+Add a comment to a post. Supports nested replies.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Request Body (Top-level comment):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Great post! Love the artwork."
+}
+```
+
+**Request Body (Reply to comment):**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "I agree with you!",
+  "parentCommentId": "uuid-of-parent-comment"
+}
+```
+
+**Fields:**
+- `authorWalletAddress` (required): Commenter's wallet address
+- `content` (required): Comment text
+- `parentCommentId` (optional): UUID of parent comment for replies
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Comment added successfully",
+  "data": {
+    "comment": {
+      "id": "uuid",
+      "postId": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Great post! Love the artwork.",
+      "parentCommentId": null,
+      "likesCount": 0,
+      "repliesCount": 0,
+      "isEdited": false,
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    },
+    "commentsCount": 6
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Comment content is required"
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Parent comment not found"
+}
+```
+
+---
+
+### Get Post Comments
+
+**GET** `/posts/:postId/comments?page=1&limit=20&parentCommentId=null`
+
+Get comments for a post with pagination. Supports fetching top-level comments or replies to a specific comment.
+
+**Parameters:**
+- `postId` (path parameter): Post UUID
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Comments per page (default: 20)
+- `parentCommentId` (optional): Filter by parent comment ID. Use `null` for top-level comments, or a UUID for replies
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Comments retrieved successfully",
+  "data": {
+    "comments": [
+      {
+        "id": "uuid",
+        "postId": "uuid",
+        "authorWalletAddress": "rAuthorWalletAddress",
+        "author": {
+          "walletAddress": "rAuthorWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "content": "Great post! Love the artwork.",
+        "parentCommentId": null,
+        "likesCount": 5,
+        "repliesCount": 2,
+        "isEdited": false,
+        "createdAt": "2025-01-15T10:30:00.000Z",
+        "replies": [
+          {
+            "id": "uuid",
+            "authorWalletAddress": "rReplyAuthorAddress",
+            "author": {
+              "walletAddress": "rReplyAuthorAddress",
+              "username": "jane_doe",
+              "profileImage": "https://example.com/avatar2.jpg",
+              "isVerified": false
+            },
+            "content": "I agree!",
+            "parentCommentId": "parent-uuid",
+            "likesCount": 1,
+            "repliesCount": 0,
+            "isEdited": false,
+            "createdAt": "2025-01-15T11:00:00.000Z"
+          }
+        ]
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 5,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+**Notes:**
+- Top-level comments include up to 3 nested replies for preview
+- Use `parentCommentId` query param to fetch more replies
+- Comments are sorted by creation date (oldest first)
+
+---
+
+### Update Comment
+
+**PUT** `/posts/comments/:commentId`
+
+Update a comment. Only the author can update their comment.
+
+**Parameters:**
+- `commentId` (path parameter): Comment UUID
+
+**Request Body:**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress",
+  "content": "Updated comment text"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Comment updated successfully",
+  "data": {
+    "comment": {
+      "id": "uuid",
+      "postId": "uuid",
+      "authorWalletAddress": "rAuthorWalletAddress",
+      "author": {
+        "walletAddress": "rAuthorWalletAddress",
+        "username": "john_doe",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true
+      },
+      "content": "Updated comment text",
+      "parentCommentId": null,
+      "likesCount": 5,
+      "repliesCount": 2,
+      "isEdited": true,
+      "createdAt": "2025-01-15T10:30:00.000Z",
+      "updatedAt": "2025-01-15T12:00:00.000Z"
+    }
+  }
+}
+```
+
+**Error (403):**
+```json
+{
+  "success": false,
+  "message": "You are not authorized to update this comment"
+}
+```
+
+---
+
+### Delete Comment
+
+**DELETE** `/posts/comments/:commentId`
+
+Delete a comment (soft delete). Only the author can delete their comment.
+
+**Parameters:**
+- `commentId` (path parameter): Comment UUID
+
+**Request Body:**
+```json
+{
+  "authorWalletAddress": "rAuthorWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Comment deleted successfully",
+  "data": {
+    "commentId": "uuid",
+    "commentsCount": 4
+  }
+}
+```
+
+**Error (403):**
+```json
+{
+  "success": false,
+  "message": "You are not authorized to delete this comment"
+}
+```
+
+**Notes:**
+- Performs soft delete (sets `isActive` to `false`)
+- Deleting a parent comment does not delete its replies
+- Updates the post's `commentsCount`
+
+---
+
+### Post Like Data Model
+
+**PostLike:**
+```json
+{
+  "id": "uuid",
+  "postId": "uuid",
+  "userWalletAddress": "rWallet...",
+  "createdAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Post Comment Data Model
+
+**PostComment:**
+```json
+{
+  "id": "uuid",
+  "postId": "uuid",
+  "authorWalletAddress": "rWallet...",
+  "content": "Comment text...",
+  "parentCommentId": null,
+  "likesCount": 0,
+  "repliesCount": 0,
+  "isEdited": false,
+  "isActive": true,
+  "createdAt": "2025-01-15T10:30:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Example Like & Comment Integration Flow
+
+```javascript
+// 1. Get wallet address (from XAMAN connection)
+const walletAddress = localStorage.getItem('walletAddress');
+
+// 2. Like a post
+const likePost = await fetch(`/api/v1/posts/${postId}/like`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    userWalletAddress: walletAddress
+  })
+});
+
+// 3. Unlike a post
+const unlikePost = await fetch(`/api/v1/posts/${postId}/like`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    userWalletAddress: walletAddress
+  })
+});
+
+// 4. Get users who liked a post
+const likes = await fetch(`/api/v1/posts/${postId}/likes?page=1&limit=20`);
+
+// 5. Add a comment
+const addComment = await fetch(`/api/v1/posts/${postId}/comments`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'Great post!'
+  })
+});
+
+// 6. Reply to a comment
+const replyToComment = await fetch(`/api/v1/posts/${postId}/comments`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'I agree!',
+    parentCommentId: parentCommentId
+  })
+});
+
+// 7. Get post comments
+const comments = await fetch(`/api/v1/posts/${postId}/comments?page=1&limit=20`);
+
+// 8. Update a comment
+const updateComment = await fetch(`/api/v1/posts/comments/${commentId}`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress,
+    content: 'Updated comment'
+  })
+});
+
+// 9. Delete a comment
+const deleteComment = await fetch(`/api/v1/posts/comments/${commentId}`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    authorWalletAddress: walletAddress
+  })
+});
+
+// 10. Get feed with like status (pass viewerWalletAddress)
+const feed = await fetch(
+  `/api/v1/posts/feed?page=1&limit=20&viewerWalletAddress=${walletAddress}`
+);
+```
 
 ---
 
