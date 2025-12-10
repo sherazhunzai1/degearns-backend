@@ -513,11 +513,44 @@ const getAllUsers = async (req, res, next) => {
   }
 };
 
+/**
+ * Get total unread messages count only (for notification badge)
+ * Returns just the count value for lightweight badge display
+ */
+const getTotalUnreadCount = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Get total unread count only
+    const count = await Message.count({
+      where: {
+        receiverWalletAddress: walletAddress,
+        isRead: false
+      }
+    });
+
+    logger.info(`Total unread count fetched for badge: ${walletAddress}, count: ${count}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        count
+      }, 'Unread count retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getChatUsers,
   getMessages,
   sendMessage,
   markMessagesAsRead,
   getUnreadCount,
+  getTotalUnreadCount,
   getAllUsers
 };

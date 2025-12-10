@@ -1658,6 +1658,34 @@ Get the total count of unread messages and breakdown by sender.
 
 ---
 
+### Get Total Unread Count (Badge)
+
+**GET** `/chat/unread-count/:walletAddress`
+
+Get only the total count of unread messages. Lightweight endpoint optimized for notification badge display.
+
+**Parameters:**
+- `walletAddress` (path parameter): The logged-in user's XRPL wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Unread count retrieved successfully",
+  "data": {
+    "count": 12
+  }
+}
+```
+
+**Notes:**
+- Returns only the count value for lightweight badge display
+- Use this endpoint when you only need the number for a notification badge
+- For detailed breakdown by sender, use `/chat/unread/:walletAddress` instead
+
+---
+
 ### Message Types
 
 | Type | Description | Metadata |
