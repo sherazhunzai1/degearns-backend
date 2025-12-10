@@ -6,6 +6,7 @@ const {
   sendMessage,
   markMessagesAsRead,
   getUnreadCount,
+  getTotalUnreadCount,
   getAllUsers
 } = require('../controllers/chatController');
 
@@ -46,9 +47,16 @@ router.put('/read', markMessagesAsRead);
 
 /**
  * @route   GET /api/v1/chat/unread/:walletAddress
- * @desc    Get unread messages count for a user
+ * @desc    Get unread messages count for a user (detailed with breakdown by sender)
  * @access  Public
  */
 router.get('/unread/:walletAddress', getUnreadCount);
+
+/**
+ * @route   GET /api/v1/chat/unread-count/:walletAddress
+ * @desc    Get total unread messages count only (for notification badge)
+ * @access  Public
+ */
+router.get('/unread-count/:walletAddress', getTotalUnreadCount);
 
 module.exports = router;
