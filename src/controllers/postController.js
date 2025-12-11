@@ -1,4 +1,4 @@
-const { User, Post, PostMedia, PostLike, PostComment } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment, Follow } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -1137,6 +1137,105 @@ const deleteComment = async (req, res, next) => {
   }
 };
 
+/**
+ * Get posts from users that the logged-in user follows (Following Feed)
+ * Supports pagination
+ */
+const getFollowingPosts = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const { page = 1, limit = 20, viewerWalletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Use viewerWalletAddress if provided, otherwise use walletAddress
+    const viewerWallet = viewerWalletAddress || walletAddress;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get list of users that this user follows
+    const following = await Follow.findAll({
+      where: { followerWalletAddress: walletAddress },
+      attributes: ['followingWalletAddress']
+    });
+
+    const followingAddresses = following.map(f => f.followingWalletAddress);
+
+    // If user doesn't follow anyone, return empty feed
+    if (followingAddresses.length === 0) {
+      return res.status(200).json(
+        new ApiResponse(200, {
+          posts: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            totalPages: 0
+          }
+        }, 'No posts found. Follow some users to see their posts.')
+      );
+    }
+
+    // Get posts from followed users
+    const { count, rows: posts } = await Post.findAndCountAll({
+      where: {
+        authorWalletAddress: { [Op.in]: followingAddresses },
+        isActive: true,
+        visibility: 'public'
+      },
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset,
+      include: [
+        {
+          model: PostMedia,
+          as: 'media',
+          attributes: ['id', 'mediaType', 'mediaUrl', 'thumbnailUrl', 'mimeType', 'width', 'height', 'duration', 'displayOrder', 'altText']
+        }
+      ]
+    });
+
+    // Get author details
+    const authorAddresses = [...new Set(posts.map(p => p.authorWalletAddress))];
+
+    let authorMap = {};
+    if (authorAddresses.length > 0) {
+      const authors = await User.findAll({
+        where: { walletAddress: { [Op.in]: authorAddresses } },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+
+      authors.forEach(author => {
+        authorMap[author.walletAddress] = author;
+      });
+    }
+
+    // Format posts with engagement data
+    const formattedPosts = await Promise.all(posts.map(async (post) => {
+      const author = authorMap[post.authorWalletAddress];
+      return await formatPostWithEngagement(post, author, viewerWallet, true);
+    }));
+
+    logger.info(`Following feed fetched for wallet: ${walletAddress}, following ${followingAddresses.length} users`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        posts: formattedPosts,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Following feed retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createPost,
   getUserPosts,
@@ -1150,5 +1249,6 @@ module.exports = {
   addComment,
   getPostComments,
   updateComment,
-  deleteComment
+  deleteComment,
+  getFollowingPosts
 };
