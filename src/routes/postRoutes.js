@@ -13,7 +13,8 @@ const {
   addComment,
   getPostComments,
   updateComment,
-  deleteComment
+  deleteComment,
+  getFollowingPosts
 } = require('../controllers/postController');
 
 /**
@@ -29,6 +30,13 @@ router.post('/', createPost);
  * @access  Public
  */
 router.get('/feed', getAllPosts);
+
+/**
+ * @route   GET /api/v1/posts/following/:walletAddress
+ * @desc    Get posts from users that the logged-in user follows
+ * @access  Public
+ */
+router.get('/following/:walletAddress', getFollowingPosts);
 
 /**
  * @route   GET /api/v1/posts/user/:walletAddress

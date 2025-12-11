@@ -10,6 +10,7 @@ const Post = require('./Post')(sequelize, DataTypes);
 const PostMedia = require('./PostMedia')(sequelize, DataTypes);
 const PostLike = require('./PostLike')(sequelize, DataTypes);
 const PostComment = require('./PostComment')(sequelize, DataTypes);
+const Follow = require('./Follow')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -154,6 +155,30 @@ PostComment.belongsTo(PostComment, {
   as: 'parentComment'
 });
 
+// User and Follow associations (followers)
+User.hasMany(Follow, {
+  foreignKey: 'followingWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'followers'
+});
+Follow.belongsTo(User, {
+  foreignKey: 'followingWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'followingUser'
+});
+
+// User and Follow associations (following)
+User.hasMany(Follow, {
+  foreignKey: 'followerWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'following'
+});
+Follow.belongsTo(User, {
+  foreignKey: 'followerWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'followerUser'
+});
+
 module.exports = {
   sequelize,
   User,
@@ -163,5 +188,6 @@ module.exports = {
   Post,
   PostMedia,
   PostLike,
-  PostComment
+  PostComment,
+  Follow
 };

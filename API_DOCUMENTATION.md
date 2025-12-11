@@ -1772,6 +1772,375 @@ const unreadCount = await fetch(`/api/v1/chat/unread/${walletAddress}`);
 
 ---
 
+## Follow Endpoints
+
+The Follow API enables users to follow/unfollow other users and get personalized feeds based on who they follow.
+
+### Follow a User
+
+**POST** `/follow`
+
+Follow another user.
+
+**Request Body:**
+```json
+{
+  "followerWalletAddress": "rYourWalletAddress",
+  "followingWalletAddress": "rUserToFollowWalletAddress"
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "User followed successfully",
+  "data": {
+    "follow": {
+      "id": "uuid",
+      "followerWalletAddress": "rYourWalletAddress",
+      "followingWalletAddress": "rUserToFollowWalletAddress",
+      "createdAt": "2025-01-15T10:30:00.000Z"
+    },
+    "followersCount": 150
+  }
+}
+```
+
+**Error (400) - Already following:**
+```json
+{
+  "success": false,
+  "message": "You are already following this user"
+}
+```
+
+**Error (400) - Self follow:**
+```json
+{
+  "success": false,
+  "message": "You cannot follow yourself"
+}
+```
+
+---
+
+### Unfollow a User
+
+**DELETE** `/follow`
+
+Unfollow a user.
+
+**Request Body:**
+```json
+{
+  "followerWalletAddress": "rYourWalletAddress",
+  "followingWalletAddress": "rUserToUnfollowWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "User unfollowed successfully",
+  "data": {
+    "followersCount": 149
+  }
+}
+```
+
+**Error (400) - Not following:**
+```json
+{
+  "success": false,
+  "message": "You are not following this user"
+}
+```
+
+---
+
+### Check Follow Status
+
+**GET** `/follow/status?followerWalletAddress=rYourWallet&followingWalletAddress=rOtherWallet`
+
+Check if user A follows user B.
+
+**Query Parameters:**
+- `followerWalletAddress` (required): The user who might be following
+- `followingWalletAddress` (required): The user who might be followed
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Follow status retrieved successfully",
+  "data": {
+    "isFollowing": true,
+    "followedAt": "2025-01-15T10:30:00.000Z"
+  }
+}
+```
+
+---
+
+### Get Followers
+
+**GET** `/follow/followers/:walletAddress?page=1&limit=20&viewerWalletAddress=rViewerWallet`
+
+Get all users who follow a specific user.
+
+**Parameters:**
+- `walletAddress` (path parameter): The user whose followers to retrieve
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 20)
+- `viewerWalletAddress` (optional): Wallet of viewer to check if they follow each follower
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Followers retrieved successfully",
+  "data": {
+    "followers": [
+      {
+        "walletAddress": "rFollowerWalletAddress",
+        "username": "follower_user",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true,
+        "bio": "NFT collector",
+        "followedAt": "2025-01-15T10:30:00.000Z",
+        "isFollowing": true
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 150,
+      "totalPages": 8
+    }
+  }
+}
+```
+
+**Notes:**
+- `isFollowing` indicates if the viewer (viewerWalletAddress) follows this user
+- Sorted by follow date (most recent first)
+
+---
+
+### Get Following
+
+**GET** `/follow/following/:walletAddress?page=1&limit=20&viewerWalletAddress=rViewerWallet`
+
+Get all users that a specific user is following.
+
+**Parameters:**
+- `walletAddress` (path parameter): The user whose following list to retrieve
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Items per page (default: 20)
+- `viewerWalletAddress` (optional): Wallet of viewer to check mutual follows
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Following retrieved successfully",
+  "data": {
+    "following": [
+      {
+        "walletAddress": "rFollowingWalletAddress",
+        "username": "followed_user",
+        "profileImage": "https://example.com/avatar.jpg",
+        "isVerified": true,
+        "bio": "Digital artist",
+        "followedAt": "2025-01-15T10:30:00.000Z",
+        "isFollowing": true
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 75,
+      "totalPages": 4
+    }
+  }
+}
+```
+
+---
+
+### Get Follow Counts
+
+**GET** `/follow/counts/:walletAddress`
+
+Get follower and following counts for a user.
+
+**Parameters:**
+- `walletAddress` (path parameter): The user's wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Follow counts retrieved successfully",
+  "data": {
+    "followersCount": 150,
+    "followingCount": 75
+  }
+}
+```
+
+---
+
+### Get Following Feed (Posts from Followed Users)
+
+**GET** `/posts/following/:walletAddress?page=1&limit=20`
+
+Get posts from users that the logged-in user follows. This creates a personalized feed.
+
+**Parameters:**
+- `walletAddress` (path parameter): The logged-in user's wallet address
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Posts per page (default: 20)
+- `viewerWalletAddress` (optional): Wallet address of viewer to check if they liked posts
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Following feed retrieved successfully",
+  "data": {
+    "posts": [
+      {
+        "id": "uuid",
+        "authorWalletAddress": "rAuthorWalletAddress",
+        "author": {
+          "walletAddress": "rAuthorWalletAddress",
+          "username": "followed_user",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "content": "Check out my latest NFT!",
+        "postType": "image",
+        "visibility": "public",
+        "media": [...],
+        "likesCount": 42,
+        "commentsCount": 5,
+        "sharesCount": 3,
+        "isLiked": true,
+        "recentComments": [...],
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 100,
+      "totalPages": 5
+    }
+  }
+}
+```
+
+**Response (200) - No follows:**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "No posts found. Follow some users to see their posts.",
+  "data": {
+    "posts": [],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 0,
+      "totalPages": 0
+    }
+  }
+}
+```
+
+**Notes:**
+- Only returns posts from users the logged-in user follows
+- Sorted by creation date (newest first)
+- Includes engagement data (likes, comments, isLiked status)
+
+---
+
+### Follow Data Model
+
+**Follow:**
+```json
+{
+  "id": "uuid",
+  "followerWalletAddress": "rWalletWhoFollows...",
+  "followingWalletAddress": "rWalletBeingFollowed...",
+  "createdAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Example Follow Integration Flow
+
+```javascript
+// 1. Get wallet address (from XAMAN connection)
+const walletAddress = localStorage.getItem('walletAddress');
+
+// 2. Follow a user
+const followUser = await fetch('/api/v1/follow', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    followerWalletAddress: walletAddress,
+    followingWalletAddress: userToFollow
+  })
+});
+
+// 3. Unfollow a user
+const unfollowUser = await fetch('/api/v1/follow', {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    followerWalletAddress: walletAddress,
+    followingWalletAddress: userToUnfollow
+  })
+});
+
+// 4. Check if you follow a user
+const followStatus = await fetch(
+  `/api/v1/follow/status?followerWalletAddress=${walletAddress}&followingWalletAddress=${otherUser}`
+);
+
+// 5. Get your followers
+const followers = await fetch(`/api/v1/follow/followers/${walletAddress}?page=1&limit=20`);
+
+// 6. Get users you follow
+const following = await fetch(`/api/v1/follow/following/${walletAddress}?page=1&limit=20`);
+
+// 7. Get follow counts for profile display
+const counts = await fetch(`/api/v1/follow/counts/${walletAddress}`);
+
+// 8. Get personalized feed (posts from followed users)
+const followingFeed = await fetch(`/api/v1/posts/following/${walletAddress}?page=1&limit=20`);
+```
+
+---
+
 ## Post Endpoints
 
 The Posts API enables users to create and share content similar to social media platforms. Users can create posts with text, images, videos, or any combination.
