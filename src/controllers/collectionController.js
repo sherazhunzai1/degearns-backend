@@ -339,7 +339,7 @@ const getCollection = async (req, res, next) => {
             nft,
             sellOffers: hasOffers ? sellOffers : [],
             lowestPrice: hasOffers ? Math.min(...sellOffers.map(offer => parseInt(offer.Amount))).toString() : null,
-            ownerAddress: hasOffers ? sellOffers[0].owner : nft.Issuer, // Owner from sell offer or issuer
+            ownerAddress: hasOffers ? sellOffers[0].owner : creatorWalletAddress, // Owner from sell offer or the wallet we queried
             isOnSale: hasOffers
           });
         } catch (err) {
@@ -349,7 +349,7 @@ const getCollection = async (req, res, next) => {
             nft,
             sellOffers: [],
             lowestPrice: null,
-            ownerAddress: nft.Issuer,
+            ownerAddress: creatorWalletAddress, // Owner is the wallet we queried from
             isOnSale: false
           });
         }
