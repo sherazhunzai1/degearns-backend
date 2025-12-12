@@ -1,6 +1,9 @@
 const xrplService = require('../services/xrplService');
 const { User } = require('../models');
 const logger = require('../utils/logger');
+const notificationService = require('../services/notificationService');
+const ApiError = require('../utils/ApiError');
+const ApiResponse = require('../utils/ApiResponse');
 
 /**
  * Get single NFT detail with sale info and transaction history
@@ -271,5 +274,64 @@ exports.getNFTHistory = async (req, res) => {
       message: 'Failed to fetch NFT transaction history',
       error: error.message
     });
+  }
+};
+
+/**
+ * Notify followers about NFT listing
+ * Called by frontend after successfully creating a sell offer on XRPL
+ * @route POST /api/v1/nfts/notify-listing
+ */
+exports.notifyNFTListing = async (req, res, next) => {
+  try {
+    const {
+      sellerWalletAddress,
+      nftTokenId,
+      nftName,
+      nftImage,
+      price,
+      collectionId,
+      collectionName
+    } = req.body;
+
+    if (!sellerWalletAddress) {
+      throw new ApiError(400, 'Seller wallet address is required');
+    }
+
+    if (!nftTokenId) {
+      throw new ApiError(400, 'NFT token ID is required');
+    }
+
+    // Verify seller exists
+    const seller = await User.findOne({
+      where: { walletAddress: sellerWalletAddress }
+    });
+
+    if (!seller) {
+      throw new ApiError(404, 'Seller not found');
+    }
+
+    // Create notifications for all followers
+    const notifications = await notificationService.createNFTListingNotifications({
+      collectionId: collectionId || null,
+      sellerWalletAddress,
+      sellerUsername: seller.username,
+      nftName: nftName || 'NFT',
+      nftImage: nftImage || null,
+      nftTokenId,
+      price: price || null,
+      collectionName: collectionName || null
+    });
+
+    logger.info(`NFT listing notifications sent for ${nftTokenId} by ${sellerWalletAddress} to ${notifications.length} followers`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        notificationsSent: notifications.length,
+        nftTokenId
+      }, 'NFT listing notifications sent successfully')
+    );
+  } catch (error) {
+    next(error);
   }
 };

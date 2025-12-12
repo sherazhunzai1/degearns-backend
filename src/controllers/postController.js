@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const notificationService = require('../services/notificationService');
 
 /**
  * Helper function to convert IPFS URLs to HTTP gateway URLs
@@ -669,6 +670,15 @@ const likePost = async (req, res, next) => {
     await post.increment('likesCount');
     await post.reload();
 
+    // Create notification for post author (async, don't wait)
+    notificationService.createLikeNotification({
+      postId,
+      postAuthorWalletAddress: post.authorWalletAddress,
+      likerWalletAddress: userWalletAddress,
+      likerUsername: user.username,
+      postPreview: post.content
+    }).catch(err => logger.error('Error creating like notification:', err));
+
     logger.info(`Post ${postId} liked by ${userWalletAddress}`);
 
     res.status(200).json(
@@ -878,6 +888,27 @@ const addComment = async (req, res, next) => {
     // If it's a reply, increment replies count on parent
     if (parentComment) {
       await parentComment.increment('repliesCount');
+
+      // Create notification for parent comment author (reply notification)
+      notificationService.createCommentReplyNotification({
+        postId,
+        commentId: comment.id,
+        parentCommentAuthorWalletAddress: parentComment.authorWalletAddress,
+        replierWalletAddress: authorWalletAddress,
+        replierUsername: author.username,
+        replyPreview: content.trim()
+      }).catch(err => logger.error('Error creating comment reply notification:', err));
+    } else {
+      // Create notification for post author (comment notification)
+      notificationService.createCommentNotification({
+        postId,
+        commentId: comment.id,
+        postAuthorWalletAddress: post.authorWalletAddress,
+        commenterWalletAddress: authorWalletAddress,
+        commenterUsername: author.username,
+        commentPreview: content.trim(),
+        postPreview: post.content
+      }).catch(err => logger.error('Error creating comment notification:', err));
     }
 
     await post.reload();
