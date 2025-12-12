@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const notificationService = require('../services/notificationService');
 
 /**
  * Follow a user
@@ -60,6 +61,14 @@ const followUser = async (req, res, next) => {
     const followersCount = await Follow.count({
       where: { followingWalletAddress }
     });
+
+    // Create notification for the followed user (async, don't wait)
+    notificationService.createFollowNotification({
+      followId: follow.id,
+      followedWalletAddress: followingWalletAddress,
+      followerWalletAddress: followerWalletAddress,
+      followerUsername: follower.username
+    }).catch(err => logger.error('Error creating follow notification:', err));
 
     logger.info(`${followerWalletAddress} followed ${followingWalletAddress}`);
 

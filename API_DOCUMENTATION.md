@@ -2141,6 +2141,345 @@ const followingFeed = await fetch(`/api/v1/posts/following/${walletAddress}?page
 
 ---
 
+## Notification Endpoints
+
+The Notifications API enables users to receive and manage notifications for various activities like post likes, comments, new followers, and NFT listings from followed users.
+
+### Get Notifications
+
+**GET** `/notifications/:walletAddress`
+
+Get notifications for a user with pagination and filtering options.
+
+**Parameters:**
+- `walletAddress` (path parameter): The user's wallet address
+
+**Query Parameters:**
+- `page` (optional): Page number (default: 1)
+- `limit` (optional): Notifications per page (default: 20)
+- `unreadOnly` (optional): Only return unread notifications (default: false)
+- `type` (optional): Filter by notification type (like, comment, comment_reply, follow, nft_listing)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Notifications retrieved successfully",
+  "data": {
+    "notifications": [
+      {
+        "id": "uuid",
+        "type": "like",
+        "title": "New Like",
+        "message": "john_doe liked your post",
+        "sender": {
+          "walletAddress": "rSenderWalletAddress",
+          "username": "john_doe",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "relatedEntityId": "post-uuid",
+        "relatedEntityType": "post",
+        "metadata": {
+          "postPreview": "Check out my latest NFT!",
+          "likerUsername": "john_doe"
+        },
+        "isRead": false,
+        "readAt": null,
+        "createdAt": "2025-01-15T10:30:00.000Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 50,
+      "totalPages": 3
+    }
+  }
+}
+```
+
+---
+
+### Get Unread Notification Count
+
+**GET** `/notifications/:walletAddress/unread-count`
+
+Get the count of unread notifications for badge display.
+
+**Parameters:**
+- `walletAddress` (path parameter): The user's wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Unread count retrieved successfully",
+  "data": {
+    "unreadCount": 5
+  }
+}
+```
+
+---
+
+### Mark Notification as Read
+
+**PUT** `/notifications/:notificationId/read`
+
+Mark a single notification as read.
+
+**Parameters:**
+- `notificationId` (path parameter): The notification ID
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rYourWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Notification marked as read",
+  "data": {
+    "id": "uuid",
+    "isRead": true,
+    "readAt": "2025-01-15T10:35:00.000Z"
+  }
+}
+```
+
+---
+
+### Mark All Notifications as Read
+
+**PUT** `/notifications/read-all`
+
+Mark all notifications as read for a user.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rYourWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "All notifications marked as read",
+  "data": {
+    "updatedCount": 5
+  }
+}
+```
+
+---
+
+### Delete Notification
+
+**DELETE** `/notifications/:notificationId`
+
+Delete a single notification.
+
+**Parameters:**
+- `notificationId` (path parameter): The notification ID
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rYourWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Notification deleted successfully",
+  "data": {
+    "notificationId": "uuid"
+  }
+}
+```
+
+---
+
+### Delete All Notifications
+
+**DELETE** `/notifications/delete-all`
+
+Delete all notifications for a user.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rYourWalletAddress"
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "All notifications deleted successfully",
+  "data": {
+    "deletedCount": 25
+  }
+}
+```
+
+---
+
+### Notify NFT Listing
+
+**POST** `/nfts/notify-listing`
+
+Notify all followers about an NFT listing. This endpoint should be called by the frontend after successfully creating a sell offer on XRPL.
+
+**Request Body:**
+```json
+{
+  "sellerWalletAddress": "rSellerWalletAddress",
+  "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000",
+  "nftName": "Amazing NFT #1",
+  "nftImage": "https://example.com/nft-image.jpg",
+  "price": "10000000",
+  "collectionId": "collection-uuid",
+  "collectionName": "My Collection"
+}
+```
+
+**Fields:**
+- `sellerWalletAddress` (required): Wallet address of the seller
+- `nftTokenId` (required): NFT token ID on XRPL
+- `nftName` (optional): Name of the NFT
+- `nftImage` (optional): Image URL of the NFT
+- `price` (optional): Listing price in drops
+- `collectionId` (optional): Collection ID in database
+- `collectionName` (optional): Name of the collection
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "NFT listing notifications sent successfully",
+  "data": {
+    "notificationsSent": 150,
+    "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000"
+  }
+}
+```
+
+---
+
+### Notification Types
+
+| Type | Description | Trigger |
+|------|-------------|---------|
+| `like` | Post like notification | When someone likes your post |
+| `comment` | Post comment notification | When someone comments on your post |
+| `comment_reply` | Comment reply notification | When someone replies to your comment |
+| `follow` | New follower notification | When someone follows you |
+| `nft_listing` | NFT listing notification | When someone you follow lists an NFT for sale |
+
+---
+
+### Notification Data Model
+
+**Notification:**
+```json
+{
+  "id": "uuid",
+  "recipientWalletAddress": "rRecipientWallet...",
+  "senderWalletAddress": "rSenderWallet...",
+  "type": "like|comment|comment_reply|follow|nft_listing",
+  "title": "New Like",
+  "message": "john_doe liked your post",
+  "relatedEntityId": "uuid",
+  "relatedEntityType": "post|comment|follow|collection|nft",
+  "metadata": {
+    "postPreview": "...",
+    "likerUsername": "john_doe"
+  },
+  "isRead": false,
+  "readAt": null,
+  "createdAt": "2025-01-15T10:30:00.000Z",
+  "updatedAt": "2025-01-15T10:30:00.000Z"
+}
+```
+
+---
+
+### Example Notification Integration Flow
+
+```javascript
+// 1. Get wallet address (from XAMAN connection)
+const walletAddress = localStorage.getItem('walletAddress');
+
+// 2. Get unread notification count (for badge)
+const unreadCount = await fetch(`/api/v1/notifications/${walletAddress}/unread-count`);
+const { data } = await unreadCount.json();
+updateBadge(data.unreadCount);
+
+// 3. Get notifications list
+const notifications = await fetch(`/api/v1/notifications/${walletAddress}?page=1&limit=20`);
+
+// 4. Get only unread notifications
+const unreadNotifications = await fetch(
+  `/api/v1/notifications/${walletAddress}?unreadOnly=true`
+);
+
+// 5. Mark a notification as read
+await fetch(`/api/v1/notifications/${notificationId}/read`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ walletAddress })
+});
+
+// 6. Mark all notifications as read
+await fetch('/api/v1/notifications/read-all', {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ walletAddress })
+});
+
+// 7. Delete a notification
+await fetch(`/api/v1/notifications/${notificationId}`, {
+  method: 'DELETE',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ walletAddress })
+});
+
+// 8. Notify followers after listing an NFT on XRPL
+// (Call this after successfully creating a sell offer)
+await fetch('/api/v1/nfts/notify-listing', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    sellerWalletAddress: walletAddress,
+    nftTokenId: nftTokenId,
+    nftName: 'My NFT',
+    nftImage: nftImage,
+    price: listingPrice,
+    collectionName: collectionName
+  })
+});
+```
+
+---
+
 ## Post Endpoints
 
 The Posts API enables users to create and share content similar to social media platforms. Users can create posts with text, images, videos, or any combination.

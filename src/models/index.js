@@ -11,6 +11,7 @@ const PostMedia = require('./PostMedia')(sequelize, DataTypes);
 const PostLike = require('./PostLike')(sequelize, DataTypes);
 const PostComment = require('./PostComment')(sequelize, DataTypes);
 const Follow = require('./Follow')(sequelize, DataTypes);
+const Notification = require('./Notification')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -179,6 +180,34 @@ Follow.belongsTo(User, {
   as: 'followerUser'
 });
 
+// User and Notification associations (recipient)
+User.hasMany(Notification, {
+  foreignKey: 'recipientWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'receivedNotifications'
+});
+Notification.belongsTo(User, {
+  foreignKey: 'recipientWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'recipient'
+});
+
+// User and Notification associations (sender)
+User.hasMany(Notification, {
+  foreignKey: 'senderWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'sentNotifications'
+});
+Notification.belongsTo(User, {
+  foreignKey: 'senderWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'sender'
+});
+
+// Initialize notification service with models
+const notificationService = require('../services/notificationService');
+notificationService.init({ Notification, User, Follow });
+
 module.exports = {
   sequelize,
   User,
@@ -189,5 +218,6 @@ module.exports = {
   PostMedia,
   PostLike,
   PostComment,
-  Follow
+  Follow,
+  Notification
 };
