@@ -636,9 +636,16 @@ const likePost = async (req, res, next) => {
       throw new ApiError(400, 'User wallet address is required');
     }
 
-    // Check if post exists
+    // Check if post exists (include media for notification)
     const post = await Post.findOne({
-      where: { id: postId, isActive: true }
+      where: { id: postId, isActive: true },
+      include: [
+        {
+          model: PostMedia,
+          as: 'media',
+          attributes: ['mediaUrl', 'thumbnailUrl', 'mediaType']
+        }
+      ]
     });
 
     if (!post) {
@@ -676,7 +683,9 @@ const likePost = async (req, res, next) => {
       postAuthorWalletAddress: post.authorWalletAddress,
       likerWalletAddress: userWalletAddress,
       likerUsername: user.username,
-      postPreview: post.content
+      postPreview: post.content,
+      postType: post.postType,
+      postMedia: post.media
     }).catch(err => logger.error('Error creating like notification:', err));
 
     logger.info(`Post ${postId} liked by ${userWalletAddress}`);
@@ -844,9 +853,16 @@ const addComment = async (req, res, next) => {
       throw new ApiError(400, 'Comment content is required');
     }
 
-    // Check if post exists
+    // Check if post exists (include media for notification)
     const post = await Post.findOne({
-      where: { id: postId, isActive: true }
+      where: { id: postId, isActive: true },
+      include: [
+        {
+          model: PostMedia,
+          as: 'media',
+          attributes: ['mediaUrl', 'thumbnailUrl', 'mediaType']
+        }
+      ]
     });
 
     if (!post) {
@@ -893,10 +909,13 @@ const addComment = async (req, res, next) => {
       notificationService.createCommentReplyNotification({
         postId,
         commentId: comment.id,
+        parentCommentId: parentCommentId,
         parentCommentAuthorWalletAddress: parentComment.authorWalletAddress,
         replierWalletAddress: authorWalletAddress,
         replierUsername: author.username,
-        replyPreview: content.trim()
+        replyPreview: content.trim(),
+        postType: post.postType,
+        postMedia: post.media
       }).catch(err => logger.error('Error creating comment reply notification:', err));
     } else {
       // Create notification for post author (comment notification)
@@ -907,7 +926,9 @@ const addComment = async (req, res, next) => {
         commenterWalletAddress: authorWalletAddress,
         commenterUsername: author.username,
         commentPreview: content.trim(),
-        postPreview: post.content
+        postPreview: post.content,
+        postType: post.postType,
+        postMedia: post.media
       }).catch(err => logger.error('Error creating comment notification:', err));
     }
 

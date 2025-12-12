@@ -28,13 +28,18 @@ class NotificationService {
    * @param {string} params.likerWalletAddress - Wallet address of the user who liked
    * @param {string} params.likerUsername - Username of the user who liked
    * @param {string} params.postPreview - Preview of the post content
+   * @param {string} params.postType - Type of the post (text, image, video, mixed)
+   * @param {Array} params.postMedia - Media attachments of the post
    */
-  async createLikeNotification({ postId, postAuthorWalletAddress, likerWalletAddress, likerUsername, postPreview }) {
+  async createLikeNotification({ postId, postAuthorWalletAddress, likerWalletAddress, likerUsername, postPreview, postType, postMedia }) {
     try {
       // Don't create notification if user likes their own post
       if (postAuthorWalletAddress === likerWalletAddress) {
         return null;
       }
+
+      // Get first media item for preview
+      const firstMedia = postMedia && postMedia.length > 0 ? postMedia[0] : null;
 
       const notification = await this.Notification.create({
         recipientWalletAddress: postAuthorWalletAddress,
@@ -45,7 +50,11 @@ class NotificationService {
         relatedEntityId: postId,
         relatedEntityType: 'post',
         metadata: {
+          postId: postId,
           postPreview: postPreview ? postPreview.substring(0, 100) : null,
+          postType: postType || 'text',
+          postImage: firstMedia ? (firstMedia.thumbnailUrl || firstMedia.mediaUrl) : null,
+          postAuthorWalletAddress: postAuthorWalletAddress,
           likerUsername: likerUsername
         }
       });
@@ -68,13 +77,18 @@ class NotificationService {
    * @param {string} params.commenterUsername - Username of the commenter
    * @param {string} params.commentPreview - Preview of the comment content
    * @param {string} params.postPreview - Preview of the post content
+   * @param {string} params.postType - Type of the post (text, image, video, mixed)
+   * @param {Array} params.postMedia - Media attachments of the post
    */
-  async createCommentNotification({ postId, commentId, postAuthorWalletAddress, commenterWalletAddress, commenterUsername, commentPreview, postPreview }) {
+  async createCommentNotification({ postId, commentId, postAuthorWalletAddress, commenterWalletAddress, commenterUsername, commentPreview, postPreview, postType, postMedia }) {
     try {
       // Don't create notification if user comments on their own post
       if (postAuthorWalletAddress === commenterWalletAddress) {
         return null;
       }
+
+      // Get first media item for preview
+      const firstMedia = postMedia && postMedia.length > 0 ? postMedia[0] : null;
 
       const notification = await this.Notification.create({
         recipientWalletAddress: postAuthorWalletAddress,
@@ -85,9 +99,13 @@ class NotificationService {
         relatedEntityId: postId,
         relatedEntityType: 'post',
         metadata: {
+          postId: postId,
           commentId: commentId,
           commentPreview: commentPreview ? commentPreview.substring(0, 100) : null,
           postPreview: postPreview ? postPreview.substring(0, 100) : null,
+          postType: postType || 'text',
+          postImage: firstMedia ? (firstMedia.thumbnailUrl || firstMedia.mediaUrl) : null,
+          postAuthorWalletAddress: postAuthorWalletAddress,
           commenterUsername: commenterUsername
         }
       });
@@ -105,17 +123,23 @@ class NotificationService {
    * @param {Object} params - Parameters for the notification
    * @param {string} params.postId - ID of the post
    * @param {string} params.commentId - ID of the reply comment
+   * @param {string} params.parentCommentId - ID of the parent comment
    * @param {string} params.parentCommentAuthorWalletAddress - Wallet address of the parent comment author
    * @param {string} params.replierWalletAddress - Wallet address of the replier
    * @param {string} params.replierUsername - Username of the replier
    * @param {string} params.replyPreview - Preview of the reply content
+   * @param {string} params.postType - Type of the post (text, image, video, mixed)
+   * @param {Array} params.postMedia - Media attachments of the post
    */
-  async createCommentReplyNotification({ postId, commentId, parentCommentAuthorWalletAddress, replierWalletAddress, replierUsername, replyPreview }) {
+  async createCommentReplyNotification({ postId, commentId, parentCommentId, parentCommentAuthorWalletAddress, replierWalletAddress, replierUsername, replyPreview, postType, postMedia }) {
     try {
       // Don't create notification if user replies to their own comment
       if (parentCommentAuthorWalletAddress === replierWalletAddress) {
         return null;
       }
+
+      // Get first media item for preview
+      const firstMedia = postMedia && postMedia.length > 0 ? postMedia[0] : null;
 
       const notification = await this.Notification.create({
         recipientWalletAddress: parentCommentAuthorWalletAddress,
@@ -126,8 +150,12 @@ class NotificationService {
         relatedEntityId: postId,
         relatedEntityType: 'comment',
         metadata: {
+          postId: postId,
           commentId: commentId,
+          parentCommentId: parentCommentId,
           replyPreview: replyPreview ? replyPreview.substring(0, 100) : null,
+          postType: postType || 'text',
+          postImage: firstMedia ? (firstMedia.thumbnailUrl || firstMedia.mediaUrl) : null,
           replierUsername: replierUsername
         }
       });
@@ -175,15 +203,16 @@ class NotificationService {
    * Create notifications for NFT listing to all followers
    * @param {Object} params - Parameters for the notification
    * @param {string} params.collectionId - ID of the collection (can be null for XRPL-only)
-   * @param {string} params.sellerWalletAddress - Wallet address of the seller
+   * @param {string} params.sellerWalletAddress - Wallet address of the seller (also the current owner)
    * @param {string} params.sellerUsername - Username of the seller
    * @param {string} params.nftName - Name of the NFT
    * @param {string} params.nftImage - Image URL of the NFT
    * @param {string} params.nftTokenId - NFT token ID on XRPL
    * @param {string} params.price - Listing price
    * @param {string} params.collectionName - Name of the collection
+   * @param {string} params.nftDescription - Description of the NFT
    */
-  async createNFTListingNotifications({ collectionId, sellerWalletAddress, sellerUsername, nftName, nftImage, nftTokenId, price, collectionName }) {
+  async createNFTListingNotifications({ collectionId, sellerWalletAddress, sellerUsername, nftName, nftImage, nftTokenId, price, collectionName, nftDescription }) {
     try {
       // Get all followers of the seller
       const followers = await this.Follow.findAll({
@@ -209,10 +238,13 @@ class NotificationService {
               relatedEntityId: collectionId,
               relatedEntityType: 'nft',
               metadata: {
-                nftName: nftName,
-                nftImage: nftImage,
                 nftTokenId: nftTokenId,
+                nftName: nftName,
+                nftDescription: nftDescription ? nftDescription.substring(0, 200) : null,
+                nftImage: nftImage,
+                ownerWalletAddress: sellerWalletAddress,
                 price: price,
+                collectionId: collectionId,
                 collectionName: collectionName,
                 sellerUsername: sellerUsername
               }

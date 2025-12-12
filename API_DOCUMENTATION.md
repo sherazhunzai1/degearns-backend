@@ -2353,6 +2353,7 @@ Notify all followers about an NFT listing. This endpoint should be called by the
   "sellerWalletAddress": "rSellerWalletAddress",
   "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000",
   "nftName": "Amazing NFT #1",
+  "nftDescription": "A beautiful digital artwork created with AI",
   "nftImage": "https://example.com/nft-image.jpg",
   "price": "10000000",
   "collectionId": "collection-uuid",
@@ -2361,9 +2362,10 @@ Notify all followers about an NFT listing. This endpoint should be called by the
 ```
 
 **Fields:**
-- `sellerWalletAddress` (required): Wallet address of the seller
+- `sellerWalletAddress` (required): Wallet address of the seller (also the current owner)
 - `nftTokenId` (required): NFT token ID on XRPL
 - `nftName` (optional): Name of the NFT
+- `nftDescription` (optional): Description of the NFT
 - `nftImage` (optional): Image URL of the NFT
 - `price` (optional): Listing price in drops
 - `collectionId` (optional): Collection ID in database
@@ -2409,16 +2411,78 @@ Notify all followers about an NFT listing. This endpoint should be called by the
   "message": "john_doe liked your post",
   "relatedEntityId": "uuid",
   "relatedEntityType": "post|comment|follow|collection|nft",
-  "metadata": {
-    "postPreview": "...",
-    "likerUsername": "john_doe"
-  },
+  "metadata": { ... },
   "isRead": false,
   "readAt": null,
   "createdAt": "2025-01-15T10:30:00.000Z",
   "updatedAt": "2025-01-15T10:30:00.000Z"
 }
 ```
+
+### Notification Metadata by Type
+
+**Like Notification Metadata:**
+```json
+{
+  "postId": "uuid",
+  "postPreview": "Check out my latest NFT!",
+  "postType": "image",
+  "postImage": "https://example.com/post-image.jpg",
+  "postAuthorWalletAddress": "rPostAuthorWallet...",
+  "likerUsername": "john_doe"
+}
+```
+
+**Comment Notification Metadata:**
+```json
+{
+  "postId": "uuid",
+  "commentId": "uuid",
+  "commentPreview": "Great post!",
+  "postPreview": "Check out my latest NFT!",
+  "postType": "image",
+  "postImage": "https://example.com/post-image.jpg",
+  "postAuthorWalletAddress": "rPostAuthorWallet...",
+  "commenterUsername": "john_doe"
+}
+```
+
+**Comment Reply Notification Metadata:**
+```json
+{
+  "postId": "uuid",
+  "commentId": "uuid",
+  "parentCommentId": "uuid",
+  "replyPreview": "Thanks!",
+  "postType": "image",
+  "postImage": "https://example.com/post-image.jpg",
+  "replierUsername": "john_doe"
+}
+```
+
+**Follow Notification Metadata:**
+```json
+{
+  "followerUsername": "john_doe"
+}
+```
+
+**NFT Listing Notification Metadata:**
+```json
+{
+  "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000",
+  "nftName": "Amazing NFT #1",
+  "nftDescription": "A beautiful digital artwork...",
+  "nftImage": "https://example.com/nft-image.jpg",
+  "ownerWalletAddress": "rSellerWallet...",
+  "price": "10000000",
+  "collectionId": "uuid",
+  "collectionName": "My Collection",
+  "sellerUsername": "john_doe"
+}
+```
+
+**Note:** Use `metadata.postId` or `metadata.nftTokenId` to navigate to the related content when a user clicks on a notification.
 
 ---
 
@@ -2471,11 +2535,39 @@ await fetch('/api/v1/nfts/notify-listing', {
     sellerWalletAddress: walletAddress,
     nftTokenId: nftTokenId,
     nftName: 'My NFT',
+    nftDescription: 'A beautiful digital artwork',
     nftImage: nftImage,
     price: listingPrice,
     collectionName: collectionName
   })
 });
+
+// 9. Handle notification click - navigate to related content
+function handleNotificationClick(notification) {
+  switch (notification.type) {
+    case 'like':
+    case 'comment':
+    case 'comment_reply':
+      // Navigate to the post using postId from metadata
+      const postId = notification.metadata.postId;
+      window.location.href = `/post/${postId}`;
+      break;
+    case 'follow':
+      // Navigate to the follower's profile
+      window.location.href = `/profile/${notification.senderWalletAddress}`;
+      break;
+    case 'nft_listing':
+      // Navigate to the NFT detail page using nftTokenId
+      const nftTokenId = notification.metadata.nftTokenId;
+      const ownerWallet = notification.metadata.ownerWalletAddress;
+      window.location.href = `/nft/${nftTokenId}?wallet=${ownerWallet}`;
+      break;
+  }
+}
+
+// 10. Fetch single post by ID (after clicking a post notification)
+const postResponse = await fetch(`/api/v1/posts/${postId}?viewerWalletAddress=${walletAddress}`);
+const postData = await postResponse.json();
 ```
 
 ---
