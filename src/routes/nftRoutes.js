@@ -4,7 +4,8 @@ const {
   getNFTDetail,
   getNFTOffers,
   getNFTHistory,
-  notifyNFTListing
+  notifyNFTListing,
+  notifyNFTPurchase
 } = require('../controllers/nftController');
 
 /**
@@ -43,5 +44,22 @@ router.get('/:nftTokenId/history', getNFTHistory);
  * @access  Public
  */
 router.post('/notify-listing', notifyNFTListing);
+
+/**
+ * @route   POST /api/v1/nfts/notify-purchase
+ * @desc    Notify seller about NFT purchase (called by frontend after purchasing NFT on XRPL)
+ * @body    sellerWalletAddress - Required: Wallet address of the seller (receives notification)
+ * @body    buyerWalletAddress - Required: Wallet address of the buyer
+ * @body    nftTokenId - Required: NFT token ID on XRPL
+ * @body    nftName - Optional: Name of the NFT
+ * @body    nftDescription - Optional: Description of the NFT
+ * @body    nftImage - Optional: Image URL of the NFT
+ * @body    price - Optional: Sale price in drops
+ * @body    collectionId - Optional: Collection ID in database
+ * @body    collectionName - Optional: Name of the collection
+ * @body    transactionHash - Optional: XRPL transaction hash
+ * @access  Public
+ */
+router.post('/notify-purchase', notifyNFTPurchase);
 
 module.exports = router;

@@ -2386,6 +2386,73 @@ Notify all followers about an NFT listing. This endpoint should be called by the
 
 ---
 
+### Notify NFT Purchase
+
+**POST** `/nfts/notify-purchase`
+
+Notify the seller about an NFT purchase. This endpoint should be called by the frontend after successfully purchasing an NFT on XRPL.
+
+**Request Body:**
+```json
+{
+  "sellerWalletAddress": "rSellerWalletAddress",
+  "buyerWalletAddress": "rBuyerWalletAddress",
+  "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000",
+  "nftName": "Amazing NFT #1",
+  "nftDescription": "A beautiful digital artwork",
+  "nftImage": "https://example.com/nft-image.jpg",
+  "price": "10000000",
+  "collectionId": "collection-uuid",
+  "collectionName": "My Collection",
+  "transactionHash": "ABC123XYZ..."
+}
+```
+
+**Fields:**
+- `sellerWalletAddress` (required): Wallet address of the seller (receives the notification)
+- `buyerWalletAddress` (required): Wallet address of the buyer
+- `nftTokenId` (required): NFT token ID on XRPL
+- `nftName` (optional): Name of the NFT
+- `nftDescription` (optional): Description of the NFT
+- `nftImage` (optional): Image URL of the NFT
+- `price` (optional): Sale price in drops
+- `collectionId` (optional): Collection ID in database
+- `collectionName` (optional): Name of the collection
+- `transactionHash` (optional): XRPL transaction hash for reference
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "NFT purchase notification sent successfully",
+  "data": {
+    "notificationSent": true,
+    "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000",
+    "sellerWalletAddress": "rSellerWalletAddress",
+    "buyerWalletAddress": "rBuyerWalletAddress"
+  }
+}
+```
+
+**NFT Purchase Notification Metadata:**
+```json
+{
+  "nftTokenId": "000800006203F49C21D5D6E022CB16DE3538F248662FC73C0000099B00000000",
+  "nftName": "Amazing NFT #1",
+  "nftDescription": "A beautiful digital artwork...",
+  "nftImage": "https://example.com/nft-image.jpg",
+  "price": "10000000",
+  "collectionId": "uuid",
+  "collectionName": "My Collection",
+  "buyerWalletAddress": "rBuyerWallet...",
+  "buyerUsername": "john_doe",
+  "transactionHash": "ABC123XYZ..."
+}
+```
+
+---
+
 ### Notification Types
 
 | Type | Description | Trigger |
@@ -2395,6 +2462,7 @@ Notify all followers about an NFT listing. This endpoint should be called by the
 | `comment_reply` | Comment reply notification | When someone replies to your comment |
 | `follow` | New follower notification | When someone follows you |
 | `nft_listing` | NFT listing notification | When someone you follow lists an NFT for sale |
+| `nft_purchase` | NFT purchase notification | When someone buys your NFT |
 
 ---
 
@@ -2406,7 +2474,7 @@ Notify all followers about an NFT listing. This endpoint should be called by the
   "id": "uuid",
   "recipientWalletAddress": "rRecipientWallet...",
   "senderWalletAddress": "rSenderWallet...",
-  "type": "like|comment|comment_reply|follow|nft_listing",
+  "type": "like|comment|comment_reply|follow|nft_listing|nft_purchase",
   "title": "New Like",
   "message": "john_doe liked your post",
   "relatedEntityId": "uuid",

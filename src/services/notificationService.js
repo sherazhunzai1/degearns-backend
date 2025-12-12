@@ -266,6 +266,58 @@ class NotificationService {
   }
 
   /**
+   * Create a notification for NFT purchase (notifies the seller)
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.sellerWalletAddress - Wallet address of the seller (receives notification)
+   * @param {string} params.buyerWalletAddress - Wallet address of the buyer
+   * @param {string} params.buyerUsername - Username of the buyer
+   * @param {string} params.nftTokenId - NFT token ID on XRPL
+   * @param {string} params.nftName - Name of the NFT
+   * @param {string} params.nftDescription - Description of the NFT
+   * @param {string} params.nftImage - Image URL of the NFT
+   * @param {string} params.price - Sale price in drops
+   * @param {string} params.collectionId - Collection ID in database
+   * @param {string} params.collectionName - Name of the collection
+   * @param {string} params.transactionHash - Transaction hash on XRPL
+   */
+  async createNFTPurchaseNotification({ sellerWalletAddress, buyerWalletAddress, buyerUsername, nftTokenId, nftName, nftDescription, nftImage, price, collectionId, collectionName, transactionHash }) {
+    try {
+      // Don't create notification if buyer and seller are same (shouldn't happen but safety check)
+      if (sellerWalletAddress === buyerWalletAddress) {
+        return null;
+      }
+
+      const notification = await this.Notification.create({
+        recipientWalletAddress: sellerWalletAddress,
+        senderWalletAddress: buyerWalletAddress,
+        type: 'nft_purchase',
+        title: 'NFT Sold',
+        message: `${buyerUsername || buyerWalletAddress.slice(0, 8) + '...'} purchased your ${nftName || 'NFT'}`,
+        relatedEntityId: collectionId,
+        relatedEntityType: 'nft',
+        metadata: {
+          nftTokenId: nftTokenId,
+          nftName: nftName,
+          nftDescription: nftDescription ? nftDescription.substring(0, 200) : null,
+          nftImage: nftImage,
+          price: price,
+          collectionId: collectionId,
+          collectionName: collectionName,
+          buyerWalletAddress: buyerWalletAddress,
+          buyerUsername: buyerUsername,
+          transactionHash: transactionHash
+        }
+      });
+
+      logger.info(`NFT purchase notification created for seller ${sellerWalletAddress} from buyer ${buyerWalletAddress}`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating NFT purchase notification:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get notifications for a user
    * @param {string} walletAddress - Wallet address of the user
    * @param {Object} options - Query options

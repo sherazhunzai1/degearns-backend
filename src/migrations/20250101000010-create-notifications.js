@@ -21,7 +21,7 @@ module.exports = {
         comment: 'Wallet address of the user who triggered the notification'
       },
       type: {
-        type: Sequelize.ENUM('like', 'comment', 'comment_reply', 'follow', 'nft_listing'),
+        type: Sequelize.ENUM('like', 'comment', 'comment_reply', 'follow', 'nft_listing', 'nft_purchase'),
         allowNull: false,
         comment: 'Type of notification'
       },

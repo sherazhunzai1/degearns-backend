@@ -337,3 +337,74 @@ exports.notifyNFTListing = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Notify seller about NFT purchase
+ * Called by frontend after successfully purchasing an NFT on XRPL
+ * @route POST /api/v1/nfts/notify-purchase
+ */
+exports.notifyNFTPurchase = async (req, res, next) => {
+  try {
+    const {
+      sellerWalletAddress,
+      buyerWalletAddress,
+      nftTokenId,
+      nftName,
+      nftDescription,
+      nftImage,
+      price,
+      collectionId,
+      collectionName,
+      transactionHash
+    } = req.body;
+
+    if (!sellerWalletAddress) {
+      throw new ApiError(400, 'Seller wallet address is required');
+    }
+
+    if (!buyerWalletAddress) {
+      throw new ApiError(400, 'Buyer wallet address is required');
+    }
+
+    if (!nftTokenId) {
+      throw new ApiError(400, 'NFT token ID is required');
+    }
+
+    // Verify buyer exists
+    const buyer = await User.findOne({
+      where: { walletAddress: buyerWalletAddress }
+    });
+
+    if (!buyer) {
+      throw new ApiError(404, 'Buyer not found');
+    }
+
+    // Create notification for seller
+    const notification = await notificationService.createNFTPurchaseNotification({
+      sellerWalletAddress,
+      buyerWalletAddress,
+      buyerUsername: buyer.username,
+      nftTokenId,
+      nftName: nftName || 'NFT',
+      nftDescription: nftDescription || null,
+      nftImage: nftImage || null,
+      price: price || null,
+      collectionId: collectionId || null,
+      collectionName: collectionName || null,
+      transactionHash: transactionHash || null
+    });
+
+    logger.info(`NFT purchase notification sent for ${nftTokenId} - seller: ${sellerWalletAddress}, buyer: ${buyerWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        notificationSent: notification !== null,
+        nftTokenId,
+        sellerWalletAddress,
+        buyerWalletAddress
+      }, 'NFT purchase notification sent successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
