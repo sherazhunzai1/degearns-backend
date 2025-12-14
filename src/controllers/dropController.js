@@ -1,0 +1,1360 @@
+const { Drop, DropAllowedWallet, DropMint, Collection, User, sequelize } = require('../models');
+const ApiError = require('../utils/ApiError');
+const ApiResponse = require('../utils/ApiResponse');
+const logger = require('../utils/logger');
+const { Op } = require('sequelize');
+
+/**
+ * Create a new drop for a collection
+ */
+const createDrop = async (req, res, next) => {
+  try {
+    const {
+      collectionId,
+      creatorWalletAddress,
+      name,
+      description,
+      image,
+      bannerImage,
+      royaltyPercentage,
+      pricePerNft,
+      limitPerWallet,
+      totalSupply,
+      isBurnable,
+      isTransferable,
+      isOnlyXrp,
+      isMutable,
+      startDate,
+      endDate,
+      metadata
+    } = req.body;
+
+    if (!collectionId) {
+      throw new ApiError(400, 'Collection ID is required');
+    }
+
+    if (!creatorWalletAddress) {
+      throw new ApiError(400, 'Creator wallet address is required');
+    }
+
+    if (!name) {
+      throw new ApiError(400, 'Drop name is required');
+    }
+
+    if (!totalSupply || totalSupply <= 0) {
+      throw new ApiError(400, 'Total supply must be greater than 0');
+    }
+
+    // Verify collection exists and belongs to creator
+    const collection = await Collection.findByPk(collectionId);
+    if (!collection) {
+      throw new ApiError(404, 'Collection not found');
+    }
+
+    if (collection.creatorWalletAddress !== creatorWalletAddress) {
+      throw new ApiError(403, 'You can only create drops for your own collections');
+    }
+
+    // Check if there's already an active drop for this collection
+    const existingActiveDrop = await Drop.findOne({
+      where: {
+        collectionId,
+        status: {
+          [Op.in]: ['scheduled', 'active']
+        }
+      }
+    });
+
+    if (existingActiveDrop) {
+      throw new ApiError(400, 'Collection already has an active or scheduled drop');
+    }
+
+    // Validate schedule if provided
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (end <= start) {
+        throw new ApiError(400, 'End date must be after start date');
+      }
+    }
+
+    const drop = await Drop.create({
+      collectionId,
+      creatorWalletAddress,
+      name,
+      description,
+      image: image || collection.image,
+      bannerImage: bannerImage || collection.bannerImage,
+      royaltyPercentage: royaltyPercentage ?? collection.royaltyPercentage ?? 0,
+      pricePerNft: pricePerNft || '0',
+      limitPerWallet,
+      totalSupply,
+      isBurnable: isBurnable ?? true,
+      isTransferable: isTransferable ?? true,
+      isOnlyXrp: isOnlyXrp ?? false,
+      isMutable: isMutable ?? false,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      status: 'draft',
+      metadata
+    });
+
+    logger.info(`Drop created: ${drop.name} for collection ${collectionId} by ${creatorWalletAddress}`);
+
+    // Fetch drop with associations
+    const createdDrop = await Drop.findByPk(drop.id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    res.status(201).json(
+      new ApiResponse(201, createdDrop, 'Drop created successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update drop configuration
+ */
+const updateDrop = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      walletAddress,
+      name,
+      description,
+      image,
+      bannerImage,
+      royaltyPercentage,
+      pricePerNft,
+      limitPerWallet,
+      totalSupply,
+      isBurnable,
+      isTransferable,
+      isOnlyXrp,
+      isMutable,
+      startDate,
+      endDate,
+      metadata
+    } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update your own drops');
+    }
+
+    // Can only update draft or scheduled drops
+    if (!['draft', 'scheduled'].includes(drop.status)) {
+      throw new ApiError(400, 'Can only update drops in draft or scheduled status');
+    }
+
+    // Validate totalSupply change
+    if (totalSupply !== undefined && totalSupply < drop.mintedCount) {
+      throw new ApiError(400, 'Total supply cannot be less than already minted count');
+    }
+
+    // Validate schedule if provided
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (end <= start) {
+        throw new ApiError(400, 'End date must be after start date');
+      }
+    }
+
+    // Update fields
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (image !== undefined) updateData.image = image;
+    if (bannerImage !== undefined) updateData.bannerImage = bannerImage;
+    if (royaltyPercentage !== undefined) updateData.royaltyPercentage = royaltyPercentage;
+    if (pricePerNft !== undefined) updateData.pricePerNft = pricePerNft;
+    if (limitPerWallet !== undefined) updateData.limitPerWallet = limitPerWallet;
+    if (totalSupply !== undefined) updateData.totalSupply = totalSupply;
+    if (isBurnable !== undefined) updateData.isBurnable = isBurnable;
+    if (isTransferable !== undefined) updateData.isTransferable = isTransferable;
+    if (isOnlyXrp !== undefined) updateData.isOnlyXrp = isOnlyXrp;
+    if (isMutable !== undefined) updateData.isMutable = isMutable;
+    if (startDate !== undefined) updateData.startDate = startDate;
+    if (endDate !== undefined) updateData.endDate = endDate;
+    if (metadata !== undefined) updateData.metadata = metadata;
+
+    await drop.update(updateData);
+
+    logger.info(`Drop updated: ${drop.id} by ${walletAddress}`);
+
+    // Fetch updated drop with associations
+    const updatedDrop = await Drop.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, updatedDrop, 'Drop updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get drop by ID
+ */
+const getDropById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress } = req.query;
+
+    const drop = await Drop.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'bannerImage', 'taxon', 'category', 'description']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    // Check wallet eligibility if wallet address provided
+    let walletEligibility = null;
+    if (walletAddress) {
+      walletEligibility = await getWalletEligibilityData(drop, walletAddress);
+    }
+
+    const response = {
+      ...drop.toJSON(),
+      remainingSupply: drop.getRemainingSupply(),
+      isCurrentlyActive: drop.isCurrentlyActive(),
+      isSoldOut: drop.isSoldOut(),
+      walletEligibility
+    };
+
+    res.status(200).json(
+      new ApiResponse(200, response, 'Drop retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get drops with filters
+ */
+const getDrops = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      creatorWalletAddress,
+      collectionId,
+      sortBy = 'createdAt',
+      order = 'DESC',
+      search
+    } = req.query;
+
+    const where = {};
+
+    if (status) {
+      if (status.includes(',')) {
+        where.status = { [Op.in]: status.split(',') };
+      } else {
+        where.status = status;
+      }
+    }
+    if (creatorWalletAddress) where.creatorWalletAddress = creatorWalletAddress;
+    if (collectionId) where.collectionId = collectionId;
+    if (search) {
+      where[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: drops } = await Drop.findAndCountAll({
+      where,
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ],
+      order: [[sortBy, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    // Add computed fields
+    const dropsWithStats = drops.map(drop => ({
+      ...drop.toJSON(),
+      remainingSupply: drop.getRemainingSupply(),
+      isCurrentlyActive: drop.isCurrentlyActive(),
+      isSoldOut: drop.isSoldOut()
+    }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        drops: dropsWithStats,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Drops retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get active drops for marketplace
+ */
+const getActiveDrops = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = 'startDate',
+      order = 'ASC'
+    } = req.query;
+
+    const now = new Date();
+    const offset = (page - 1) * limit;
+
+    const { count, rows: drops } = await Drop.findAndCountAll({
+      where: {
+        status: 'active',
+        paymentStatus: 'paid',
+        isMintingEnabled: true,
+        [Op.or]: [
+          { startDate: null },
+          { startDate: { [Op.lte]: now } }
+        ],
+        [Op.or]: [
+          { endDate: null },
+          { endDate: { [Op.gte]: now } }
+        ]
+      },
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'bannerImage', 'taxon', 'category']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ],
+      order: [[sortBy, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    // Filter out sold out drops and add computed fields
+    const activeDrops = drops
+      .filter(drop => !drop.isSoldOut())
+      .map(drop => ({
+        ...drop.toJSON(),
+        remainingSupply: drop.getRemainingSupply(),
+        isCurrentlyActive: drop.isCurrentlyActive(),
+        isSoldOut: drop.isSoldOut()
+      }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        drops: activeDrops,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Active drops retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get upcoming drops for marketplace
+ */
+const getUpcomingDrops = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = 'startDate',
+      order = 'ASC'
+    } = req.query;
+
+    const now = new Date();
+    const offset = (page - 1) * limit;
+
+    const { count, rows: drops } = await Drop.findAndCountAll({
+      where: {
+        status: 'scheduled',
+        paymentStatus: 'paid',
+        startDate: { [Op.gt]: now }
+      },
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'bannerImage', 'taxon', 'category']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ],
+      order: [[sortBy, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    const upcomingDrops = drops.map(drop => ({
+      ...drop.toJSON(),
+      remainingSupply: drop.getRemainingSupply(),
+      isSoldOut: drop.isSoldOut()
+    }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        drops: upcomingDrops,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Upcoming drops retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete a draft drop
+ */
+const deleteDrop = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only delete your own drops');
+    }
+
+    // Can only delete draft drops
+    if (drop.status !== 'draft') {
+      throw new ApiError(400, 'Can only delete drops in draft status');
+    }
+
+    await drop.destroy();
+
+    logger.info(`Drop deleted: ${id} by ${walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, null, 'Drop deleted successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update drop status
+ */
+const updateDropStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress, status } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!status) {
+      throw new ApiError(400, 'Status is required');
+    }
+
+    const validStatuses = ['draft', 'scheduled', 'active', 'paused', 'ended'];
+    if (!validStatuses.includes(status)) {
+      throw new ApiError(400, `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update your own drops');
+    }
+
+    // Validate status transitions
+    const currentStatus = drop.status;
+    const validTransitions = {
+      draft: ['scheduled', 'active'],
+      scheduled: ['active', 'paused', 'ended'],
+      active: ['paused', 'ended'],
+      paused: ['active', 'ended'],
+      ended: [],
+      sold_out: []
+    };
+
+    if (!validTransitions[currentStatus].includes(status)) {
+      throw new ApiError(400, `Cannot transition from ${currentStatus} to ${status}`);
+    }
+
+    // Check if payment is done before activating
+    if (status === 'active' && drop.paymentStatus !== 'paid') {
+      throw new ApiError(400, 'Launch fee must be paid before activating the drop');
+    }
+
+    await drop.update({ status });
+
+    logger.info(`Drop status updated: ${id} from ${currentStatus} to ${status} by ${walletAddress}`);
+
+    const updatedDrop = await Drop.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, updatedDrop, 'Drop status updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Toggle drop settings (minting, allowlist, free mint)
+ */
+const toggleDropSettings = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress, setting, value } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!setting) {
+      throw new ApiError(400, 'Setting name is required');
+    }
+
+    const validSettings = ['isMintingEnabled', 'isAllowlistEnabled', 'isFreeMint'];
+    if (!validSettings.includes(setting)) {
+      throw new ApiError(400, `Invalid setting. Must be one of: ${validSettings.join(', ')}`);
+    }
+
+    if (typeof value !== 'boolean') {
+      throw new ApiError(400, 'Value must be a boolean');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update your own drops');
+    }
+
+    await drop.update({ [setting]: value });
+
+    logger.info(`Drop setting updated: ${id} - ${setting} set to ${value} by ${walletAddress}`);
+
+    const updatedDrop = await Drop.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, updatedDrop, `${setting} updated successfully`)
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update launch fee payment status
+ */
+const updatePaymentStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress, launchFee, transactionHash, paymentStatus } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update your own drops');
+    }
+
+    const updateData = {};
+    if (launchFee !== undefined) updateData.launchFee = launchFee;
+    if (transactionHash !== undefined) updateData.launchFeeTransactionHash = transactionHash;
+    if (paymentStatus !== undefined) {
+      const validPaymentStatuses = ['pending', 'paid', 'failed', 'refunded'];
+      if (!validPaymentStatuses.includes(paymentStatus)) {
+        throw new ApiError(400, `Invalid payment status. Must be one of: ${validPaymentStatuses.join(', ')}`);
+      }
+      updateData.paymentStatus = paymentStatus;
+    }
+
+    await drop.update(updateData);
+
+    logger.info(`Drop payment updated: ${id} - status: ${paymentStatus} by ${walletAddress}`);
+
+    const updatedDrop = await Drop.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, updatedDrop, 'Payment status updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add wallets to allowlist
+ */
+const addAllowedWallets = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress, wallets } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!wallets || !Array.isArray(wallets) || wallets.length === 0) {
+      throw new ApiError(400, 'Wallets array is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update your own drops');
+    }
+
+    const createdWallets = [];
+    const skippedWallets = [];
+
+    for (const wallet of wallets) {
+      const { address, mintLimit, notes } = typeof wallet === 'string'
+        ? { address: wallet, mintLimit: null, notes: null }
+        : wallet;
+
+      if (!address) {
+        skippedWallets.push({ wallet, reason: 'Missing address' });
+        continue;
+      }
+
+      // Check if wallet already exists for this drop
+      const existing = await DropAllowedWallet.findOne({
+        where: { dropId: id, walletAddress: address }
+      });
+
+      if (existing) {
+        // Update existing wallet
+        await existing.update({ mintLimit, notes });
+        createdWallets.push({ ...existing.toJSON(), updated: true });
+      } else {
+        // Create new allowlist entry
+        const newWallet = await DropAllowedWallet.create({
+          dropId: id,
+          walletAddress: address,
+          mintLimit,
+          notes
+        });
+        createdWallets.push({ ...newWallet.toJSON(), updated: false });
+      }
+    }
+
+    logger.info(`Added ${createdWallets.length} wallets to allowlist for drop ${id}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        added: createdWallets,
+        skipped: skippedWallets
+      }, 'Wallets added to allowlist successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Remove wallets from allowlist
+ */
+const removeAllowedWallets = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress, walletAddresses } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!walletAddresses || !Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+      throw new ApiError(400, 'Wallet addresses array is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update your own drops');
+    }
+
+    const deletedCount = await DropAllowedWallet.destroy({
+      where: {
+        dropId: id,
+        walletAddress: { [Op.in]: walletAddresses }
+      }
+    });
+
+    logger.info(`Removed ${deletedCount} wallets from allowlist for drop ${id}`);
+
+    res.status(200).json(
+      new ApiResponse(200, { deletedCount }, 'Wallets removed from allowlist successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get allowed wallets for a drop
+ */
+const getAllowedWallets = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: wallets } = await DropAllowedWallet.findAndCountAll({
+      where: { dropId: id },
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        wallets,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Allowed wallets retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Check wallet eligibility for minting
+ */
+const checkWalletEligibility = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    const eligibility = await getWalletEligibilityData(drop, walletAddress);
+
+    res.status(200).json(
+      new ApiResponse(200, eligibility, 'Wallet eligibility checked successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Helper function to get wallet eligibility data
+ */
+const getWalletEligibilityData = async (drop, walletAddress) => {
+  const now = new Date();
+
+  // Check basic drop status
+  const isActive = drop.status === 'active';
+  const isMintingEnabled = drop.isMintingEnabled;
+  const hasStarted = !drop.startDate || new Date(drop.startDate) <= now;
+  const hasNotEnded = !drop.endDate || new Date(drop.endDate) >= now;
+  const isSoldOut = drop.isSoldOut();
+  const isPaid = drop.paymentStatus === 'paid';
+
+  // Get total mints by this wallet for this drop
+  const totalMintsByWallet = await DropMint.count({
+    where: { dropId: drop.id, minterWalletAddress: walletAddress }
+  });
+
+  // Check allowlist if enabled
+  let isAllowlisted = true;
+  let allowlistMintLimit = null;
+  let allowlistMintedCount = 0;
+
+  if (drop.isAllowlistEnabled) {
+    const allowedWallet = await DropAllowedWallet.findOne({
+      where: { dropId: drop.id, walletAddress }
+    });
+
+    if (!allowedWallet) {
+      isAllowlisted = false;
+    } else {
+      allowlistMintLimit = allowedWallet.mintLimit;
+      allowlistMintedCount = allowedWallet.mintedCount;
+    }
+  }
+
+  // Calculate remaining mint allowance
+  let remainingMintAllowance = null;
+
+  // Check drop-level limit per wallet
+  if (drop.limitPerWallet !== null) {
+    remainingMintAllowance = Math.max(0, drop.limitPerWallet - totalMintsByWallet);
+  }
+
+  // Check allowlist-specific limit (if more restrictive)
+  if (drop.isAllowlistEnabled && isAllowlisted && allowlistMintLimit !== null) {
+    const allowlistRemaining = Math.max(0, allowlistMintLimit - allowlistMintedCount);
+    if (remainingMintAllowance === null || allowlistRemaining < remainingMintAllowance) {
+      remainingMintAllowance = allowlistRemaining;
+    }
+  }
+
+  // Determine if wallet can mint
+  const canMint = isActive &&
+                  isMintingEnabled &&
+                  hasStarted &&
+                  hasNotEnded &&
+                  !isSoldOut &&
+                  isPaid &&
+                  isAllowlisted &&
+                  (remainingMintAllowance === null || remainingMintAllowance > 0);
+
+  // Determine reason if cannot mint
+  let reason = null;
+  if (!canMint) {
+    if (!isActive) reason = 'Drop is not active';
+    else if (!isMintingEnabled) reason = 'Minting is disabled';
+    else if (!hasStarted) reason = 'Drop has not started yet';
+    else if (!hasNotEnded) reason = 'Drop has ended';
+    else if (isSoldOut) reason = 'Drop is sold out';
+    else if (!isPaid) reason = 'Drop launch fee not paid';
+    else if (!isAllowlisted) reason = 'Wallet is not on allowlist';
+    else if (remainingMintAllowance !== null && remainingMintAllowance <= 0) {
+      reason = 'Wallet has reached mint limit';
+    }
+  }
+
+  return {
+    walletAddress,
+    canMint,
+    reason,
+    totalMintsByWallet,
+    remainingMintAllowance,
+    dropStatus: {
+      isActive,
+      isMintingEnabled,
+      hasStarted,
+      hasNotEnded,
+      isSoldOut,
+      isPaid,
+      isAllowlistEnabled: drop.isAllowlistEnabled
+    },
+    allowlistStatus: drop.isAllowlistEnabled ? {
+      isAllowlisted,
+      mintLimit: allowlistMintLimit,
+      mintedCount: allowlistMintedCount
+    } : null,
+    pricePerNft: drop.isFreeMint ? '0' : drop.pricePerNft
+  };
+};
+
+/**
+ * Record a successful mint
+ */
+const recordMint = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const {
+      minterWalletAddress,
+      nftTokenId,
+      nftUri,
+      transactionHash,
+      mintPrice,
+      paymentTransactionHash,
+      metadata
+    } = req.body;
+
+    if (!minterWalletAddress) {
+      throw new ApiError(400, 'Minter wallet address is required');
+    }
+
+    if (!nftTokenId) {
+      throw new ApiError(400, 'NFT Token ID is required');
+    }
+
+    if (!transactionHash) {
+      throw new ApiError(400, 'Transaction hash is required');
+    }
+
+    const drop = await Drop.findByPk(id, { transaction });
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    // Check if NFT already recorded
+    const existingMint = await DropMint.findOne({
+      where: { nftTokenId },
+      transaction
+    });
+
+    if (existingMint) {
+      throw new ApiError(400, 'This NFT has already been recorded');
+    }
+
+    // Check if drop is sold out
+    if (drop.isSoldOut()) {
+      throw new ApiError(400, 'Drop is sold out');
+    }
+
+    // Create mint record
+    const mintIndex = drop.mintedCount + 1;
+    const mint = await DropMint.create({
+      dropId: id,
+      minterWalletAddress,
+      nftTokenId,
+      nftUri,
+      transactionHash,
+      mintPrice: drop.isFreeMint ? '0' : (mintPrice || drop.pricePerNft),
+      paymentTransactionHash,
+      mintIndex,
+      metadata
+    }, { transaction });
+
+    // Update drop minted count
+    await drop.increment('mintedCount', { transaction });
+
+    // Update allowlist minted count if applicable
+    if (drop.isAllowlistEnabled) {
+      const allowedWallet = await DropAllowedWallet.findOne({
+        where: { dropId: id, walletAddress: minterWalletAddress },
+        transaction
+      });
+
+      if (allowedWallet) {
+        await allowedWallet.increment('mintedCount', { transaction });
+      }
+    }
+
+    // Check if drop is now sold out
+    const updatedDrop = await Drop.findByPk(id, { transaction });
+    if (updatedDrop.isSoldOut() && updatedDrop.status === 'active') {
+      await updatedDrop.update({ status: 'sold_out' }, { transaction });
+    }
+
+    await transaction.commit();
+
+    logger.info(`Mint recorded: ${nftTokenId} for drop ${id} by ${minterWalletAddress}`);
+
+    // Fetch mint with associations
+    const recordedMint = await DropMint.findByPk(mint.id, {
+      include: [
+        {
+          association: 'drop',
+          attributes: ['id', 'name', 'collectionId']
+        },
+        {
+          association: 'minter',
+          attributes: ['walletAddress', 'username', 'profileImage']
+        }
+      ]
+    });
+
+    res.status(201).json(
+      new ApiResponse(201, recordedMint, 'Mint recorded successfully')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
+/**
+ * Get mints for a drop
+ */
+const getDropMints = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: mints } = await DropMint.findAndCountAll({
+      where: { dropId: id },
+      include: [
+        {
+          association: 'minter',
+          attributes: ['walletAddress', 'username', 'profileImage']
+        }
+      ],
+      order: [['mintIndex', 'ASC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        mints,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Drop mints retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get mints by a user across all drops
+ */
+const getUserMints = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: mints } = await DropMint.findAndCountAll({
+      where: { minterWalletAddress: walletAddress },
+      include: [
+        {
+          association: 'drop',
+          attributes: ['id', 'name', 'collectionId', 'image'],
+          include: [
+            {
+              association: 'collection',
+              attributes: ['id', 'name', 'slug', 'image']
+            }
+          ]
+        }
+      ],
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        mints,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'User mints retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get drops by creator wallet
+ */
+const getCreatorDrops = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const { page = 1, limit = 20, status } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const where = { creatorWalletAddress: walletAddress };
+    if (status) {
+      if (status.includes(',')) {
+        where.status = { [Op.in]: status.split(',') };
+      } else {
+        where.status = status;
+      }
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: drops } = await Drop.findAndCountAll({
+      where,
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        }
+      ],
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    const dropsWithStats = drops.map(drop => ({
+      ...drop.toJSON(),
+      remainingSupply: drop.getRemainingSupply(),
+      isCurrentlyActive: drop.isCurrentlyActive(),
+      isSoldOut: drop.isSoldOut()
+    }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        drops: dropsWithStats,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Creator drops retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get drop statistics
+ */
+const getDropStats = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const drop = await Drop.findByPk(id, {
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    // Get unique minters count
+    const uniqueMintersCount = await DropMint.count({
+      where: { dropId: id },
+      distinct: true,
+      col: 'minterWalletAddress'
+    });
+
+    // Get total revenue (sum of all mint prices)
+    const revenueResult = await DropMint.findAll({
+      where: { dropId: id },
+      attributes: [
+        [sequelize.fn('SUM', sequelize.cast(sequelize.col('mintPrice'), 'UNSIGNED')), 'totalRevenue']
+      ],
+      raw: true
+    });
+
+    const totalRevenue = revenueResult[0]?.totalRevenue || '0';
+
+    // Get allowlist count
+    const allowlistCount = await DropAllowedWallet.count({
+      where: { dropId: id }
+    });
+
+    // Get recent mints
+    const recentMints = await DropMint.findAll({
+      where: { dropId: id },
+      include: [
+        {
+          association: 'minter',
+          attributes: ['walletAddress', 'username', 'profileImage']
+        }
+      ],
+      order: [['createdAt', 'DESC']],
+      limit: 10
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        drop: {
+          ...drop.toJSON(),
+          remainingSupply: drop.getRemainingSupply(),
+          isCurrentlyActive: drop.isCurrentlyActive(),
+          isSoldOut: drop.isSoldOut()
+        },
+        stats: {
+          totalMinted: drop.mintedCount,
+          totalSupply: drop.totalSupply,
+          remainingSupply: drop.getRemainingSupply(),
+          percentageMinted: drop.totalSupply > 0
+            ? ((drop.mintedCount / drop.totalSupply) * 100).toFixed(2)
+            : '0.00',
+          uniqueMintersCount,
+          totalRevenue,
+          allowlistCount
+        },
+        recentMints
+      }, 'Drop statistics retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  createDrop,
+  updateDrop,
+  getDropById,
+  getDrops,
+  getActiveDrops,
+  getUpcomingDrops,
+  deleteDrop,
+  updateDropStatus,
+  toggleDropSettings,
+  updatePaymentStatus,
+  addAllowedWallets,
+  removeAllowedWallets,
+  getAllowedWallets,
+  checkWalletEligibility,
+  recordMint,
+  getDropMints,
+  getUserMints,
+  getCreatorDrops,
+  getDropStats
+};

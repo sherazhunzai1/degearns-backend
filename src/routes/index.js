@@ -8,6 +8,7 @@ const chatRoutes = require('./chatRoutes');
 const postRoutes = require('./postRoutes');
 const followRoutes = require('./followRoutes');
 const notificationRoutes = require('./notificationRoutes');
+const dropRoutes = require('./dropRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -17,6 +18,7 @@ router.use('/chat', chatRoutes);
 router.use('/posts', postRoutes);
 router.use('/follow', followRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/drops', dropRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
