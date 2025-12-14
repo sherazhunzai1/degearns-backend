@@ -1479,6 +1479,120 @@ const getPopularCollections = async (req, res, next) => {
   }
 };
 
+/**
+ * Get collection history (mints, listings, offers, sales, burns)
+ * Fetches all NFT activities for a specific collection from XRPL blockchain
+ * @route GET /api/v1/collections/:taxon/history
+ */
+const getCollectionHistory = async (req, res, next) => {
+  try {
+    const { taxon } = req.params;
+    const { wallet, limit = 100 } = req.query;
+
+    if (!wallet) {
+      throw new ApiError(400, 'Wallet address is required as query parameter (?wallet=...)');
+    }
+
+    const taxonNum = parseInt(taxon);
+    if (isNaN(taxonNum)) {
+      throw new ApiError(400, 'Invalid taxon. Must be a number.');
+    }
+
+    logger.info(`Fetching collection history for taxon: ${taxonNum}, wallet: ${wallet}`);
+
+    // Fetch collection history from XRPL
+    const history = await xrplService.getCollectionHistory(wallet, taxonNum, parseInt(limit));
+
+    logger.info(`Found ${history.length} history entries for collection taxon ${taxonNum}`);
+
+    // Get user information for all unique addresses in history
+    const allAddresses = new Set();
+    history.forEach(entry => {
+      if (entry.issuer) allAddresses.add(entry.issuer);
+      if (entry.offerer) allAddresses.add(entry.offerer);
+      if (entry.seller) allAddresses.add(entry.seller);
+      if (entry.buyer) allAddresses.add(entry.buyer);
+      if (entry.burner) allAddresses.add(entry.burner);
+      if (entry.owner) allAddresses.add(entry.owner);
+    });
+
+    const users = await User.findAll({
+      where: { walletAddress: Array.from(allAddresses) },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user.walletAddress] = {
+        walletAddress: user.walletAddress,
+        username: user.username,
+        profileImage: user.profileImage,
+        isVerified: user.isVerified
+      };
+    });
+
+    // Enrich history with user information
+    const enrichedHistory = history.map(entry => {
+      const enriched = { ...entry };
+
+      if (entry.issuer) {
+        enriched.issuerInfo = userMap[entry.issuer] || null;
+      }
+      if (entry.offerer) {
+        enriched.offererInfo = userMap[entry.offerer] || null;
+      }
+      if (entry.seller) {
+        enriched.sellerInfo = userMap[entry.seller] || null;
+      }
+      if (entry.buyer) {
+        enriched.buyerInfo = userMap[entry.buyer] || null;
+      }
+      if (entry.burner) {
+        enriched.burnerInfo = userMap[entry.burner] || null;
+      }
+      if (entry.owner) {
+        enriched.ownerInfo = userMap[entry.owner] || null;
+      }
+
+      return enriched;
+    });
+
+    // Calculate summary statistics
+    const summary = {
+      totalMints: history.filter(e => e.type === 'mint').length,
+      totalListings: history.filter(e => e.type === 'listing').length,
+      totalOffers: history.filter(e => e.type === 'offer').length,
+      totalSales: history.filter(e => e.type === 'sale').length,
+      totalBurns: history.filter(e => e.type === 'burn').length,
+      totalCancelled: history.filter(e => e.type === 'offer_cancelled').length
+    };
+
+    // Calculate total volume from sales
+    const totalVolume = history
+      .filter(e => e.type === 'sale')
+      .reduce((sum, sale) => {
+        const amount = typeof sale.amount === 'string' ? parseInt(sale.amount) : sale.amount;
+        return sum + (amount || 0);
+      }, 0);
+
+    summary.totalVolume = totalVolume.toString();
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        taxon: taxonNum,
+        wallet,
+        history: enrichedHistory,
+        summary,
+        count: enrichedHistory.length
+      }, 'Collection history retrieved successfully')
+    );
+
+  } catch (error) {
+    logger.error('Error fetching collection history:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
@@ -1490,5 +1604,6 @@ module.exports = {
   searchCollectionsAndNFTs,
   getNewNFTs,
   getTopSellers,
-  getPopularCollections
+  getPopularCollections,
+  getCollectionHistory
 };
