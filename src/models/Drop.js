@@ -154,8 +154,7 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'Drops',
     timestamps: true,
     indexes: [
-      { fields: ['collectionId'] },
-      { fields: ['creatorWalletAddress'] },
+      // Note: collectionId and creatorWalletAddress indexes are auto-created by foreign keys
       { fields: ['status'] },
       { fields: ['startDate'] },
       { fields: ['endDate'] },
