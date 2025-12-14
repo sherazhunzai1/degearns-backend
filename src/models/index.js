@@ -12,6 +12,9 @@ const PostLike = require('./PostLike')(sequelize, DataTypes);
 const PostComment = require('./PostComment')(sequelize, DataTypes);
 const Follow = require('./Follow')(sequelize, DataTypes);
 const Notification = require('./Notification')(sequelize, DataTypes);
+const Drop = require('./Drop')(sequelize, DataTypes);
+const DropAllowedWallet = require('./DropAllowedWallet')(sequelize, DataTypes);
+const DropMint = require('./DropMint')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -204,6 +207,60 @@ Notification.belongsTo(User, {
   as: 'sender'
 });
 
+// Collection and Drop associations
+Collection.hasMany(Drop, {
+  foreignKey: 'collectionId',
+  as: 'drops'
+});
+Drop.belongsTo(Collection, {
+  foreignKey: 'collectionId',
+  as: 'collection'
+});
+
+// User and Drop associations
+User.hasMany(Drop, {
+  foreignKey: 'creatorWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'drops'
+});
+Drop.belongsTo(User, {
+  foreignKey: 'creatorWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'creator'
+});
+
+// Drop and DropAllowedWallet associations
+Drop.hasMany(DropAllowedWallet, {
+  foreignKey: 'dropId',
+  as: 'allowedWallets'
+});
+DropAllowedWallet.belongsTo(Drop, {
+  foreignKey: 'dropId',
+  as: 'drop'
+});
+
+// Drop and DropMint associations
+Drop.hasMany(DropMint, {
+  foreignKey: 'dropId',
+  as: 'mints'
+});
+DropMint.belongsTo(Drop, {
+  foreignKey: 'dropId',
+  as: 'drop'
+});
+
+// User and DropMint associations (minter)
+User.hasMany(DropMint, {
+  foreignKey: 'minterWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'dropMints'
+});
+DropMint.belongsTo(User, {
+  foreignKey: 'minterWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'minter'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -219,5 +276,8 @@ module.exports = {
   PostLike,
   PostComment,
   Follow,
-  Notification
+  Notification,
+  Drop,
+  DropAllowedWallet,
+  DropMint
 };

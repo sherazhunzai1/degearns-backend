@@ -318,6 +318,164 @@ class NotificationService {
   }
 
   /**
+   * Create notifications for drop launch to all followers of the creator
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.dropId - ID of the drop
+   * @param {string} params.creatorWalletAddress - Wallet address of the drop creator
+   * @param {string} params.creatorUsername - Username of the creator
+   * @param {string} params.dropName - Name of the drop
+   * @param {string} params.dropImage - Image URL of the drop
+   * @param {string} params.collectionName - Name of the collection
+   * @param {string} params.pricePerNft - Price per NFT
+   * @param {number} params.totalSupply - Total NFTs in the drop
+   * @param {Date} params.startDate - Start date of the drop
+   */
+  async createDropLaunchNotifications({ dropId, creatorWalletAddress, creatorUsername, dropName, dropImage, collectionName, pricePerNft, totalSupply, startDate }) {
+    try {
+      // Get all followers of the creator
+      const followers = await this.Follow.findAll({
+        where: { followingWalletAddress: creatorWalletAddress },
+        attributes: ['followerWalletAddress']
+      });
+
+      if (followers.length === 0) {
+        logger.info(`No followers to notify for drop launch by ${creatorWalletAddress}`);
+        return [];
+      }
+
+      // Create notifications for all followers
+      const notifications = await Promise.all(
+        followers.map(async (follow) => {
+          try {
+            return await this.Notification.create({
+              recipientWalletAddress: follow.followerWalletAddress,
+              senderWalletAddress: creatorWalletAddress,
+              type: 'drop_launch',
+              title: 'New Drop Launched',
+              message: `${creatorUsername || creatorWalletAddress.slice(0, 8) + '...'} launched a new drop: ${dropName}`,
+              relatedEntityId: dropId,
+              relatedEntityType: 'drop',
+              metadata: {
+                dropId: dropId,
+                dropName: dropName,
+                dropImage: dropImage,
+                collectionName: collectionName,
+                pricePerNft: pricePerNft,
+                totalSupply: totalSupply,
+                startDate: startDate,
+                creatorUsername: creatorUsername
+              }
+            });
+          } catch (err) {
+            logger.error(`Error creating drop launch notification for ${follow.followerWalletAddress}:`, err);
+            return null;
+          }
+        })
+      );
+
+      const successfulNotifications = notifications.filter(n => n !== null);
+      logger.info(`Created ${successfulNotifications.length} drop launch notifications for ${creatorWalletAddress}`);
+      return successfulNotifications;
+    } catch (error) {
+      logger.error('Error creating drop launch notifications:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Create a notification for successful mint (notifies the creator)
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.dropId - ID of the drop
+   * @param {string} params.creatorWalletAddress - Wallet address of the drop creator (receives notification)
+   * @param {string} params.minterWalletAddress - Wallet address of the minter
+   * @param {string} params.minterUsername - Username of the minter
+   * @param {string} params.dropName - Name of the drop
+   * @param {string} params.nftTokenId - NFT Token ID
+   * @param {string} params.mintPrice - Price paid for the mint
+   * @param {number} params.mintIndex - The mint number/index
+   * @param {number} params.totalMinted - Total minted so far
+   * @param {number} params.totalSupply - Total supply of the drop
+   */
+  async createDropMintNotification({ dropId, creatorWalletAddress, minterWalletAddress, minterUsername, dropName, nftTokenId, mintPrice, mintIndex, totalMinted, totalSupply }) {
+    try {
+      // Don't create notification if creator mints from their own drop
+      if (creatorWalletAddress === minterWalletAddress) {
+        return null;
+      }
+
+      const notification = await this.Notification.create({
+        recipientWalletAddress: creatorWalletAddress,
+        senderWalletAddress: minterWalletAddress,
+        type: 'drop_mint',
+        title: 'NFT Minted from Drop',
+        message: `${minterUsername || minterWalletAddress.slice(0, 8) + '...'} minted NFT #${mintIndex} from ${dropName}`,
+        relatedEntityId: dropId,
+        relatedEntityType: 'drop',
+        metadata: {
+          dropId: dropId,
+          dropName: dropName,
+          nftTokenId: nftTokenId,
+          mintPrice: mintPrice,
+          mintIndex: mintIndex,
+          totalMinted: totalMinted,
+          totalSupply: totalSupply,
+          minterUsername: minterUsername,
+          minterWalletAddress: minterWalletAddress
+        }
+      });
+
+      logger.info(`Drop mint notification created for creator ${creatorWalletAddress} from minter ${minterWalletAddress}`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating drop mint notification:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Create a notification when wallet is added to allowlist
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.dropId - ID of the drop
+   * @param {string} params.walletAddress - Wallet address being added to allowlist
+   * @param {string} params.creatorWalletAddress - Wallet address of the drop creator
+   * @param {string} params.creatorUsername - Username of the creator
+   * @param {string} params.dropName - Name of the drop
+   * @param {string} params.dropImage - Image URL of the drop
+   * @param {number} params.mintLimit - Mint limit for this wallet
+   */
+  async createAllowlistNotification({ dropId, walletAddress, creatorWalletAddress, creatorUsername, dropName, dropImage, mintLimit }) {
+    try {
+      // Don't create notification if creator adds themselves
+      if (creatorWalletAddress === walletAddress) {
+        return null;
+      }
+
+      const notification = await this.Notification.create({
+        recipientWalletAddress: walletAddress,
+        senderWalletAddress: creatorWalletAddress,
+        type: 'drop_allowlist',
+        title: 'Added to Drop Allowlist',
+        message: `You've been added to the allowlist for ${dropName}`,
+        relatedEntityId: dropId,
+        relatedEntityType: 'drop',
+        metadata: {
+          dropId: dropId,
+          dropName: dropName,
+          dropImage: dropImage,
+          mintLimit: mintLimit,
+          creatorUsername: creatorUsername
+        }
+      });
+
+      logger.info(`Allowlist notification created for ${walletAddress} for drop ${dropId}`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating allowlist notification:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get notifications for a user
    * @param {string} walletAddress - Wallet address of the user
    * @param {Object} options - Query options
