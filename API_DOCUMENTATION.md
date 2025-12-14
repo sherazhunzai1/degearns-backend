@@ -1276,6 +1276,166 @@ Get most popular collection in each category based on number of NFTs minted.
 
 ---
 
+### Get Collection History
+
+**GET** `/collections/:taxon/history?wallet=rOwnerWalletAddress&limit=100`
+
+Get the complete history of NFT activities for a specific collection from the XRPL blockchain. This includes mints, listings, offers, sales, cancelled offers, and burns.
+
+**Path Parameters:**
+- `taxon` (required): The collection's taxon ID on XRPL
+
+**Query Parameters:**
+- `wallet` (required): The collection owner/issuer wallet address
+- `limit` (number): Maximum number of history entries to return (default: 100)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Collection history retrieved successfully",
+  "data": {
+    "taxon": 1234,
+    "wallet": "rOwnerWalletAddress",
+    "history": [
+      {
+        "type": "mint",
+        "hash": "ABC123...",
+        "nftokenID": "00081388...",
+        "issuer": "rIssuerAddress",
+        "issuerInfo": {
+          "walletAddress": "rIssuerAddress",
+          "username": "creator_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "taxon": 1234,
+        "uri": "ipfs://QmExample...",
+        "transferFee": 500,
+        "timestamp": 1704067200000,
+        "ledgerIndex": 12345678
+      },
+      {
+        "type": "listing",
+        "hash": "DEF456...",
+        "offerID": "offer123...",
+        "nftokenID": "00081388...",
+        "offerer": "rSellerAddress",
+        "offererInfo": {
+          "walletAddress": "rSellerAddress",
+          "username": "seller_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": false
+        },
+        "owner": null,
+        "amount": "1000000",
+        "destination": null,
+        "expiration": null,
+        "timestamp": 1704153600000,
+        "ledgerIndex": 12345700
+      },
+      {
+        "type": "offer",
+        "hash": "GHI789...",
+        "offerID": "offer456...",
+        "nftokenID": "00081388...",
+        "offerer": "rBuyerAddress",
+        "offererInfo": {
+          "walletAddress": "rBuyerAddress",
+          "username": "buyer_name",
+          "profileImage": null,
+          "isVerified": false
+        },
+        "owner": "rSellerAddress",
+        "amount": "800000",
+        "destination": null,
+        "expiration": null,
+        "timestamp": 1704240000000,
+        "ledgerIndex": 12345800
+      },
+      {
+        "type": "sale",
+        "hash": "JKL012...",
+        "nftokenID": "00081388...",
+        "seller": "rSellerAddress",
+        "sellerInfo": {
+          "walletAddress": "rSellerAddress",
+          "username": "seller_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": false
+        },
+        "buyer": "rBuyerAddress",
+        "buyerInfo": {
+          "walletAddress": "rBuyerAddress",
+          "username": "buyer_name",
+          "profileImage": null,
+          "isVerified": false
+        },
+        "amount": "1000000",
+        "timestamp": 1704326400000,
+        "ledgerIndex": 12345900
+      },
+      {
+        "type": "offer_cancelled",
+        "hash": "MNO345...",
+        "nftokenID": "00081388...",
+        "offerer": "rBuyerAddress",
+        "offererInfo": null,
+        "amount": "800000",
+        "timestamp": 1704412800000,
+        "ledgerIndex": 12346000
+      },
+      {
+        "type": "burn",
+        "hash": "PQR678...",
+        "nftokenID": "00081388...",
+        "burner": "rOwnerAddress",
+        "burnerInfo": {
+          "walletAddress": "rOwnerAddress",
+          "username": "owner_name",
+          "profileImage": null,
+          "isVerified": false
+        },
+        "timestamp": 1704499200000,
+        "ledgerIndex": 12346100
+      }
+    ],
+    "summary": {
+      "totalMints": 10,
+      "totalListings": 8,
+      "totalOffers": 15,
+      "totalSales": 5,
+      "totalBurns": 1,
+      "totalCancelled": 3,
+      "totalVolume": "5000000"
+    },
+    "count": 42
+  }
+}
+```
+
+**History Entry Types:**
+
+| Type | Description |
+|------|-------------|
+| `mint` | NFT was created/minted |
+| `listing` | NFT was listed for sale (sell offer created) |
+| `offer` | Buy offer was made on an NFT |
+| `sale` | NFT was sold (offer accepted) |
+| `offer_cancelled` | An offer was cancelled |
+| `burn` | NFT was burned/destroyed |
+
+**Notes:**
+- Data is fetched directly from the XRPL blockchain
+- History is sorted by timestamp (newest first)
+- All amounts are in drops (1 XRP = 1,000,000 drops)
+- User info is enriched from the database when available
+- Timestamps are in milliseconds (Unix epoch)
+- The taxon is extracted from NFTokenIDs using the XRPL taxon encoding algorithm
+
+---
+
 ## Chat Endpoints
 
 The Chat API enables real-time messaging between users. All chat operations are based on wallet addresses for user identification.

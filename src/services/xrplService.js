@@ -516,6 +516,219 @@ class XRPLService {
       return null;
     }
   }
+
+  /**
+   * Extract taxon from NFTokenID
+   * NFTokenID format: (4 bits flags)(16 bits transfer fee)(160 bits issuer)(32 bits taxon)(32 bits sequence)
+   * The taxon is stored XORed with the sequence at bits 32-63
+   */
+  extractTaxonFromNFTokenID(nftokenID) {
+    try {
+      if (!nftokenID || nftokenID.length !== 64) return null;
+
+      // NFTokenID is 64 hex characters = 256 bits
+      // Taxon is at positions 40-48 (32 bits = 8 hex chars) from the left
+      // But it's scrambled with sequence, so we need to unscramble
+
+      // Get the scrambled taxon (positions 40-48)
+      const scrambledTaxon = parseInt(nftokenID.substring(48, 56), 16);
+      // Get the sequence (positions 48-56, which is last 8 chars)
+      const sequence = parseInt(nftokenID.substring(56, 64), 16);
+
+      // The taxon is XORed with sequence
+      const taxon = scrambledTaxon ^ sequence;
+
+      return taxon;
+    } catch (error) {
+      logger.warn('Error extracting taxon from NFTokenID:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get collection history (all NFT activities for a specific taxon)
+   * Includes: mints, listings, offers, transfers, burns
+   */
+  async getCollectionHistory(issuerAddress, taxon, limit = 100) {
+    try {
+      const client = xrplConfig.getClient();
+
+      // Get account transactions
+      const response = await client.request({
+        command: 'account_tx',
+        account: issuerAddress,
+        ledger_index_min: -1,
+        ledger_index_max: -1,
+        limit: Math.min(limit * 3, 400) // Fetch more to filter
+      });
+
+      const history = [];
+      const processedHashes = new Set();
+
+      if (response.result.transactions) {
+        for (const txData of response.result.transactions) {
+          const tx = txData.tx || txData.transaction;
+          const meta = txData.meta;
+
+          // Skip if already processed or failed
+          if (processedHashes.has(tx.hash)) continue;
+          if (meta.TransactionResult !== 'tesSUCCESS') continue;
+
+          const transactionType = tx.TransactionType;
+          const timestamp = tx.date ? (tx.date + 946684800) * 1000 : null; // Convert Ripple epoch to JS timestamp
+
+          // Process NFTokenMint transactions
+          if (transactionType === 'NFTokenMint') {
+            // Check if taxon matches
+            if (tx.NFTokenTaxon === taxon) {
+              const nftokenID = this.extractNFTokenID(meta);
+              history.push({
+                type: 'mint',
+                hash: tx.hash,
+                nftokenID: nftokenID,
+                issuer: tx.Account,
+                taxon: tx.NFTokenTaxon,
+                uri: tx.URI ? this.convertHexToString(tx.URI) : null,
+                transferFee: tx.TransferFee || 0,
+                timestamp: timestamp,
+                ledgerIndex: tx.ledger_index
+              });
+              processedHashes.add(tx.hash);
+            }
+          }
+
+          // Process NFTokenCreateOffer transactions (listings/offers)
+          if (transactionType === 'NFTokenCreateOffer') {
+            const nftokenID = tx.NFTokenID;
+            const nftTaxon = this.extractTaxonFromNFTokenID(nftokenID);
+
+            if (nftTaxon === taxon) {
+              const isSellOffer = (tx.Flags & 1) === 1;
+              const offerID = this.extractOfferID(meta);
+
+              history.push({
+                type: isSellOffer ? 'listing' : 'offer',
+                hash: tx.hash,
+                offerID: offerID,
+                nftokenID: nftokenID,
+                offerer: tx.Account,
+                owner: tx.Owner || null,
+                amount: tx.Amount,
+                destination: tx.Destination || null,
+                expiration: tx.Expiration || null,
+                timestamp: timestamp,
+                ledgerIndex: tx.ledger_index
+              });
+              processedHashes.add(tx.hash);
+            }
+          }
+
+          // Process NFTokenAcceptOffer transactions (sales/transfers)
+          if (transactionType === 'NFTokenAcceptOffer') {
+            // Extract NFT info from affected nodes
+            if (meta.AffectedNodes) {
+              for (const node of meta.AffectedNodes) {
+                if (node.DeletedNode && node.DeletedNode.LedgerEntryType === 'NFTokenOffer') {
+                  const offer = node.DeletedNode.FinalFields;
+                  const nftokenID = offer.NFTokenID;
+                  const nftTaxon = this.extractTaxonFromNFTokenID(nftokenID);
+
+                  if (nftTaxon === taxon) {
+                    const isSellOffer = (offer.Flags & 1) === 1;
+
+                    history.push({
+                      type: 'sale',
+                      hash: tx.hash,
+                      nftokenID: nftokenID,
+                      seller: isSellOffer ? offer.Owner : tx.Account,
+                      buyer: isSellOffer ? tx.Account : offer.Owner,
+                      amount: offer.Amount,
+                      timestamp: timestamp,
+                      ledgerIndex: tx.ledger_index
+                    });
+                    processedHashes.add(tx.hash);
+                  }
+                }
+              }
+            }
+          }
+
+          // Process NFTokenCancelOffer transactions
+          if (transactionType === 'NFTokenCancelOffer') {
+            if (meta.AffectedNodes) {
+              for (const node of meta.AffectedNodes) {
+                if (node.DeletedNode && node.DeletedNode.LedgerEntryType === 'NFTokenOffer') {
+                  const offer = node.DeletedNode.FinalFields;
+                  const nftokenID = offer.NFTokenID;
+                  const nftTaxon = this.extractTaxonFromNFTokenID(nftokenID);
+
+                  if (nftTaxon === taxon) {
+                    history.push({
+                      type: 'offer_cancelled',
+                      hash: tx.hash,
+                      nftokenID: nftokenID,
+                      offerer: offer.Owner,
+                      amount: offer.Amount,
+                      timestamp: timestamp,
+                      ledgerIndex: tx.ledger_index
+                    });
+                    processedHashes.add(tx.hash);
+                  }
+                }
+              }
+            }
+          }
+
+          // Process NFTokenBurn transactions
+          if (transactionType === 'NFTokenBurn') {
+            const nftokenID = tx.NFTokenID;
+            const nftTaxon = this.extractTaxonFromNFTokenID(nftokenID);
+
+            if (nftTaxon === taxon) {
+              history.push({
+                type: 'burn',
+                hash: tx.hash,
+                nftokenID: nftokenID,
+                burner: tx.Account,
+                timestamp: timestamp,
+                ledgerIndex: tx.ledger_index
+              });
+              processedHashes.add(tx.hash);
+            }
+          }
+        }
+      }
+
+      // Sort by timestamp (newest first)
+      history.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+      // Limit results
+      return history.slice(0, limit);
+    } catch (error) {
+      logger.error('Error getting collection history:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all NFTs in a collection by taxon
+   */
+  async getCollectionNFTs(issuerAddress, taxon) {
+    try {
+      const allNFTs = await this.getAccountNFTs(issuerAddress);
+
+      // Filter by taxon
+      const collectionNFTs = allNFTs.filter(nft => {
+        const nftTaxon = this.extractTaxonFromNFTokenID(nft.NFTokenID);
+        return nftTaxon === taxon;
+      });
+
+      return collectionNFTs;
+    } catch (error) {
+      logger.error('Error getting collection NFTs:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new XRPLService();

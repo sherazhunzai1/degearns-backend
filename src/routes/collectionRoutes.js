@@ -11,7 +11,8 @@ const {
   searchCollectionsAndNFTs,
   getNewNFTs,
   getTopSellers,
-  getPopularCollections
+  getPopularCollections,
+  getCollectionHistory
 } = require('../controllers/collectionController');
 
 /**
@@ -69,6 +70,13 @@ router.get('/top-sellers', getTopSellers);
  * @access  Public
  */
 router.get('/popular', getPopularCollections);
+
+/**
+ * @route   GET /api/v1/collections/:taxon/history
+ * @desc    Get collection history (mints, listings, offers, sales, burns) from XRPL
+ * @access  Public
+ */
+router.get('/:taxon/history', getCollectionHistory);
 
 /**
  * @route   GET /api/v1/collections/:identifier
