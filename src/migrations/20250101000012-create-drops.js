@@ -162,15 +162,7 @@ module.exports = {
       }
     });
 
-    // Add indexes
-    await queryInterface.addIndex('Drops', ['collectionId'], {
-      name: 'idx_drops_collection'
-    });
-
-    await queryInterface.addIndex('Drops', ['creatorWalletAddress'], {
-      name: 'idx_drops_creator'
-    });
-
+    // Add indexes (MySQL auto-creates indexes for foreign keys, so we skip those)
     await queryInterface.addIndex('Drops', ['status'], {
       name: 'idx_drops_status'
     });
