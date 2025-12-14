@@ -4071,3 +4071,506 @@ const profile = await fetch(
   `/api/v1/auth/me?walletAddress=${walletAddress}`
 );
 ```
+
+---
+
+## Drop Endpoints
+
+NFT Drop system for scheduled minting. Drops allow creators to configure and launch NFT minting events with features like allowlists, scheduling, and wallet limits.
+
+### Create Drop
+
+**POST** `/drops`
+
+Create a new drop for a collection.
+
+**Request Body:**
+```json
+{
+  "collectionId": "uuid",
+  "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "name": "My NFT Drop",
+  "description": "Description of the drop",
+  "image": "https://example.com/drop-image.png",
+  "bannerImage": "https://example.com/banner.png",
+  "royaltyPercentage": 5.00,
+  "pricePerNft": "10000000",
+  "limitPerWallet": 5,
+  "totalSupply": 1000,
+  "isBurnable": true,
+  "isTransferable": true,
+  "isOnlyXrp": false,
+  "isMutable": false,
+  "startDate": "2024-06-01T00:00:00.000Z",
+  "endDate": "2024-06-30T23:59:59.000Z",
+  "metadata": {}
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Drop created successfully",
+  "data": {
+    "id": "uuid",
+    "collectionId": "uuid",
+    "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+    "name": "My NFT Drop",
+    "status": "draft",
+    "paymentStatus": "pending",
+    "collection": { "id": "uuid", "name": "Collection Name", "slug": "collection-name", "image": "url", "taxon": 12345 },
+    "creator": { "walletAddress": "...", "username": "user", "profileImage": null, "isVerified": false }
+  }
+}
+```
+
+---
+
+### Get Drops
+
+**GET** `/drops`
+
+Get drops with filters.
+
+**Query Parameters:**
+- `page` (optional, default: 1): Page number
+- `limit` (optional, default: 20): Items per page
+- `status` (optional): Filter by status (draft, scheduled, active, paused, ended, sold_out) - comma-separated for multiple
+- `creatorWalletAddress` (optional): Filter by creator
+- `collectionId` (optional): Filter by collection
+- `sortBy` (optional, default: createdAt): Sort field
+- `order` (optional, default: DESC): Sort order
+- `search` (optional): Search in name and description
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "drops": [...],
+    "pagination": { "total": 100, "page": 1, "limit": 20, "pages": 5 }
+  }
+}
+```
+
+---
+
+### Get Active Drops (Marketplace)
+
+**GET** `/drops/active`
+
+Get currently active drops for the marketplace. Only returns drops that are:
+- Status is "active"
+- Launch fee is paid
+- Minting is enabled
+- Within schedule (if set)
+- Not sold out
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+- `sortBy` (optional, default: startDate)
+- `order` (optional, default: ASC)
+
+---
+
+### Get Upcoming Drops
+
+**GET** `/drops/upcoming`
+
+Get scheduled drops that haven't started yet.
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+- `sortBy` (optional, default: startDate)
+- `order` (optional, default: ASC)
+
+---
+
+### Get Drop by ID
+
+**GET** `/drops/:id`
+
+Get a single drop by ID.
+
+**Query Parameters:**
+- `walletAddress` (optional): If provided, includes wallet eligibility info
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "name": "My NFT Drop",
+    "totalSupply": 1000,
+    "mintedCount": 50,
+    "remainingSupply": 950,
+    "isCurrentlyActive": true,
+    "isSoldOut": false,
+    "walletEligibility": {
+      "walletAddress": "r...",
+      "canMint": true,
+      "reason": null,
+      "totalMintsByWallet": 2,
+      "remainingMintAllowance": 3,
+      "pricePerNft": "10000000"
+    }
+  }
+}
+```
+
+---
+
+### Update Drop
+
+**PUT** `/drops/:id`
+
+Update drop configuration (only draft or scheduled drops).
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "name": "Updated Drop Name",
+  "pricePerNft": "15000000",
+  "limitPerWallet": 10
+}
+```
+
+---
+
+### Delete Drop
+
+**DELETE** `/drops/:id`
+
+Delete a drop (only draft status).
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X"
+}
+```
+
+---
+
+### Update Drop Status
+
+**PUT** `/drops/:id/status`
+
+Change drop status.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "status": "active"
+}
+```
+
+**Valid Status Transitions:**
+- `draft` → `scheduled`, `active`
+- `scheduled` → `active`, `paused`, `ended`
+- `active` → `paused`, `ended`
+- `paused` → `active`, `ended`
+
+---
+
+### Toggle Drop Settings
+
+**PUT** `/drops/:id/toggle`
+
+Toggle minting, allowlist, or free mint settings.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "setting": "isMintingEnabled",
+  "value": true
+}
+```
+
+**Valid Settings:**
+- `isMintingEnabled`: Enable/disable minting
+- `isAllowlistEnabled`: Enable/disable allowlist restriction
+- `isFreeMint`: Enable/disable free minting
+
+---
+
+### Update Payment Status
+
+**PUT** `/drops/:id/payment`
+
+Update launch fee payment status.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "launchFee": "50000000",
+  "transactionHash": "ABC123...",
+  "paymentStatus": "paid"
+}
+```
+
+**Valid Payment Statuses:**
+- `pending`
+- `paid`
+- `failed`
+- `refunded`
+
+---
+
+### Get Drop Statistics
+
+**GET** `/drops/:id/stats`
+
+Get detailed statistics for a drop.
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "drop": { ... },
+    "stats": {
+      "totalMinted": 50,
+      "totalSupply": 1000,
+      "remainingSupply": 950,
+      "percentageMinted": "5.00",
+      "uniqueMintersCount": 35,
+      "totalRevenue": "500000000",
+      "allowlistCount": 100
+    },
+    "recentMints": [...]
+  }
+}
+```
+
+---
+
+### Get Creator's Drops
+
+**GET** `/drops/creator/:walletAddress`
+
+Get all drops created by a wallet.
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+- `status` (optional): Filter by status
+
+---
+
+## Allowlist Management
+
+### Get Allowed Wallets
+
+**GET** `/drops/:id/allowlist`
+
+Get wallets on the allowlist for a drop.
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 50)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "wallets": [
+      {
+        "id": "uuid",
+        "dropId": "uuid",
+        "walletAddress": "r...",
+        "mintLimit": 5,
+        "mintedCount": 2,
+        "notes": "VIP holder"
+      }
+    ],
+    "pagination": { ... }
+  }
+}
+```
+
+---
+
+### Add Wallets to Allowlist
+
+**POST** `/drops/:id/allowlist`
+
+Add wallets to the drop's allowlist.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "wallets": [
+    { "address": "rWallet1...", "mintLimit": 5, "notes": "VIP" },
+    { "address": "rWallet2...", "mintLimit": 3 },
+    "rWallet3..."
+  ]
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "added": [...],
+    "skipped": [...]
+  }
+}
+```
+
+---
+
+### Remove Wallets from Allowlist
+
+**DELETE** `/drops/:id/allowlist`
+
+Remove wallets from the allowlist.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "walletAddresses": ["rWallet1...", "rWallet2..."]
+}
+```
+
+---
+
+### Check Wallet Eligibility
+
+**GET** `/drops/:id/eligibility`
+
+Check if a wallet can mint from the drop.
+
+**Query Parameters:**
+- `walletAddress` (required): Wallet to check
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "walletAddress": "r...",
+    "canMint": true,
+    "reason": null,
+    "totalMintsByWallet": 2,
+    "remainingMintAllowance": 3,
+    "dropStatus": {
+      "isActive": true,
+      "isMintingEnabled": true,
+      "hasStarted": true,
+      "hasNotEnded": true,
+      "isSoldOut": false,
+      "isPaid": true,
+      "isAllowlistEnabled": false
+    },
+    "allowlistStatus": null,
+    "pricePerNft": "10000000"
+  }
+}
+```
+
+**Possible Reasons for `canMint: false`:**
+- "Drop is not active"
+- "Minting is disabled"
+- "Drop has not started yet"
+- "Drop has ended"
+- "Drop is sold out"
+- "Drop launch fee not paid"
+- "Wallet is not on allowlist"
+- "Wallet has reached mint limit"
+
+---
+
+## Minting Endpoints
+
+### Record Mint
+
+**POST** `/drops/:id/mint`
+
+Record a successful mint (called after blockchain transaction).
+
+**Request Body:**
+```json
+{
+  "minterWalletAddress": "rMinter...",
+  "nftTokenId": "000800006203F49C21D5D6E022...",
+  "nftUri": "ipfs://...",
+  "transactionHash": "ABC123...",
+  "mintPrice": "10000000",
+  "paymentTransactionHash": "DEF456...",
+  "metadata": {}
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Mint recorded successfully",
+  "data": {
+    "id": "uuid",
+    "dropId": "uuid",
+    "minterWalletAddress": "r...",
+    "nftTokenId": "...",
+    "mintIndex": 51,
+    "mintPrice": "10000000"
+  }
+}
+```
+
+---
+
+### Get Drop Mints
+
+**GET** `/drops/:id/mints`
+
+Get all mints for a drop.
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 50)
+
+---
+
+### Get User's Mints
+
+**GET** `/drops/user/:walletAddress/mints`
+
+Get all mints by a specific wallet across all drops.
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 50)
+
+---
+
+## Drop Notification Types
+
+The notification system includes these drop-related notification types:
+
+| Type | Description | Recipient |
+|------|-------------|-----------|
+| `drop_launch` | Sent when a drop goes live | Creator's followers |
+| `drop_mint` | Sent when someone mints from a drop | Drop creator |
+| `drop_allowlist` | Sent when added to a drop's allowlist | Added wallet |
+
