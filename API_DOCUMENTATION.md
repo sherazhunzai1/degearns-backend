@@ -4574,3 +4574,268 @@ The notification system includes these drop-related notification types:
 | `drop_mint` | Sent when someone mints from a drop | Drop creator |
 | `drop_allowlist` | Sent when added to a drop's allowlist | Added wallet |
 
+
+---
+
+## Drop NFT Management
+
+Each drop contains individual NFTs that can be uploaded, managed, and minted.
+
+### Upload NFTs to Drop
+
+**POST** `/drops/:id/nfts`
+
+Upload bulk NFTs to a drop (only draft drops).
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "nfts": [
+    {
+      "name": "NFT #1",
+      "description": "Description of NFT #1",
+      "image": "ipfs://...",
+      "animationUrl": "ipfs://...",
+      "externalUrl": "https://...",
+      "attributes": [
+        { "trait_type": "Background", "value": "Blue" },
+        { "trait_type": "Rarity", "value": "Rare" }
+      ],
+      "metadataUri": "ipfs://..."
+    },
+    {
+      "name": "NFT #2",
+      "description": "Description of NFT #2",
+      "image": "ipfs://..."
+    }
+  ]
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "NFTs uploaded successfully",
+  "data": {
+    "uploaded": 2,
+    "skipped": 0,
+    "totalSupply": 2,
+    "skippedDetails": []
+  }
+}
+```
+
+---
+
+### Get NFTs in Drop
+
+**GET** `/drops/:id/nfts`
+
+Get all NFTs in a drop.
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 50)
+- `status` (optional): Filter by status (available, reserved, minted)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "nfts": [
+      {
+        "id": "uuid",
+        "dropId": "uuid",
+        "index": 1,
+        "name": "NFT #1",
+        "description": "...",
+        "image": "ipfs://...",
+        "attributes": [...],
+        "status": "available",
+        "mintedTo": null,
+        "mintedAt": null
+      }
+    ],
+    "counts": {
+      "available": 950,
+      "reserved": 5,
+      "minted": 45
+    },
+    "pagination": { ... }
+  }
+}
+```
+
+---
+
+### Get Single NFT
+
+**GET** `/drops/:id/nfts/:nftId`
+
+Get a specific NFT from a drop.
+
+---
+
+### Update NFT
+
+**PUT** `/drops/:id/nfts/:nftId`
+
+Update an available NFT's metadata.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "name": "Updated NFT Name",
+  "description": "Updated description",
+  "attributes": [...]
+}
+```
+
+---
+
+### Delete NFTs
+
+**DELETE** `/drops/:id/nfts`
+
+Delete NFTs from a draft drop.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "nftIds": ["uuid1", "uuid2"]
+}
+```
+
+---
+
+### Get Random Available NFTs
+
+**GET** `/drops/:id/nfts/random`
+
+Get random available NFTs for minting preview.
+
+**Query Parameters:**
+- `count` (optional, default: 1, max: 10)
+
+---
+
+## Minting Flow
+
+The recommended minting flow:
+1. Check eligibility → `GET /drops/:id/eligibility?walletAddress=...`
+2. Reserve NFTs → `POST /drops/:id/reserve`
+3. Execute blockchain transaction (frontend)
+4. Confirm mint → `POST /drops/:id/confirm-mint`
+5. If transaction fails → `POST /drops/:id/release`
+
+### Reserve NFTs for Minting
+
+**POST** `/drops/:id/reserve`
+
+Reserve random NFTs before executing blockchain transaction.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rMinter...",
+  "count": 2
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "reservedNfts": [
+      {
+        "id": "uuid",
+        "name": "NFT #42",
+        "image": "ipfs://...",
+        "metadataUri": "ipfs://...",
+        "status": "reserved"
+      }
+    ],
+    "pricePerNft": "10000000",
+    "totalPrice": "20000000"
+  }
+}
+```
+
+---
+
+### Release Reserved NFTs
+
+**POST** `/drops/:id/release`
+
+Release reserved NFTs if minting fails or is cancelled.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rMinter...",
+  "nftIds": ["uuid1", "uuid2"]
+}
+```
+
+---
+
+### Confirm Mint
+
+**POST** `/drops/:id/confirm-mint`
+
+Confirm successful mints after blockchain transaction.
+
+**Request Body:**
+```json
+{
+  "minterWalletAddress": "rMinter...",
+  "mintedNfts": [
+    {
+      "nftId": "uuid",
+      "nftTokenId": "000800006203F49C21D5D6E022...",
+      "transactionHash": "ABC123...",
+      "paymentTransactionHash": "DEF456..."
+    }
+  ]
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "confirmedCount": 1,
+    "mints": [
+      {
+        "nft": { "id": "uuid", "name": "NFT #42", "status": "minted", ... },
+        "mint": { "id": "uuid", "mintIndex": 46, ... }
+      }
+    ]
+  }
+}
+```
+
+---
+
+## NFT Status Flow
+
+```
+available → reserved → minted
+    ↑           ↓
+    └───────────┘ (release)
+```
+
+- **available**: NFT is ready to be minted
+- **reserved**: NFT is reserved for a pending mint transaction
+- **minted**: NFT has been minted on the blockchain

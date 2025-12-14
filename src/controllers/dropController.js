@@ -1,4 +1,4 @@
-const { Drop, DropAllowedWallet, DropMint, Collection, User, sequelize } = require('../models');
+const { Drop, DropNft, DropAllowedWallet, DropMint, Collection, User, sequelize } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -1337,6 +1337,620 @@ const getDropStats = async (req, res, next) => {
   }
 };
 
+/**
+ * Upload bulk NFTs to a drop
+ */
+const uploadDropNfts = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const { walletAddress, nfts } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!nfts || !Array.isArray(nfts) || nfts.length === 0) {
+      throw new ApiError(400, 'NFTs array is required');
+    }
+
+    const drop = await Drop.findByPk(id, { transaction });
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only upload NFTs to your own drops');
+    }
+
+    // Can only upload to draft drops
+    if (drop.status !== 'draft') {
+      throw new ApiError(400, 'Can only upload NFTs to drops in draft status');
+    }
+
+    // Get current max index
+    const maxIndexResult = await DropNft.findOne({
+      where: { dropId: id },
+      attributes: [[sequelize.fn('MAX', sequelize.col('index')), 'maxIndex']],
+      raw: true,
+      transaction
+    });
+    let currentIndex = maxIndexResult?.maxIndex || 0;
+
+    const createdNfts = [];
+    const skippedNfts = [];
+
+    for (const nft of nfts) {
+      const { name, description, image, animationUrl, externalUrl, attributes, metadataUri, metadata } = nft;
+
+      if (!name || !image) {
+        skippedNfts.push({ nft, reason: 'Missing required fields (name, image)' });
+        continue;
+      }
+
+      currentIndex++;
+
+      const newNft = await DropNft.create({
+        dropId: id,
+        index: currentIndex,
+        name,
+        description,
+        image,
+        animationUrl,
+        externalUrl,
+        attributes,
+        metadataUri,
+        status: 'available',
+        metadata
+      }, { transaction });
+
+      createdNfts.push(newNft);
+    }
+
+    // Update drop totalSupply
+    const totalNfts = await DropNft.count({
+      where: { dropId: id },
+      transaction
+    });
+    await drop.update({ totalSupply: totalNfts }, { transaction });
+
+    await transaction.commit();
+
+    logger.info(`Uploaded ${createdNfts.length} NFTs to drop ${id} by ${walletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        uploaded: createdNfts.length,
+        skipped: skippedNfts.length,
+        totalSupply: totalNfts,
+        skippedDetails: skippedNfts
+      }, 'NFTs uploaded successfully')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
+/**
+ * Get NFTs for a drop
+ */
+const getDropNfts = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 50, status } = req.query;
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    const where = { dropId: id };
+    if (status) {
+      if (status.includes(',')) {
+        where.status = { [Op.in]: status.split(',') };
+      } else {
+        where.status = status;
+      }
+    }
+
+    const offset = (page - 1) * limit;
+
+    const { count, rows: nfts } = await DropNft.findAndCountAll({
+      where,
+      order: [['index', 'ASC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    // Get counts by status
+    const statusCounts = await DropNft.findAll({
+      where: { dropId: id },
+      attributes: [
+        'status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['status'],
+      raw: true
+    });
+
+    const counts = {
+      available: 0,
+      reserved: 0,
+      minted: 0
+    };
+    statusCounts.forEach(sc => {
+      counts[sc.status] = parseInt(sc.count);
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        nfts,
+        counts,
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Drop NFTs retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get a single NFT from a drop
+ */
+const getDropNftById = async (req, res, next) => {
+  try {
+    const { id, nftId } = req.params;
+
+    const nft = await DropNft.findOne({
+      where: { id: nftId, dropId: id },
+      include: [
+        {
+          association: 'drop',
+          attributes: ['id', 'name', 'collectionId', 'pricePerNft', 'isFreeMint']
+        }
+      ]
+    });
+
+    if (!nft) {
+      throw new ApiError(404, 'NFT not found');
+    }
+
+    res.status(200).json(
+      new ApiResponse(200, nft, 'NFT retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update a single NFT in a drop
+ */
+const updateDropNft = async (req, res, next) => {
+  try {
+    const { id, nftId } = req.params;
+    const { walletAddress, name, description, image, animationUrl, externalUrl, attributes, metadataUri, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only update NFTs in your own drops');
+    }
+
+    const nft = await DropNft.findOne({
+      where: { id: nftId, dropId: id }
+    });
+
+    if (!nft) {
+      throw new ApiError(404, 'NFT not found');
+    }
+
+    // Can only update available NFTs
+    if (nft.status !== 'available') {
+      throw new ApiError(400, 'Cannot update NFT that is already reserved or minted');
+    }
+
+    const updateData = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (image !== undefined) updateData.image = image;
+    if (animationUrl !== undefined) updateData.animationUrl = animationUrl;
+    if (externalUrl !== undefined) updateData.externalUrl = externalUrl;
+    if (attributes !== undefined) updateData.attributes = attributes;
+    if (metadataUri !== undefined) updateData.metadataUri = metadataUri;
+    if (metadata !== undefined) updateData.metadata = metadata;
+
+    await nft.update(updateData);
+
+    logger.info(`NFT ${nftId} updated in drop ${id} by ${walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, nft, 'NFT updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete NFTs from a drop
+ */
+const deleteDropNfts = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const { walletAddress, nftIds } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id, { transaction });
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    if (drop.creatorWalletAddress !== walletAddress) {
+      throw new ApiError(403, 'You can only delete NFTs from your own drops');
+    }
+
+    // Can only delete from draft drops
+    if (drop.status !== 'draft') {
+      throw new ApiError(400, 'Can only delete NFTs from drops in draft status');
+    }
+
+    let deletedCount = 0;
+    if (nftIds && Array.isArray(nftIds) && nftIds.length > 0) {
+      // Delete specific NFTs
+      deletedCount = await DropNft.destroy({
+        where: {
+          id: { [Op.in]: nftIds },
+          dropId: id,
+          status: 'available'
+        },
+        transaction
+      });
+    }
+
+    // Update drop totalSupply
+    const totalNfts = await DropNft.count({
+      where: { dropId: id },
+      transaction
+    });
+    await drop.update({ totalSupply: totalNfts }, { transaction });
+
+    // Re-index remaining NFTs
+    const remainingNfts = await DropNft.findAll({
+      where: { dropId: id },
+      order: [['index', 'ASC']],
+      transaction
+    });
+
+    for (let i = 0; i < remainingNfts.length; i++) {
+      if (remainingNfts[i].index !== i + 1) {
+        await remainingNfts[i].update({ index: i + 1 }, { transaction });
+      }
+    }
+
+    await transaction.commit();
+
+    logger.info(`Deleted ${deletedCount} NFTs from drop ${id} by ${walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        deletedCount,
+        totalSupply: totalNfts
+      }, 'NFTs deleted successfully')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
+/**
+ * Get random available NFTs for minting preview
+ */
+const getRandomAvailableNfts = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { count = 1 } = req.query;
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    const requestedCount = Math.min(parseInt(count), 10); // Max 10 previews
+
+    // Get random available NFTs
+    const availableNfts = await DropNft.findAll({
+      where: {
+        dropId: id,
+        status: 'available'
+      },
+      order: sequelize.random(),
+      limit: requestedCount
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        nfts: availableNfts,
+        availableCount: await DropNft.count({
+          where: { dropId: id, status: 'available' }
+        })
+      }, 'Random NFTs retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Reserve NFTs for minting (called before blockchain transaction)
+ */
+const reserveNftsForMint = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const { walletAddress, count = 1 } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const drop = await Drop.findByPk(id, { transaction });
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    // Check eligibility
+    const eligibility = await getWalletEligibilityData(drop, walletAddress);
+    if (!eligibility.canMint) {
+      throw new ApiError(400, eligibility.reason);
+    }
+
+    const requestedCount = parseInt(count);
+
+    // Check if enough allowance
+    if (eligibility.remainingMintAllowance !== null && requestedCount > eligibility.remainingMintAllowance) {
+      throw new ApiError(400, `Can only mint ${eligibility.remainingMintAllowance} more NFTs`);
+    }
+
+    // Get random available NFTs
+    const availableNfts = await DropNft.findAll({
+      where: {
+        dropId: id,
+        status: 'available'
+      },
+      order: sequelize.random(),
+      limit: requestedCount,
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+
+    if (availableNfts.length < requestedCount) {
+      throw new ApiError(400, `Only ${availableNfts.length} NFTs available`);
+    }
+
+    // Reserve the NFTs
+    const reservedNftIds = availableNfts.map(nft => nft.id);
+    await DropNft.update(
+      { status: 'reserved' },
+      {
+        where: { id: { [Op.in]: reservedNftIds } },
+        transaction
+      }
+    );
+
+    await transaction.commit();
+
+    // Fetch reserved NFTs with updated status
+    const reservedNfts = await DropNft.findAll({
+      where: { id: { [Op.in]: reservedNftIds } }
+    });
+
+    logger.info(`Reserved ${reservedNfts.length} NFTs for ${walletAddress} in drop ${id}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        reservedNfts,
+        pricePerNft: drop.isFreeMint ? '0' : drop.pricePerNft,
+        totalPrice: drop.isFreeMint ? '0' : (BigInt(drop.pricePerNft) * BigInt(reservedNfts.length)).toString()
+      }, 'NFTs reserved successfully')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
+/**
+ * Release reserved NFTs (if mint fails or is cancelled)
+ */
+const releaseReservedNfts = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { walletAddress, nftIds } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!nftIds || !Array.isArray(nftIds) || nftIds.length === 0) {
+      throw new ApiError(400, 'NFT IDs array is required');
+    }
+
+    const drop = await Drop.findByPk(id);
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    // Release reserved NFTs back to available
+    const releasedCount = await DropNft.update(
+      { status: 'available' },
+      {
+        where: {
+          id: { [Op.in]: nftIds },
+          dropId: id,
+          status: 'reserved'
+        }
+      }
+    );
+
+    logger.info(`Released ${releasedCount[0]} reserved NFTs in drop ${id}`);
+
+    res.status(200).json(
+      new ApiResponse(200, { releasedCount: releasedCount[0] }, 'Reserved NFTs released successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Confirm mint (update NFT status after successful blockchain transaction)
+ */
+const confirmMint = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const {
+      minterWalletAddress,
+      mintedNfts // Array of { nftId, nftTokenId, transactionHash }
+    } = req.body;
+
+    if (!minterWalletAddress) {
+      throw new ApiError(400, 'Minter wallet address is required');
+    }
+
+    if (!mintedNfts || !Array.isArray(mintedNfts) || mintedNfts.length === 0) {
+      throw new ApiError(400, 'Minted NFTs array is required');
+    }
+
+    const drop = await Drop.findByPk(id, { transaction });
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found');
+    }
+
+    const confirmedMints = [];
+    const now = new Date();
+
+    for (const mintInfo of mintedNfts) {
+      const { nftId, nftTokenId, transactionHash, paymentTransactionHash } = mintInfo;
+
+      if (!nftId || !nftTokenId || !transactionHash) {
+        continue;
+      }
+
+      // Update the NFT status
+      const nft = await DropNft.findOne({
+        where: {
+          id: nftId,
+          dropId: id,
+          status: { [Op.in]: ['reserved', 'available'] }
+        },
+        transaction
+      });
+
+      if (!nft) {
+        continue;
+      }
+
+      // Update NFT to minted
+      await nft.update({
+        status: 'minted',
+        mintedTo: minterWalletAddress,
+        mintedAt: now,
+        nftTokenId,
+        transactionHash
+      }, { transaction });
+
+      // Create mint record
+      const mintIndex = drop.mintedCount + confirmedMints.length + 1;
+      const mint = await DropMint.create({
+        dropId: id,
+        minterWalletAddress,
+        nftTokenId,
+        nftUri: nft.metadataUri,
+        transactionHash,
+        mintPrice: drop.isFreeMint ? '0' : drop.pricePerNft,
+        paymentTransactionHash,
+        mintIndex,
+        metadata: {
+          dropNftId: nft.id,
+          nftName: nft.name,
+          nftImage: nft.image
+        }
+      }, { transaction });
+
+      confirmedMints.push({
+        nft: nft.toJSON(),
+        mint: mint.toJSON()
+      });
+    }
+
+    if (confirmedMints.length > 0) {
+      // Update drop minted count
+      await drop.increment('mintedCount', { by: confirmedMints.length, transaction });
+
+      // Update allowlist minted count if applicable
+      if (drop.isAllowlistEnabled) {
+        const allowedWallet = await DropAllowedWallet.findOne({
+          where: { dropId: id, walletAddress: minterWalletAddress },
+          transaction
+        });
+
+        if (allowedWallet) {
+          await allowedWallet.increment('mintedCount', { by: confirmedMints.length, transaction });
+        }
+      }
+
+      // Check if drop is now sold out
+      const updatedDrop = await Drop.findByPk(id, { transaction });
+      const availableCount = await DropNft.count({
+        where: { dropId: id, status: 'available' },
+        transaction
+      });
+
+      if (availableCount === 0 && updatedDrop.status === 'active') {
+        await updatedDrop.update({ status: 'sold_out' }, { transaction });
+      }
+    }
+
+    await transaction.commit();
+
+    logger.info(`Confirmed ${confirmedMints.length} mints for drop ${id} by ${minterWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        confirmedCount: confirmedMints.length,
+        mints: confirmedMints
+      }, 'Mints confirmed successfully')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
 module.exports = {
   createDrop,
   updateDrop,
@@ -1356,5 +1970,15 @@ module.exports = {
   getDropMints,
   getUserMints,
   getCreatorDrops,
-  getDropStats
+  getDropStats,
+  // NFT management
+  uploadDropNfts,
+  getDropNfts,
+  getDropNftById,
+  updateDropNft,
+  deleteDropNfts,
+  getRandomAvailableNfts,
+  reserveNftsForMint,
+  releaseReservedNfts,
+  confirmMint
 };

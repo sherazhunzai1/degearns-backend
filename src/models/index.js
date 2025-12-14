@@ -13,6 +13,7 @@ const PostComment = require('./PostComment')(sequelize, DataTypes);
 const Follow = require('./Follow')(sequelize, DataTypes);
 const Notification = require('./Notification')(sequelize, DataTypes);
 const Drop = require('./Drop')(sequelize, DataTypes);
+const DropNft = require('./DropNft')(sequelize, DataTypes);
 const DropAllowedWallet = require('./DropAllowedWallet')(sequelize, DataTypes);
 const DropMint = require('./DropMint')(sequelize, DataTypes);
 
@@ -229,6 +230,16 @@ Drop.belongsTo(User, {
   as: 'creator'
 });
 
+// Drop and DropNft associations
+Drop.hasMany(DropNft, {
+  foreignKey: 'dropId',
+  as: 'nfts'
+});
+DropNft.belongsTo(Drop, {
+  foreignKey: 'dropId',
+  as: 'drop'
+});
+
 // Drop and DropAllowedWallet associations
 Drop.hasMany(DropAllowedWallet, {
   foreignKey: 'dropId',
@@ -278,6 +289,7 @@ module.exports = {
   Follow,
   Notification,
   Drop,
+  DropNft,
   DropAllowedWallet,
   DropMint
 };
