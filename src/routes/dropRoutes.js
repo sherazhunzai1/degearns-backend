@@ -16,6 +16,17 @@ router.put('/:id/status', dropController.updateDropStatus);
 router.put('/:id/toggle', dropController.toggleDropSettings);
 router.put('/:id/payment', dropController.updatePaymentStatus);
 
+// Dashboard and settings (for frontend launch management page)
+router.get('/:id/dashboard', dropController.getDropDashboard);
+router.put('/:id/settings', dropController.saveDropSettings);
+
+// Platform fees management
+router.get('/:id/fees', dropController.getDropFees);
+router.put('/:id/platform-fees', dropController.updatePlatformFeesPayment);
+
+// Minter authorization
+router.put('/:id/authorize-minter', dropController.authorizeMinterWallet);
+
 // Drop statistics
 router.get('/:id/stats', dropController.getDropStats);
 
