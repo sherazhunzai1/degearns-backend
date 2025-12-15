@@ -41,10 +41,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(5, 2),
       defaultValue: 0,
       allowNull: false,
-      comment: 'Creator royalty percentage (0-100)',
+      comment: 'Creator royalty percentage (0-50)',
       validate: {
         min: 0,
-        max: 100
+        max: 50
       }
     },
     pricePerNft: {
@@ -102,21 +102,62 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       comment: 'Drop end date and time'
     },
-    // Launch fees
+    // Authorized minter
+    authorizedMinterWallet: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Wallet address authorized to perform minting operations'
+    },
+    // Platform fees
+    platformFeePerNft: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: '30000', // 0.03 XRP in drops (1 XRP = 1,000,000 drops)
+      comment: 'Platform fee per NFT in drops (0.03 XRP = 30000 drops)'
+    },
+    setupFee: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: '3000000', // 3 XRP in drops
+      comment: 'Setup fee for launching the drop (3 XRP = 3000000 drops)'
+    },
+    totalPlatformFees: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      comment: 'Total calculated platform fees (platformFeePerNft * totalSupply + setupFee)'
+    },
+    platformFeesTransactionHash: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Transaction hash for platform fees payment'
+    },
+    platformFeesStatus: {
+      type: DataTypes.ENUM('pending', 'paid', 'failed', 'refunded'),
+      defaultValue: 'pending',
+      comment: 'Status of platform fees payment'
+    },
+    // Revenue tracking
+    totalRevenue: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: '0',
+      comment: 'Total revenue from mints in drops'
+    },
+    // Launch fees (legacy - keeping for backward compatibility)
     launchFee: {
       type: DataTypes.STRING(50),
       allowNull: true,
-      comment: 'Fee paid to launch the drop'
+      comment: 'Fee paid to launch the drop (deprecated, use totalPlatformFees)'
     },
     launchFeeTransactionHash: {
       type: DataTypes.STRING(100),
       allowNull: true,
-      comment: 'Transaction hash for launch fee payment'
+      comment: 'Transaction hash for launch fee payment (deprecated)'
     },
     paymentStatus: {
       type: DataTypes.ENUM('pending', 'paid', 'failed', 'refunded'),
       defaultValue: 'pending',
-      comment: 'Status of launch fee payment'
+      comment: 'Status of launch fee payment (deprecated, use platformFeesStatus)'
     },
     // Dashboard toggles
     isMintingEnabled: {
@@ -185,6 +226,35 @@ module.exports = (sequelize, DataTypes) => {
   // Helper method to get remaining supply
   Drop.prototype.getRemainingSupply = function() {
     return Math.max(0, this.totalSupply - this.mintedCount);
+  };
+
+  // Helper method to calculate total platform fees
+  Drop.prototype.calculatePlatformFees = function() {
+    const platformFeePerNft = BigInt(this.platformFeePerNft || '30000');
+    const setupFee = BigInt(this.setupFee || '3000000');
+    const totalSupply = BigInt(this.totalSupply || 0);
+    return (platformFeePerNft * totalSupply + setupFee).toString();
+  };
+
+  // Helper method to get fees breakdown
+  Drop.prototype.getFeesBreakdown = function() {
+    const platformFeePerNft = BigInt(this.platformFeePerNft || '30000');
+    const setupFee = BigInt(this.setupFee || '3000000');
+    const totalSupply = BigInt(this.totalSupply || 0);
+    const nftFees = platformFeePerNft * totalSupply;
+    const totalFees = nftFees + setupFee;
+
+    return {
+      platformFeePerNft: this.platformFeePerNft || '30000',
+      platformFeePerNftXrp: (Number(platformFeePerNft) / 1000000).toFixed(6),
+      setupFee: this.setupFee || '3000000',
+      setupFeeXrp: (Number(setupFee) / 1000000).toFixed(6),
+      totalSupply: this.totalSupply,
+      nftFeesTotal: nftFees.toString(),
+      nftFeesTotalXrp: (Number(nftFees) / 1000000).toFixed(6),
+      totalPlatformFees: totalFees.toString(),
+      totalPlatformFeesXrp: (Number(totalFees) / 1000000).toFixed(6)
+    };
   };
 
   return Drop;

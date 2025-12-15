@@ -4328,6 +4328,213 @@ Update launch fee payment status.
 
 ---
 
+## Dashboard & Settings (Frontend Launch Management)
+
+### Get Drop Dashboard
+
+**GET** `/drops/:id/dashboard`
+
+Get all data needed for the drop launch management page.
+
+**Query Parameters:**
+- `walletAddress` (optional): Verify ownership
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Drop dashboard retrieved successfully",
+  "data": {
+    "launchDetails": {
+      "id": "uuid",
+      "name": "My Drop",
+      "description": "...",
+      "image": "ipfs://...",
+      "creator": { "walletAddress": "r...", "username": "..." },
+      "collection": { "id": "uuid", "name": "...", "taxon": 12345 },
+      "taxon": 12345,
+      "totalSupply": 1000
+    },
+    "pricing": {
+      "pricePerNft": "10000000",
+      "royaltyPercentage": "5.00",
+      "limitPerWallet": 5
+    },
+    "flags": {
+      "isBurnable": true,
+      "isTransferable": true,
+      "isOnlyXrp": false,
+      "isMutable": false
+    },
+    "schedule": {
+      "startDate": "2024-12-25T00:00:00.000Z",
+      "endDate": "2024-12-31T23:59:59.000Z"
+    },
+    "authorization": {
+      "authorizedMinterWallet": "rAuthorized..."
+    },
+    "platformFees": {
+      "platformFeePerNft": "30000",
+      "platformFeePerNftXrp": "0.030000",
+      "setupFee": "3000000",
+      "setupFeeXrp": "3.000000",
+      "totalSupply": 1000,
+      "nftFeesTotal": "30000000",
+      "nftFeesTotalXrp": "30.000000",
+      "totalPlatformFees": "33000000",
+      "totalPlatformFeesXrp": "33.000000"
+    },
+    "platformFeesStatus": "paid",
+    "platformFeesTransactionHash": "ABC123...",
+    "dashboard": {
+      "status": "active",
+      "isMintingEnabled": true,
+      "isAllowlistEnabled": false,
+      "isFreeMint": false,
+      "mintedCount": 50,
+      "totalRevenue": "500000000",
+      "totalRevenueXrp": "500.000000",
+      "allowlistCount": 100,
+      "uniqueMintersCount": 35,
+      "nftCounts": {
+        "available": 945,
+        "reserved": 5,
+        "minted": 50
+      }
+    },
+    "remainingSupply": 950,
+    "isCurrentlyActive": true,
+    "isSoldOut": false
+  }
+}
+```
+
+---
+
+### Save Drop Settings (Save All Button)
+
+**PUT** `/drops/:id/settings`
+
+Save all drop settings at once (for dashboard save button).
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "pricePerNft": "10000000",
+  "royaltyPercentage": 5,
+  "limitPerWallet": 5,
+  "isBurnable": true,
+  "isTransferable": true,
+  "isOnlyXrp": false,
+  "isMutable": false,
+  "startDate": "2024-12-25T00:00:00.000Z",
+  "endDate": "2024-12-31T23:59:59.000Z",
+  "isMintingEnabled": true,
+  "isAllowlistEnabled": false,
+  "isFreeMint": false,
+  "status": "active"
+}
+```
+
+**Notes:**
+- All fields are optional (only send what you want to update)
+- Royalty percentage must be between 0 and 50
+- Cannot activate drop if platform fees not paid
+
+---
+
+## Platform Fees
+
+Platform fees: **0.03 XRP per NFT** + **3 XRP setup fee**
+
+### Get Platform Fees
+
+**GET** `/drops/:id/fees`
+
+Calculate platform fees for a drop.
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Fees calculated successfully",
+  "data": {
+    "dropId": "uuid",
+    "dropName": "My Drop",
+    "platformFeePerNft": "30000",
+    "platformFeePerNftXrp": "0.030000",
+    "setupFee": "3000000",
+    "setupFeeXrp": "3.000000",
+    "totalSupply": 1000,
+    "nftFeesTotal": "30000000",
+    "nftFeesTotalXrp": "30.000000",
+    "totalPlatformFees": "33000000",
+    "totalPlatformFeesXrp": "33.000000",
+    "platformFeesStatus": "pending",
+    "platformFeesTransactionHash": null
+  }
+}
+```
+
+---
+
+### Update Platform Fees Payment
+
+**PUT** `/drops/:id/platform-fees`
+
+Update platform fees payment after sending to admin wallet.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "transactionHash": "ABC123...",
+  "status": "paid"
+}
+```
+
+**Valid Statuses:**
+- `pending`
+- `paid`
+- `failed`
+- `refunded`
+
+---
+
+## Minter Authorization
+
+### Authorize Minter Wallet
+
+**PUT** `/drops/:id/authorize-minter`
+
+Authorize a wallet address for minting operations.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "minterWallet": "rAuthorizedMinter..."
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Minter wallet authorized successfully",
+  "data": {
+    "dropId": "uuid",
+    "authorizedMinterWallet": "rAuthorizedMinter..."
+  }
+}
+```
+
+---
+
 ### Get Drop Statistics
 
 **GET** `/drops/:id/stats`
