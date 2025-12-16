@@ -1435,9 +1435,109 @@ const uploadDropNfts = async (req, res, next) => {
 };
 
 /**
- * Step 2: Upload bulk NFTs to drop
+ * Step 2: Upload bulk NFTs to drop using taxonId
+ * Finds the drop by taxonId and creatorWalletAddress, then uploads NFTs
  * Automatically calculates totalSupply based on number of NFTs uploaded
  */
+const uploadDropNftsByTaxon = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { taxonId } = req.params;
+    const { walletAddress, nfts } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!nfts || !Array.isArray(nfts) || nfts.length === 0) {
+      throw new ApiError(400, 'NFTs array is required');
+    }
+
+    // Find drop by taxonId and creator wallet
+    const drop = await Drop.findOne({
+      where: {
+        taxonId: parseInt(taxonId),
+        creatorWalletAddress: walletAddress,
+        status: 'draft'
+      },
+      transaction
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found with this taxonId or you do not have permission');
+    }
+
+    // Get current max index
+    const maxIndexResult = await DropNft.findOne({
+      where: { dropId: drop.id },
+      attributes: [[sequelize.fn('MAX', sequelize.col('index')), 'maxIndex']],
+      raw: true,
+      transaction
+    });
+    let currentIndex = maxIndexResult?.maxIndex || 0;
+
+    const createdNfts = [];
+    const skippedNfts = [];
+
+    for (const nft of nfts) {
+      const { name, description, image, animationUrl, externalUrl, attributes, metadataUri, metadata } = nft;
+
+      if (!name || !image) {
+        skippedNfts.push({ nft, reason: 'Missing required fields (name, image)' });
+        continue;
+      }
+
+      currentIndex++;
+
+      const newNft = await DropNft.create({
+        dropId: drop.id,
+        index: currentIndex,
+        name,
+        description,
+        image,
+        animationUrl,
+        externalUrl,
+        attributes,
+        metadataUri,
+        status: 'available',
+        metadata
+      }, { transaction });
+
+      createdNfts.push(newNft);
+    }
+
+    // Update drop totalSupply
+    const totalNfts = await DropNft.count({
+      where: { dropId: drop.id },
+      transaction
+    });
+    await drop.update({ totalSupply: totalNfts }, { transaction });
+
+    await transaction.commit();
+
+    logger.info(`Uploaded ${createdNfts.length} NFTs to drop (taxonId: ${taxonId}) by ${walletAddress}`);
+
+    // Calculate platform fees based on new total supply
+    const feesBreakdown = drop.getFeesBreakdown();
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        dropId: drop.id,
+        taxonId: drop.taxonId,
+        uploaded: createdNfts.length,
+        skipped: skippedNfts.length,
+        totalSupply: totalNfts,
+        skippedDetails: skippedNfts,
+        platformFees: feesBreakdown,
+        nextStep: 'Configure drop settings using PUT /drops/:id/settings'
+      }, 'NFTs uploaded successfully. Next step: Configure drop settings')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
 
 /**
  * Get NFTs for a drop
@@ -2389,6 +2489,7 @@ module.exports = {
   getDropStats,
   // NFT management
   uploadDropNfts,
+  uploadDropNftsByTaxon,
   getDropNfts,
   getDropNftById,
   updateDropNft,
