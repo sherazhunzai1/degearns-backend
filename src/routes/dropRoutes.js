@@ -53,8 +53,9 @@ router.post('/:id/confirm-mint', dropController.confirmMint);
 router.post('/:id/mint', dropController.recordMint);
 router.get('/:id/mints', dropController.getDropMints);
 
-// Upload NFTs by taxonId (for Step 2 workflow)
+// TaxonId-based routes (for frontend workflow)
 router.post('/taxon/:taxonId/nfts', dropController.uploadDropNftsByTaxon);
+router.get('/taxon/:taxonId/dashboard', dropController.getDropDashboardByTaxon);
 
 // User-specific routes
 router.get('/user/:walletAddress/mints', dropController.getUserMints);
