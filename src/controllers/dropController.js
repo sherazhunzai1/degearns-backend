@@ -2763,6 +2763,232 @@ const authorizeMinterWalletByTaxon = async (req, res, next) => {
   }
 };
 
+/**
+ * Save all drop settings by taxonId (comprehensive settings update)
+ * Handles: pricing, flags, schedule, allowlist, and dashboard controls
+ */
+const saveDropSettingsByTaxon = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { taxonId } = req.params;
+    const {
+      walletAddress,
+      pricing,
+      flags,
+      schedule,
+      allowlist,
+      dashboard
+    } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Find drop by taxonId and creator wallet
+    const drop = await Drop.findOne({
+      where: {
+        taxonId: parseInt(taxonId),
+        creatorWalletAddress: walletAddress
+      },
+      transaction
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found with this taxonId or you do not have permission');
+    }
+
+    // Build update object for drop
+    const updateData = {};
+
+    // Pricing Configuration
+    if (pricing) {
+      if (pricing.pricePerNft !== undefined) {
+        updateData.pricePerNft = pricing.pricePerNft;
+      }
+      if (pricing.royaltyPercentage !== undefined) {
+        if (pricing.royaltyPercentage < 0 || pricing.royaltyPercentage > 50) {
+          throw new ApiError(400, 'Royalty percentage must be between 0 and 50');
+        }
+        updateData.royaltyPercentage = pricing.royaltyPercentage;
+      }
+      if (pricing.limitPerWallet !== undefined) {
+        updateData.limitPerWallet = pricing.limitPerWallet;
+      }
+    }
+
+    // NFT Flags
+    if (flags) {
+      if (flags.isBurnable !== undefined) updateData.isBurnable = flags.isBurnable;
+      if (flags.isTransferable !== undefined) updateData.isTransferable = flags.isTransferable;
+      if (flags.isOnlyXrp !== undefined) updateData.isOnlyXrp = flags.isOnlyXrp;
+      if (flags.isMutable !== undefined) updateData.isMutable = flags.isMutable;
+    }
+
+    // Schedule
+    if (schedule) {
+      if (schedule.startDate !== undefined) updateData.startDate = schedule.startDate;
+      if (schedule.endDate !== undefined) updateData.endDate = schedule.endDate;
+
+      // Validate schedule
+      if (updateData.startDate && updateData.endDate) {
+        const start = new Date(updateData.startDate);
+        const end = new Date(updateData.endDate);
+        if (end <= start) {
+          throw new ApiError(400, 'End date must be after start date');
+        }
+      }
+    }
+
+    // Dashboard Controls
+    if (dashboard) {
+      if (dashboard.isMintingEnabled !== undefined) updateData.isMintingEnabled = dashboard.isMintingEnabled;
+      if (dashboard.isAllowlistOnly !== undefined) updateData.isAllowlistEnabled = dashboard.isAllowlistOnly;
+      if (dashboard.isAllowlistEnabled !== undefined) updateData.isAllowlistEnabled = dashboard.isAllowlistEnabled;
+      if (dashboard.isFreeMint !== undefined) updateData.isFreeMint = dashboard.isFreeMint;
+    }
+
+    // Update drop settings
+    await drop.update(updateData, { transaction });
+
+    // Handle Allowlist
+    let allowlistResult = null;
+    if (allowlist) {
+      // Update allowlist enabled status
+      if (allowlist.isEnabled !== undefined) {
+        await drop.update({ isAllowlistEnabled: allowlist.isEnabled }, { transaction });
+      }
+
+      // Process allowlist entries
+      if (allowlist.entries && Array.isArray(allowlist.entries) && allowlist.entries.length > 0) {
+        const createdWallets = [];
+        const updatedWallets = [];
+        const skippedWallets = [];
+
+        for (const entry of allowlist.entries) {
+          const { walletAddress: entryWallet, nftLimit } = entry;
+
+          if (!entryWallet) {
+            skippedWallets.push({ entry, reason: 'Missing wallet address' });
+            continue;
+          }
+
+          // Check if wallet already exists for this drop
+          const existing = await DropAllowedWallet.findOne({
+            where: { dropId: drop.id, walletAddress: entryWallet },
+            transaction
+          });
+
+          if (existing) {
+            // Update existing wallet
+            await existing.update({ mintLimit: nftLimit || null }, { transaction });
+            updatedWallets.push({ walletAddress: entryWallet, nftLimit });
+          } else {
+            // Create new allowlist entry
+            await DropAllowedWallet.create({
+              dropId: drop.id,
+              walletAddress: entryWallet,
+              mintLimit: nftLimit || null
+            }, { transaction });
+            createdWallets.push({ walletAddress: entryWallet, nftLimit });
+          }
+        }
+
+        allowlistResult = {
+          created: createdWallets.length,
+          updated: updatedWallets.length,
+          skipped: skippedWallets.length,
+          total: createdWallets.length + updatedWallets.length
+        };
+      }
+    }
+
+    await transaction.commit();
+
+    logger.info(`Drop settings saved for taxonId ${taxonId} by ${walletAddress}`);
+
+    // Fetch updated drop with associations
+    const updatedDrop = await Drop.findOne({
+      where: { taxonId: parseInt(taxonId), creatorWalletAddress: walletAddress },
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    // Get counts
+    const [allowlistCount, nftCounts] = await Promise.all([
+      DropAllowedWallet.count({ where: { dropId: drop.id } }),
+      DropNft.findAll({
+        where: { dropId: drop.id },
+        attributes: [
+          'status',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        group: ['status'],
+        raw: true
+      })
+    ]);
+
+    const nftCountsObj = { available: 0, reserved: 0, minted: 0 };
+    nftCounts.forEach(nc => {
+      nftCountsObj[nc.status] = parseInt(nc.count);
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        dropId: updatedDrop.id,
+        taxonId: updatedDrop.taxonId,
+        name: updatedDrop.name,
+        // Pricing
+        pricing: {
+          pricePerNft: updatedDrop.pricePerNft,
+          royaltyPercentage: updatedDrop.royaltyPercentage,
+          limitPerWallet: updatedDrop.limitPerWallet
+        },
+        // Flags
+        flags: {
+          isBurnable: updatedDrop.isBurnable,
+          isTransferable: updatedDrop.isTransferable,
+          isOnlyXrp: updatedDrop.isOnlyXrp,
+          isMutable: updatedDrop.isMutable
+        },
+        // Schedule
+        schedule: {
+          startDate: updatedDrop.startDate,
+          endDate: updatedDrop.endDate
+        },
+        // Allowlist
+        allowlist: {
+          isEnabled: updatedDrop.isAllowlistEnabled,
+          count: allowlistCount,
+          updateResult: allowlistResult
+        },
+        // Dashboard
+        dashboard: {
+          status: updatedDrop.status,
+          isMintingEnabled: updatedDrop.isMintingEnabled,
+          isAllowlistEnabled: updatedDrop.isAllowlistEnabled,
+          isFreeMint: updatedDrop.isFreeMint,
+          totalSupply: updatedDrop.totalSupply,
+          mintedCount: updatedDrop.mintedCount,
+          nftCounts: nftCountsObj
+        },
+        // Computed
+        remainingSupply: updatedDrop.getRemainingSupply(),
+        isCurrentlyActive: updatedDrop.isCurrentlyActive(),
+        isSoldOut: updatedDrop.isSoldOut(),
+        feesBreakdown: updatedDrop.getFeesBreakdown()
+      }, 'Drop settings saved successfully')
+    );
+  } catch (error) {
+    await transaction.rollback();
+    next(error);
+  }
+};
+
 module.exports = {
   createDrop,
   updateDrop,
@@ -2802,5 +3028,6 @@ module.exports = {
   getDropDashboard,
   getDropDashboardByTaxon,
   updatePlatformFeesPaymentByTaxon,
-  authorizeMinterWalletByTaxon
+  authorizeMinterWalletByTaxon,
+  saveDropSettingsByTaxon
 };

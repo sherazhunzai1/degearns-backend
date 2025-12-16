@@ -58,6 +58,7 @@ router.post('/taxon/:taxonId/nfts', dropController.uploadDropNftsByTaxon);
 router.get('/taxon/:taxonId/dashboard', dropController.getDropDashboardByTaxon);
 router.put('/taxon/:taxonId/platform-fees', dropController.updatePlatformFeesPaymentByTaxon);
 router.put('/taxon/:taxonId/authorize-minter', dropController.authorizeMinterWalletByTaxon);
+router.put('/taxon/:taxonId/settings', dropController.saveDropSettingsByTaxon);
 
 // User-specific routes
 router.get('/user/:walletAddress/mints', dropController.getUserMints);
