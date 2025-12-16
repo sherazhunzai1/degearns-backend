@@ -56,6 +56,7 @@ router.get('/:id/mints', dropController.getDropMints);
 // TaxonId-based routes (for frontend workflow)
 router.post('/taxon/:taxonId/nfts', dropController.uploadDropNftsByTaxon);
 router.get('/taxon/:taxonId/dashboard', dropController.getDropDashboardByTaxon);
+router.put('/taxon/:taxonId/platform-fees', dropController.updatePlatformFeesPaymentByTaxon);
 
 // User-specific routes
 router.get('/user/:walletAddress/mints', dropController.getUserMints);

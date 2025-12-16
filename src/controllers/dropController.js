@@ -1223,12 +1223,53 @@ const getCreatorDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
-    const dropsWithStats = drops.map(drop => ({
-      ...drop.toJSON(),
-      remainingSupply: drop.getRemainingSupply(),
-      isCurrentlyActive: drop.isCurrentlyActive(),
-      isSoldOut: drop.isSoldOut()
-    }));
+    const dropsWithStats = drops.map(drop => {
+      // Determine current workflow step
+      let currentStep;
+      let stepNumber;
+      let stepDescription;
+      let redirectUrl;
+
+      if (drop.totalSupply === 0) {
+        // No NFTs uploaded yet - Step 2
+        currentStep = 'upload_nfts';
+        stepNumber = 2;
+        stepDescription = 'Upload bulk NFTs to this drop';
+        redirectUrl = `/drops/${drop.taxonId}/upload-nfts`;
+      } else if (drop.status === 'draft') {
+        // NFTs uploaded but not launched - Step 3
+        currentStep = 'configure_settings';
+        stepNumber = 3;
+        stepDescription = 'Configure settings and launch the drop';
+        redirectUrl = `/drops/${drop.taxonId}/dashboard`;
+      } else {
+        // Drop is active, scheduled, paused, ended, or sold_out - Completed
+        currentStep = 'completed';
+        stepNumber = 4;
+        stepDescription = 'Drop setup completed';
+        redirectUrl = `/drops/${drop.taxonId}/dashboard`;
+      }
+
+      return {
+        ...drop.toJSON(),
+        remainingSupply: drop.getRemainingSupply(),
+        isCurrentlyActive: drop.isCurrentlyActive(),
+        isSoldOut: drop.isSoldOut(),
+        // Workflow step information
+        workflow: {
+          currentStep,
+          stepNumber,
+          stepDescription,
+          redirectUrl,
+          steps: {
+            1: { name: 'create_drop', label: 'Create Drop', completed: true },
+            2: { name: 'upload_nfts', label: 'Upload NFTs', completed: drop.totalSupply > 0 },
+            3: { name: 'configure_settings', label: 'Configure & Launch', completed: drop.status !== 'draft' },
+            4: { name: 'completed', label: 'Live', completed: ['active', 'scheduled', 'paused', 'ended', 'sold_out'].includes(drop.status) }
+          }
+        }
+      };
+    });
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -2569,6 +2610,7 @@ const getDropDashboardByTaxon = async (req, res, next) => {
         platformFees: drop.getFeesBreakdown(),
         platformFeesStatus: drop.platformFeesStatus,
         platformFeesTransactionHash: drop.platformFeesTransactionHash,
+        feesIsPaid: drop.platformFeesStatus === 'paid',
         // Dashboard
         dashboard: {
           status: drop.status,
@@ -2587,6 +2629,67 @@ const getDropDashboardByTaxon = async (req, res, next) => {
         isCurrentlyActive: drop.isCurrentlyActive(),
         isSoldOut: drop.isSoldOut()
       }, 'Drop dashboard retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Update platform fees payment status by taxonId
+ */
+const updatePlatformFeesPaymentByTaxon = async (req, res, next) => {
+  try {
+    const { taxonId } = req.params;
+    const { walletAddress, transactionHash, status } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Find drop by taxonId and creator wallet
+    const drop = await Drop.findOne({
+      where: {
+        taxonId: parseInt(taxonId),
+        creatorWalletAddress: walletAddress
+      }
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found with this taxonId or you do not have permission');
+    }
+
+    const updateData = {
+      totalPlatformFees: drop.calculatePlatformFees()
+    };
+
+    if (transactionHash) {
+      updateData.platformFeesTransactionHash = transactionHash;
+    }
+
+    if (status) {
+      const validStatuses = ['pending', 'paid', 'failed', 'refunded'];
+      if (!validStatuses.includes(status)) {
+        throw new ApiError(400, `Invalid status. Must be one of: ${validStatuses.join(', ')}`);
+      }
+      updateData.platformFeesStatus = status;
+      // Also update legacy paymentStatus for backward compatibility
+      updateData.paymentStatus = status;
+    }
+
+    await drop.update(updateData);
+
+    logger.info(`Platform fees updated for drop (taxonId: ${taxonId}): status=${status}, txHash=${transactionHash}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        dropId: drop.id,
+        taxonId: drop.taxonId,
+        platformFeesStatus: drop.platformFeesStatus,
+        platformFeesTransactionHash: drop.platformFeesTransactionHash,
+        feesIsPaid: drop.platformFeesStatus === 'paid',
+        feesBreakdown: drop.getFeesBreakdown()
+      }, 'Platform fees payment updated successfully')
     );
   } catch (error) {
     next(error);
@@ -2630,5 +2733,6 @@ module.exports = {
   authorizeMinterWallet,
   saveDropSettings,
   getDropDashboard,
-  getDropDashboardByTaxon
+  getDropDashboardByTaxon,
+  updatePlatformFeesPaymentByTaxon
 };
