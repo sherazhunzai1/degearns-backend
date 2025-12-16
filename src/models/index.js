@@ -16,6 +16,7 @@ const Drop = require('./Drop')(sequelize, DataTypes);
 const DropNft = require('./DropNft')(sequelize, DataTypes);
 const DropAllowedWallet = require('./DropAllowedWallet')(sequelize, DataTypes);
 const DropMint = require('./DropMint')(sequelize, DataTypes);
+const AdminWallet = require('./AdminWallet')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -291,5 +292,6 @@ module.exports = {
   Drop,
   DropNft,
   DropAllowedWallet,
-  DropMint
+  DropMint,
+  AdminWallet
 };
