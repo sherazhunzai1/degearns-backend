@@ -2576,8 +2576,41 @@ const getDropDashboardByTaxon = async (req, res, next) => {
       nftCounts[sc.status] = parseInt(sc.count);
     });
 
+    // Determine launch status based on workflow progress
+    let launchStatus;
+    let launchStatusCode;
+
+    if (drop.isMintingEnabled && drop.status === 'active') {
+      // Minting is enabled and drop is active
+      launchStatus = 'live';
+      launchStatusCode = 6;
+    } else if (drop.totalSupply === 0) {
+      // No NFTs uploaded yet
+      launchStatus = 'waiting for bulk NFT upload';
+      launchStatusCode = 1;
+    } else if (!drop.authorizedMinterWallet) {
+      // NFTs uploaded but minting not authorized
+      launchStatus = 'waiting for minting authorization';
+      launchStatusCode = 2;
+    } else if (drop.platformFeesStatus !== 'paid') {
+      // Authorized but fees not paid
+      launchStatus = 'waiting for payment';
+      launchStatusCode = 3;
+    } else if (!drop.pricePerNft || drop.pricePerNft === '0' || !drop.startDate || !drop.endDate) {
+      // Fees paid but pricing/schedule not configured
+      launchStatus = 'waiting for price details and schedule dates';
+      launchStatusCode = 4;
+    } else {
+      // Everything configured, ready to launch
+      launchStatus = 'ready for launch';
+      launchStatusCode = 5;
+    }
+
     res.status(200).json(
       new ApiResponse(200, {
+        // Launch status
+        launchStatus,
+        launchStatusCode,
         // Launch details
         launchDetails: {
           id: drop.id,
