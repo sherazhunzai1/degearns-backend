@@ -2467,6 +2467,132 @@ const getDropDashboard = async (req, res, next) => {
   }
 };
 
+/**
+ * Get drop dashboard data by taxonId
+ */
+const getDropDashboardByTaxon = async (req, res, next) => {
+  try {
+    const { taxonId } = req.params;
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Find drop by taxonId and creator wallet
+    const drop = await Drop.findOne({
+      where: {
+        taxonId: parseInt(taxonId),
+        creatorWalletAddress: walletAddress
+      },
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'bannerImage', 'taxon', 'category']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ]
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found with this taxonId or you do not have permission');
+    }
+
+    // Get various counts
+    const [allowlistCount, nftStatusCounts, uniqueMintersCount] = await Promise.all([
+      DropAllowedWallet.count({ where: { dropId: drop.id } }),
+      DropNft.findAll({
+        where: { dropId: drop.id },
+        attributes: [
+          'status',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        group: ['status'],
+        raw: true
+      }),
+      DropMint.count({
+        where: { dropId: drop.id },
+        distinct: true,
+        col: 'minterWalletAddress'
+      })
+    ]);
+
+    const nftCounts = {
+      available: 0,
+      reserved: 0,
+      minted: 0
+    };
+    nftStatusCounts.forEach(sc => {
+      nftCounts[sc.status] = parseInt(sc.count);
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        // Launch details
+        launchDetails: {
+          id: drop.id,
+          name: drop.name,
+          description: drop.description,
+          image: drop.image,
+          bannerImage: drop.bannerImage,
+          taxonId: drop.taxonId,
+          creator: drop.creator,
+          collection: drop.collection,
+          totalSupply: drop.totalSupply
+        },
+        // Pricing
+        pricing: {
+          pricePerNft: drop.pricePerNft,
+          royaltyPercentage: drop.royaltyPercentage,
+          limitPerWallet: drop.limitPerWallet
+        },
+        // Flags
+        flags: {
+          isBurnable: drop.isBurnable,
+          isTransferable: drop.isTransferable,
+          isOnlyXrp: drop.isOnlyXrp,
+          isMutable: drop.isMutable
+        },
+        // Schedule
+        schedule: {
+          startDate: drop.startDate,
+          endDate: drop.endDate
+        },
+        // Authorization
+        authorization: {
+          authorizedMinterWallet: drop.authorizedMinterWallet
+        },
+        // Platform fees
+        platformFees: drop.getFeesBreakdown(),
+        platformFeesStatus: drop.platformFeesStatus,
+        platformFeesTransactionHash: drop.platformFeesTransactionHash,
+        // Dashboard
+        dashboard: {
+          status: drop.status,
+          isMintingEnabled: drop.isMintingEnabled,
+          isAllowlistEnabled: drop.isAllowlistEnabled,
+          isFreeMint: drop.isFreeMint,
+          mintedCount: drop.mintedCount,
+          totalRevenue: drop.totalRevenue,
+          totalRevenueXrp: (Number(drop.totalRevenue) / 1000000).toFixed(6),
+          allowlistCount,
+          uniqueMintersCount,
+          nftCounts
+        },
+        // Computed
+        remainingSupply: drop.getRemainingSupply(),
+        isCurrentlyActive: drop.isCurrentlyActive(),
+        isSoldOut: drop.isSoldOut()
+      }, 'Drop dashboard retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createDrop,
   updateDrop,
@@ -2503,5 +2629,6 @@ module.exports = {
   updatePlatformFeesPayment,
   authorizeMinterWallet,
   saveDropSettings,
-  getDropDashboard
+  getDropDashboard,
+  getDropDashboardByTaxon
 };
