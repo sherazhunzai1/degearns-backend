@@ -8,8 +8,8 @@ module.exports = (sequelize, DataTypes) => {
     },
     collectionId: {
       type: DataTypes.UUID,
-      allowNull: false,
-      comment: 'Reference to the collection this drop belongs to'
+      allowNull: true,
+      comment: 'Optional reference to existing collection (Drop can be standalone)'
     },
     creatorWalletAddress: {
       type: DataTypes.STRING(100),

@@ -4094,12 +4094,11 @@ Creating a drop follows a 3-step process:
 
 **POST** `/drops`
 
-Create a new drop with basic information only. Total supply will be calculated automatically when NFTs are uploaded in Step 2.
+Create a new drop (standalone collection for bulk NFT minting). Total supply will be calculated automatically when NFTs are uploaded in Step 2.
 
 **Request Body:**
 ```json
 {
-  "collectionId": "uuid",
   "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
   "name": "My NFT Drop",
   "description": "Description of the drop",
@@ -4114,13 +4113,12 @@ Create a new drop with basic information only. Total supply will be calculated a
 ```
 
 **Required Fields:**
-- `collectionId` - The collection this drop belongs to
 - `creatorWalletAddress` - Creator's wallet address
 - `name` - Drop name/title
+- `taxonId` - Taxon ID for NFT minting on XRPL
 
 **Optional Fields:**
 - `description`, `image`, `bannerImage`
-- `taxonId` - Defaults to collection's taxon if not provided
 - Social links: `websiteUrl`, `twitterUrl`, `discordUrl`, `telegramUrl`
 
 **Response (201):**
@@ -4131,13 +4129,11 @@ Create a new drop with basic information only. Total supply will be calculated a
   "message": "Drop created successfully. Next step: Upload bulk NFTs",
   "data": {
     "id": "uuid",
-    "collectionId": "uuid",
     "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
     "name": "My NFT Drop",
     "taxonId": 12345,
     "totalSupply": 0,
     "status": "draft",
-    "collection": { "id": "uuid", "name": "Collection Name", "taxon": 12345 },
     "creator": { "walletAddress": "...", "username": "user" },
     "nextStep": "Upload NFTs using POST /drops/:id/nfts"
   }
