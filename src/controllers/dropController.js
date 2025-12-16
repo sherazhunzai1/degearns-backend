@@ -1190,10 +1190,32 @@ const getCreatorDrops = async (req, res, next) => {
 
     const { count, rows: drops } = await Drop.findAndCountAll({
       where,
+      attributes: [
+        'id',
+        'name',
+        'description',
+        'image',
+        'bannerImage',
+        'taxonId',
+        'creatorWalletAddress',
+        'totalSupply',
+        'mintedCount',
+        'pricePerNft',
+        'royaltyPercentage',
+        'status',
+        'platformFeesStatus',
+        'isMintingEnabled',
+        'isAllowlistEnabled',
+        'isFreeMint',
+        'startDate',
+        'endDate',
+        'createdAt',
+        'updatedAt'
+      ],
       include: [
         {
-          association: 'collection',
-          attributes: ['id', 'name', 'slug', 'image', 'taxon']
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
         }
       ],
       order: [['createdAt', 'DESC']],
