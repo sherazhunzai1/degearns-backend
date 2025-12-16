@@ -2478,7 +2478,9 @@ const getDropDashboard = async (req, res, next) => {
         },
         // Authorization
         authorization: {
-          authorizedMinterWallet: drop.authorizedMinterWallet
+          authorizedMinterWallet: drop.authorizedMinterWallet,
+          minterAuthorizationTxHash: drop.minterAuthorizationTxHash,
+          isAuthorized: !!drop.authorizedMinterWallet
         },
         // Platform fees
         platformFees: drop.getFeesBreakdown(),
@@ -2608,7 +2610,9 @@ const getDropDashboardByTaxon = async (req, res, next) => {
         },
         // Authorization
         authorization: {
-          authorizedMinterWallet: drop.authorizedMinterWallet
+          authorizedMinterWallet: drop.authorizedMinterWallet,
+          minterAuthorizationTxHash: drop.minterAuthorizationTxHash,
+          isAuthorized: !!drop.authorizedMinterWallet
         },
         // Platform fees
         platformFees: drop.getFeesBreakdown(),
@@ -2704,6 +2708,61 @@ const updatePlatformFeesPaymentByTaxon = async (req, res, next) => {
   }
 };
 
+/**
+ * Authorize minter wallet by taxonId
+ */
+const authorizeMinterWalletByTaxon = async (req, res, next) => {
+  try {
+    const { taxonId } = req.params;
+    const { walletAddress, minterWallet, transactionHash } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!minterWallet) {
+      throw new ApiError(400, 'Minter wallet address is required');
+    }
+
+    // Find drop by taxonId and creator wallet
+    const drop = await Drop.findOne({
+      where: {
+        taxonId: parseInt(taxonId),
+        creatorWalletAddress: walletAddress
+      }
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found with this taxonId or you do not have permission');
+    }
+
+    const updateData = {
+      authorizedMinterWallet: minterWallet
+    };
+
+    // Optionally store the authorization transaction hash
+    if (transactionHash) {
+      updateData.minterAuthorizationTxHash = transactionHash;
+    }
+
+    await drop.update(updateData);
+
+    logger.info(`Authorized minter wallet for drop (taxonId: ${taxonId}): ${minterWallet}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        dropId: drop.id,
+        taxonId: drop.taxonId,
+        authorizedMinterWallet: minterWallet,
+        minterAuthorizationTxHash: transactionHash || null,
+        isAuthorized: true
+      }, 'Minter wallet authorized successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createDrop,
   updateDrop,
@@ -2742,5 +2801,6 @@ module.exports = {
   saveDropSettings,
   getDropDashboard,
   getDropDashboardByTaxon,
-  updatePlatformFeesPaymentByTaxon
+  updatePlatformFeesPaymentByTaxon,
+  authorizeMinterWalletByTaxon
 };
