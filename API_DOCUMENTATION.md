@@ -4078,11 +4078,23 @@ const profile = await fetch(
 
 NFT Drop system for scheduled minting. Drops allow creators to configure and launch NFT minting events with features like allowlists, scheduling, and wallet limits.
 
-### Create Drop
+## Drop Creation Workflow (3 Steps)
+
+Creating a drop follows a 3-step process:
+
+| Step | Endpoint | Description |
+|------|----------|-------------|
+| **Step 1** | `POST /drops` | Create drop with basic info (title, description, image, taxonId, social links) |
+| **Step 2** | `POST /drops/:id/nfts` | Upload bulk NFTs (auto-calculates totalSupply) |
+| **Step 3** | `PUT /drops/:id/settings` | Configure all settings (price, royalty, flags, schedule, toggles) |
+
+---
+
+### Step 1: Create Drop (Basic Info)
 
 **POST** `/drops`
 
-Create a new drop for a collection.
+Create a new drop with basic information only. Total supply will be calculated automatically when NFTs are uploaded in Step 2.
 
 **Request Body:**
 ```json
@@ -4093,17 +4105,70 @@ Create a new drop for a collection.
   "description": "Description of the drop",
   "image": "https://example.com/drop-image.png",
   "bannerImage": "https://example.com/banner.png",
-  "royaltyPercentage": 5.00,
-  "pricePerNft": "10000000",
-  "limitPerWallet": 5,
-  "totalSupply": 1000,
-  "isBurnable": true,
-  "isTransferable": true,
-  "isOnlyXrp": false,
-  "isMutable": false,
-  "startDate": "2024-06-01T00:00:00.000Z",
-  "endDate": "2024-06-30T23:59:59.000Z",
-  "metadata": {}
+  "taxonId": 12345,
+  "websiteUrl": "https://myproject.com",
+  "twitterUrl": "https://twitter.com/myproject",
+  "discordUrl": "https://discord.gg/myproject",
+  "telegramUrl": "https://t.me/myproject"
+}
+```
+
+**Required Fields:**
+- `collectionId` - The collection this drop belongs to
+- `creatorWalletAddress` - Creator's wallet address
+- `name` - Drop name/title
+
+**Optional Fields:**
+- `description`, `image`, `bannerImage`
+- `taxonId` - Defaults to collection's taxon if not provided
+- Social links: `websiteUrl`, `twitterUrl`, `discordUrl`, `telegramUrl`
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "message": "Drop created successfully. Next step: Upload bulk NFTs",
+  "data": {
+    "id": "uuid",
+    "collectionId": "uuid",
+    "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+    "name": "My NFT Drop",
+    "taxonId": 12345,
+    "totalSupply": 0,
+    "status": "draft",
+    "collection": { "id": "uuid", "name": "Collection Name", "taxon": 12345 },
+    "creator": { "walletAddress": "...", "username": "user" },
+    "nextStep": "Upload NFTs using POST /drops/:id/nfts"
+  }
+}
+```
+
+---
+
+### Step 2: Upload Bulk NFTs
+
+**POST** `/drops/:id/nfts`
+
+Upload NFTs to the drop. This automatically calculates `totalSupply` based on the number of NFTs uploaded.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "nfts": [
+    {
+      "name": "NFT #1",
+      "description": "Description",
+      "image": "ipfs://...",
+      "attributes": [{ "trait_type": "Rarity", "value": "Rare" }]
+    },
+    {
+      "name": "NFT #2",
+      "description": "Description",
+      "image": "ipfs://..."
+    }
+  ]
 }
 ```
 
@@ -4112,19 +4177,52 @@ Create a new drop for a collection.
 {
   "statusCode": 201,
   "success": true,
-  "message": "Drop created successfully",
+  "message": "NFTs uploaded successfully. Next step: Configure drop settings",
   "data": {
-    "id": "uuid",
-    "collectionId": "uuid",
-    "creatorWalletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
-    "name": "My NFT Drop",
-    "status": "draft",
-    "paymentStatus": "pending",
-    "collection": { "id": "uuid", "name": "Collection Name", "slug": "collection-name", "image": "url", "taxon": 12345 },
-    "creator": { "walletAddress": "...", "username": "user", "profileImage": null, "isVerified": false }
+    "uploaded": 100,
+    "skipped": 0,
+    "totalSupply": 100,
+    "platformFees": {
+      "platformFeePerNft": "30000",
+      "platformFeePerNftXrp": "0.030000",
+      "setupFee": "3000000",
+      "setupFeeXrp": "3.000000",
+      "totalPlatformFees": "6000000",
+      "totalPlatformFeesXrp": "6.000000"
+    },
+    "nextStep": "Configure drop settings using PUT /drops/:id/settings"
   }
 }
 ```
+
+---
+
+### Step 3: Configure Drop Settings
+
+**PUT** `/drops/:id/settings`
+
+Configure all drop settings including price, royalty, flags, schedule, and dashboard toggles.
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rN7n7otQDd6FczFgLdlqtyMVrn3HMfDr8X",
+  "pricePerNft": "10000000",
+  "royaltyPercentage": 5,
+  "limitPerWallet": 5,
+  "isBurnable": true,
+  "isTransferable": true,
+  "isOnlyXrp": false,
+  "isMutable": false,
+  "startDate": "2024-12-25T00:00:00.000Z",
+  "endDate": "2024-12-31T23:59:59.000Z",
+  "isMintingEnabled": false,
+  "isAllowlistEnabled": false,
+  "isFreeMint": false
+}
+```
+
+All fields are optional - only send what you want to update.
 
 ---
 

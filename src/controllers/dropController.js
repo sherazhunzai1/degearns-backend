@@ -5,7 +5,9 @@ const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 
 /**
- * Create a new drop for a collection
+ * Step 1: Create a new drop with basic info
+ * Only requires: name, description, image, taxonId, social links
+ * Total supply will be calculated automatically when NFTs are uploaded (Step 2)
  */
 const createDrop = async (req, res, next) => {
   try {
@@ -16,16 +18,12 @@ const createDrop = async (req, res, next) => {
       description,
       image,
       bannerImage,
-      royaltyPercentage,
-      pricePerNft,
-      limitPerWallet,
-      totalSupply,
-      isBurnable,
-      isTransferable,
-      isOnlyXrp,
-      isMutable,
-      startDate,
-      endDate,
+      taxonId,
+      // Social links
+      websiteUrl,
+      twitterUrl,
+      discordUrl,
+      telegramUrl,
       metadata
     } = req.body;
 
@@ -39,10 +37,6 @@ const createDrop = async (req, res, next) => {
 
     if (!name) {
       throw new ApiError(400, 'Drop name is required');
-    }
-
-    if (!totalSupply || totalSupply <= 0) {
-      throw new ApiError(400, 'Total supply must be greater than 0');
     }
 
     // Verify collection exists and belongs to creator
@@ -69,15 +63,8 @@ const createDrop = async (req, res, next) => {
       throw new ApiError(400, 'Collection already has an active or scheduled drop');
     }
 
-    // Validate schedule if provided
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      if (end <= start) {
-        throw new ApiError(400, 'End date must be after start date');
-      }
-    }
-
+    // Create drop with basic info only
+    // totalSupply will be 0 initially and calculated when NFTs are uploaded
     const drop = await Drop.create({
       collectionId,
       creatorWalletAddress,
@@ -85,16 +72,14 @@ const createDrop = async (req, res, next) => {
       description,
       image: image || collection.image,
       bannerImage: bannerImage || collection.bannerImage,
-      royaltyPercentage: royaltyPercentage ?? collection.royaltyPercentage ?? 0,
-      pricePerNft: pricePerNft || '0',
-      limitPerWallet,
-      totalSupply,
-      isBurnable: isBurnable ?? true,
-      isTransferable: isTransferable ?? true,
-      isOnlyXrp: isOnlyXrp ?? false,
-      isMutable: isMutable ?? false,
-      startDate: startDate || null,
-      endDate: endDate || null,
+      taxonId: taxonId || collection.taxon,
+      // Social links
+      websiteUrl,
+      twitterUrl,
+      discordUrl,
+      telegramUrl,
+      // Default values - will be updated in Step 3
+      totalSupply: 0,
       status: 'draft',
       metadata
     });
@@ -116,7 +101,10 @@ const createDrop = async (req, res, next) => {
     });
 
     res.status(201).json(
-      new ApiResponse(201, createdDrop, 'Drop created successfully')
+      new ApiResponse(201, {
+        ...createdDrop.toJSON(),
+        nextStep: 'Upload NFTs using POST /drops/:id/nfts'
+      }, 'Drop created successfully. Next step: Upload bulk NFTs')
     );
   } catch (error) {
     next(error);
@@ -1419,19 +1407,29 @@ const uploadDropNfts = async (req, res, next) => {
 
     logger.info(`Uploaded ${createdNfts.length} NFTs to drop ${id} by ${walletAddress}`);
 
+    // Calculate platform fees based on new total supply
+    const feesBreakdown = drop.getFeesBreakdown();
+
     res.status(201).json(
       new ApiResponse(201, {
         uploaded: createdNfts.length,
         skipped: skippedNfts.length,
         totalSupply: totalNfts,
-        skippedDetails: skippedNfts
-      }, 'NFTs uploaded successfully')
+        skippedDetails: skippedNfts,
+        platformFees: feesBreakdown,
+        nextStep: 'Configure drop settings using PUT /drops/:id/settings'
+      }, 'NFTs uploaded successfully. Next step: Configure drop settings')
     );
   } catch (error) {
     await transaction.rollback();
     next(error);
   }
 };
+
+/**
+ * Step 2: Upload bulk NFTs to drop
+ * Automatically calculates totalSupply based on number of NFTs uploaded
+ */
 
 /**
  * Get NFTs for a drop
