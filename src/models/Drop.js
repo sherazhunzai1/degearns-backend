@@ -36,6 +36,33 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       comment: 'Drop banner image URL'
     },
+    // Taxon ID for NFT minting
+    taxonId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Taxon ID for NFT minting on XRPL'
+    },
+    // Social links
+    websiteUrl: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Project website URL'
+    },
+    twitterUrl: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Twitter/X profile URL'
+    },
+    discordUrl: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Discord server URL'
+    },
+    telegramUrl: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+      comment: 'Telegram group URL'
+    },
     // Pricing and limits
     royaltyPercentage: {
       type: DataTypes.DECIMAL(5, 2),
