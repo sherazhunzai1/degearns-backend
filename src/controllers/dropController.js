@@ -1223,12 +1223,53 @@ const getCreatorDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
-    const dropsWithStats = drops.map(drop => ({
-      ...drop.toJSON(),
-      remainingSupply: drop.getRemainingSupply(),
-      isCurrentlyActive: drop.isCurrentlyActive(),
-      isSoldOut: drop.isSoldOut()
-    }));
+    const dropsWithStats = drops.map(drop => {
+      // Determine current workflow step
+      let currentStep;
+      let stepNumber;
+      let stepDescription;
+      let redirectUrl;
+
+      if (drop.totalSupply === 0) {
+        // No NFTs uploaded yet - Step 2
+        currentStep = 'upload_nfts';
+        stepNumber = 2;
+        stepDescription = 'Upload bulk NFTs to this drop';
+        redirectUrl = `/drops/${drop.taxonId}/upload-nfts`;
+      } else if (drop.status === 'draft') {
+        // NFTs uploaded but not launched - Step 3
+        currentStep = 'configure_settings';
+        stepNumber = 3;
+        stepDescription = 'Configure settings and launch the drop';
+        redirectUrl = `/drops/${drop.taxonId}/dashboard`;
+      } else {
+        // Drop is active, scheduled, paused, ended, or sold_out - Completed
+        currentStep = 'completed';
+        stepNumber = 4;
+        stepDescription = 'Drop setup completed';
+        redirectUrl = `/drops/${drop.taxonId}/dashboard`;
+      }
+
+      return {
+        ...drop.toJSON(),
+        remainingSupply: drop.getRemainingSupply(),
+        isCurrentlyActive: drop.isCurrentlyActive(),
+        isSoldOut: drop.isSoldOut(),
+        // Workflow step information
+        workflow: {
+          currentStep,
+          stepNumber,
+          stepDescription,
+          redirectUrl,
+          steps: {
+            1: { name: 'create_drop', label: 'Create Drop', completed: true },
+            2: { name: 'upload_nfts', label: 'Upload NFTs', completed: drop.totalSupply > 0 },
+            3: { name: 'configure_settings', label: 'Configure & Launch', completed: drop.status !== 'draft' },
+            4: { name: 'completed', label: 'Live', completed: ['active', 'scheduled', 'paused', 'ended', 'sold_out'].includes(drop.status) }
+          }
+        }
+      };
+    });
 
     res.status(200).json(
       new ApiResponse(200, {
