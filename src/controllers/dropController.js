@@ -1,4 +1,4 @@
-const { Drop, DropNft, DropAllowedWallet, DropMint, Collection, User, sequelize } = require('../models');
+const { Drop, DropNft, DropAllowedWallet, DropMint, Collection, User, AdminWallet, sequelize } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -2542,8 +2542,8 @@ const getDropDashboardByTaxon = async (req, res, next) => {
       throw new ApiError(404, 'Drop not found with this taxonId or you do not have permission');
     }
 
-    // Get various counts
-    const [allowlistCount, nftStatusCounts, uniqueMintersCount] = await Promise.all([
+    // Get various counts and platform fees wallet
+    const [allowlistCount, nftStatusCounts, uniqueMintersCount, platformFeesWallet] = await Promise.all([
       DropAllowedWallet.count({ where: { dropId: drop.id } }),
       DropNft.findAll({
         where: { dropId: drop.id },
@@ -2558,6 +2558,10 @@ const getDropDashboardByTaxon = async (req, res, next) => {
         where: { dropId: drop.id },
         distinct: true,
         col: 'minterWalletAddress'
+      }),
+      AdminWallet.findOne({
+        where: { type: 'platformFees', isActive: true },
+        attributes: ['walletAddress', 'label']
       })
     ]);
 
@@ -2611,6 +2615,10 @@ const getDropDashboardByTaxon = async (req, res, next) => {
         platformFeesStatus: drop.platformFeesStatus,
         platformFeesTransactionHash: drop.platformFeesTransactionHash,
         feesIsPaid: drop.platformFeesStatus === 'paid',
+        platformFeesWallet: platformFeesWallet ? {
+          walletAddress: platformFeesWallet.walletAddress,
+          label: platformFeesWallet.label || 'Platform Fees Wallet'
+        } : null,
         // Dashboard
         dashboard: {
           status: drop.status,
