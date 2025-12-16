@@ -5,14 +5,14 @@ const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 
 /**
- * Step 1: Create a new drop with basic info
- * Only requires: name, description, image, taxonId, social links
+ * Step 1: Create a new drop (standalone collection for bulk NFT minting)
+ * Required: creatorWalletAddress, name, taxonId
+ * Optional: description, image, bannerImage, social links
  * Total supply will be calculated automatically when NFTs are uploaded (Step 2)
  */
 const createDrop = async (req, res, next) => {
   try {
     const {
-      collectionId,
       creatorWalletAddress,
       name,
       description,
@@ -27,10 +27,6 @@ const createDrop = async (req, res, next) => {
       metadata
     } = req.body;
 
-    if (!collectionId) {
-      throw new ApiError(400, 'Collection ID is required');
-    }
-
     if (!creatorWalletAddress) {
       throw new ApiError(400, 'Creator wallet address is required');
     }
@@ -39,40 +35,34 @@ const createDrop = async (req, res, next) => {
       throw new ApiError(400, 'Drop name is required');
     }
 
-    // Verify collection exists and belongs to creator
-    const collection = await Collection.findByPk(collectionId);
-    if (!collection) {
-      throw new ApiError(404, 'Collection not found');
+    if (!taxonId) {
+      throw new ApiError(400, 'Taxon ID is required for NFT minting');
     }
 
-    if (collection.creatorWalletAddress !== creatorWalletAddress) {
-      throw new ApiError(403, 'You can only create drops for your own collections');
-    }
-
-    // Check if there's already an active drop for this collection
-    const existingActiveDrop = await Drop.findOne({
+    // Check if creator already has a draft drop with same taxonId
+    const existingDrop = await Drop.findOne({
       where: {
-        collectionId,
+        creatorWalletAddress,
+        taxonId,
         status: {
-          [Op.in]: ['scheduled', 'active']
+          [Op.in]: ['draft', 'scheduled', 'active']
         }
       }
     });
 
-    if (existingActiveDrop) {
-      throw new ApiError(400, 'Collection already has an active or scheduled drop');
+    if (existingDrop) {
+      throw new ApiError(400, 'You already have an active drop with this taxon ID');
     }
 
-    // Create drop with basic info only
+    // Create drop as standalone entity (no collectionId required)
     // totalSupply will be 0 initially and calculated when NFTs are uploaded
     const drop = await Drop.create({
-      collectionId,
       creatorWalletAddress,
       name,
       description,
-      image: image || collection.image,
-      bannerImage: bannerImage || collection.bannerImage,
-      taxonId: taxonId || collection.taxon,
+      image,
+      bannerImage,
+      taxonId,
       // Social links
       websiteUrl,
       twitterUrl,
@@ -84,15 +74,11 @@ const createDrop = async (req, res, next) => {
       metadata
     });
 
-    logger.info(`Drop created: ${drop.name} for collection ${collectionId} by ${creatorWalletAddress}`);
+    logger.info(`Drop created: ${drop.name} (taxonId: ${taxonId}) by ${creatorWalletAddress}`);
 
-    // Fetch drop with associations
+    // Fetch drop with creator association
     const createdDrop = await Drop.findByPk(drop.id, {
       include: [
-        {
-          association: 'collection',
-          attributes: ['id', 'name', 'slug', 'image', 'taxon']
-        },
         {
           association: 'creator',
           attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
