@@ -135,6 +135,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       comment: 'Wallet address authorized to perform minting operations'
     },
+    minterAuthorizationTxHash: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Transaction hash for minter authorization on XRPL'
+    },
     // Platform fees
     platformFeePerNft: {
       type: DataTypes.STRING(50),
