@@ -5140,3 +5140,479 @@ available → reserved → minted
 - **available**: NFT is ready to be minted
 - **reserved**: NFT is reserved for a pending mint transaction
 - **minted**: NFT has been minted on the blockchain
+
+---
+
+## TaxonId-Based Endpoints
+
+These endpoints use `taxonId` instead of drop UUID for easier frontend integration.
+
+### Upload NFTs by TaxonId
+
+Upload bulk NFTs to a drop using its taxonId.
+
+**Endpoint:** `POST /drops/taxon/:taxonId/nfts`
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rCreatorWallet...",
+  "nfts": [
+    {
+      "name": "NFT #1",
+      "image": "https://example.com/nft1.png",
+      "description": "Description of the NFT",
+      "attributes": [
+        { "trait_type": "Color", "value": "Red" },
+        { "trait_type": "Rarity", "value": "Rare" }
+      ],
+      "metadataUri": "ipfs://..."
+    }
+  ]
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "data": {
+    "dropId": "uuid",
+    "taxonId": 12345,
+    "uploaded": 100,
+    "skipped": 0,
+    "totalSupply": 100,
+    "skippedDetails": [],
+    "platformFees": {
+      "platformFeePerNft": "30000",
+      "platformFeePerNftXrp": "0.030000",
+      "setupFee": "3000000",
+      "setupFeeXrp": "3.000000",
+      "totalSupply": 100,
+      "totalPlatformFees": "6000000",
+      "totalPlatformFeesXrp": "6.000000"
+    },
+    "nextStep": "Configure drop settings using PUT /drops/:id/settings"
+  },
+  "message": "NFTs uploaded successfully. Next step: Configure drop settings"
+}
+```
+
+---
+
+### Get Drop Dashboard by TaxonId
+
+Fetch complete drop dashboard data using taxonId.
+
+**Endpoint:** `GET /drops/taxon/:taxonId/dashboard?walletAddress=rCreatorWallet`
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "launchDetails": {
+      "id": "uuid",
+      "name": "My NFT Collection",
+      "description": "Collection description",
+      "image": "https://...",
+      "bannerImage": "https://...",
+      "taxonId": 12345,
+      "creator": {
+        "walletAddress": "rCreator...",
+        "username": "creator",
+        "profileImage": "https://...",
+        "isVerified": true
+      },
+      "totalSupply": 100
+    },
+    "pricing": {
+      "pricePerNft": "1000000",
+      "royaltyPercentage": 5,
+      "limitPerWallet": 10
+    },
+    "flags": {
+      "isBurnable": true,
+      "isTransferable": true,
+      "isOnlyXrp": true,
+      "isMutable": false
+    },
+    "schedule": {
+      "startDate": "2025-01-15T00:00:00Z",
+      "endDate": "2025-02-15T00:00:00Z"
+    },
+    "authorization": {
+      "authorizedMinterWallet": "rMinter...",
+      "minterAuthorizationTxHash": "ABC123...",
+      "isAuthorized": true
+    },
+    "platformFees": {
+      "platformFeePerNft": "30000",
+      "setupFee": "3000000",
+      "totalPlatformFees": "6000000",
+      "totalPlatformFeesXrp": "6.000000"
+    },
+    "platformFeesStatus": "paid",
+    "platformFeesTransactionHash": "XYZ789...",
+    "feesIsPaid": true,
+    "platformFeesWallet": {
+      "walletAddress": "rPlatformWallet...",
+      "label": "Platform Fees Wallet"
+    },
+    "dashboard": {
+      "status": "active",
+      "isMintingEnabled": true,
+      "isAllowlistEnabled": false,
+      "isFreeMint": false,
+      "mintedCount": 25,
+      "totalRevenue": "25000000",
+      "totalRevenueXrp": "25.000000",
+      "allowlistCount": 50,
+      "uniqueMintersCount": 20,
+      "nftCounts": {
+        "available": 70,
+        "reserved": 5,
+        "minted": 25
+      }
+    },
+    "remainingSupply": 75,
+    "isCurrentlyActive": true,
+    "isSoldOut": false
+  }
+}
+```
+
+---
+
+### Update Platform Fees Payment by TaxonId
+
+Update platform fees payment status using taxonId.
+
+**Endpoint:** `PUT /drops/taxon/:taxonId/platform-fees`
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rCreatorWallet...",
+  "transactionHash": "ABC123...",
+  "status": "paid"
+}
+```
+
+**Valid Status Values:** `pending`, `paid`, `failed`, `refunded`
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "dropId": "uuid",
+    "taxonId": 12345,
+    "platformFeesStatus": "paid",
+    "platformFeesTransactionHash": "ABC123...",
+    "feesIsPaid": true,
+    "feesBreakdown": {
+      "platformFeePerNft": "30000",
+      "setupFee": "3000000",
+      "totalPlatformFees": "6000000",
+      "totalPlatformFeesXrp": "6.000000"
+    }
+  },
+  "message": "Platform fees payment updated successfully"
+}
+```
+
+---
+
+### Authorize Minter Wallet by TaxonId
+
+Authorize a wallet for minting operations using taxonId.
+
+**Endpoint:** `PUT /drops/taxon/:taxonId/authorize-minter`
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rCreatorWallet...",
+  "minterWallet": "rMinterWallet...",
+  "transactionHash": "ABC123..."
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "dropId": "uuid",
+    "taxonId": 12345,
+    "authorizedMinterWallet": "rMinterWallet...",
+    "minterAuthorizationTxHash": "ABC123...",
+    "isAuthorized": true
+  },
+  "message": "Minter wallet authorized successfully"
+}
+```
+
+---
+
+## Admin Wallet Endpoints
+
+Manage admin wallets for various platform purposes (platform fees, royalties, etc.).
+
+### Wallet Types
+
+| Type | Description |
+|------|-------------|
+| `platformFees` | Wallet to receive platform fees from drop creators |
+| `royalties` | Wallet for royalty collection |
+| `marketplace` | Wallet for marketplace transactions |
+| `treasury` | Treasury/reserve wallet |
+| `other` | Other purposes |
+
+---
+
+### Create Admin Wallet
+
+**Endpoint:** `POST /admin-wallets`
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rAdminWallet...",
+  "type": "platformFees",
+  "label": "Platform Fees Wallet",
+  "description": "Main wallet for receiving platform fees from drop creators"
+}
+```
+
+**Response (201):**
+```json
+{
+  "statusCode": 201,
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "walletAddress": "rAdminWallet...",
+    "type": "platformFees",
+    "label": "Platform Fees Wallet",
+    "description": "Main wallet for receiving platform fees",
+    "isActive": true,
+    "createdAt": "2025-01-15T00:00:00Z",
+    "updatedAt": "2025-01-15T00:00:00Z"
+  },
+  "message": "Admin wallet created successfully"
+}
+```
+
+**Note:** Creating a new wallet of the same type will automatically deactivate the previous active wallet of that type.
+
+---
+
+### Get All Admin Wallets
+
+**Endpoint:** `GET /admin-wallets`
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| type | string | Filter by wallet type |
+| isActive | boolean | Filter by active status |
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": [
+    {
+      "id": "uuid",
+      "walletAddress": "rAdminWallet...",
+      "type": "platformFees",
+      "label": "Platform Fees Wallet",
+      "isActive": true,
+      ...
+    }
+  ],
+  "message": "Admin wallets retrieved successfully"
+}
+```
+
+---
+
+### Get Admin Wallet by ID
+
+**Endpoint:** `GET /admin-wallets/:id`
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "walletAddress": "rAdminWallet...",
+    "type": "platformFees",
+    "label": "Platform Fees Wallet",
+    "description": "...",
+    "isActive": true,
+    "metadata": null,
+    "createdAt": "...",
+    "updatedAt": "..."
+  },
+  "message": "Admin wallet retrieved successfully"
+}
+```
+
+---
+
+### Get Active Admin Wallet by Type
+
+**Endpoint:** `GET /admin-wallets/type/:type`
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "walletAddress": "rAdminWallet...",
+    "type": "platformFees",
+    "label": "Platform Fees Wallet",
+    "isActive": true,
+    ...
+  },
+  "message": "Admin wallet retrieved successfully"
+}
+```
+
+---
+
+### Update Admin Wallet
+
+**Endpoint:** `PUT /admin-wallets/:id`
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rNewWallet...",
+  "label": "Updated Label",
+  "description": "Updated description",
+  "isActive": true
+}
+```
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "walletAddress": "rNewWallet...",
+    "type": "platformFees",
+    "label": "Updated Label",
+    "isActive": true,
+    ...
+  },
+  "message": "Admin wallet updated successfully"
+}
+```
+
+---
+
+### Delete Admin Wallet
+
+**Endpoint:** `DELETE /admin-wallets/:id`
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": null,
+  "message": "Admin wallet deleted successfully"
+}
+```
+
+---
+
+### Get Platform Fees Wallet (Public)
+
+Public endpoint for frontend to get the platform fees wallet address.
+
+**Endpoint:** `GET /admin-wallets/platform-fees`
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "walletAddress": "rPlatformWallet...",
+    "label": "Platform Fees Wallet"
+  },
+  "message": "Platform fees wallet retrieved successfully"
+}
+```
+
+---
+
+## Creator Drops with Workflow Status
+
+The `GET /drops/creator/:walletAddress` endpoint now includes workflow step information for each drop.
+
+**Endpoint:** `GET /drops/creator/:walletAddress`
+
+**Response includes workflow object:**
+```json
+{
+  "drops": [
+    {
+      "id": "uuid",
+      "name": "My Drop",
+      "taxonId": 12345,
+      "totalSupply": 0,
+      "status": "draft",
+      ...
+      "workflow": {
+        "currentStep": "upload_nfts",
+        "stepNumber": 2,
+        "stepDescription": "Upload bulk NFTs to this drop",
+        "redirectUrl": "/drops/12345/upload-nfts",
+        "steps": {
+          "1": { "name": "create_drop", "label": "Create Drop", "completed": true },
+          "2": { "name": "upload_nfts", "label": "Upload NFTs", "completed": false },
+          "3": { "name": "configure_settings", "label": "Configure & Launch", "completed": false },
+          "4": { "name": "completed", "label": "Live", "completed": false }
+        }
+      }
+    }
+  ]
+}
+```
+
+### Workflow Steps
+
+| Step | Name | Condition | Redirect URL |
+|------|------|-----------|--------------|
+| 1 | `create_drop` | Always completed (drop exists) | - |
+| 2 | `upload_nfts` | `totalSupply = 0` | `/drops/{taxonId}/upload-nfts` |
+| 3 | `configure_settings` | `totalSupply > 0` AND `status = 'draft'` | `/drops/{taxonId}/dashboard` |
+| 4 | `completed` | `status` in `[active, scheduled, paused, ended, sold_out]` | `/drops/{taxonId}/dashboard` |
+
+---
+
+## TaxonId-Based Routes Summary
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/drops/taxon/:taxonId/nfts` | Upload bulk NFTs to drop |
+| GET | `/drops/taxon/:taxonId/dashboard` | Get complete dashboard data |
+| PUT | `/drops/taxon/:taxonId/platform-fees` | Update fees payment status |
+| PUT | `/drops/taxon/:taxonId/authorize-minter` | Authorize minter wallet |
