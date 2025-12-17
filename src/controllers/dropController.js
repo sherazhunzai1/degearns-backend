@@ -2651,7 +2651,7 @@ const getDropDetailsByTaxon = async (req, res, next) => {
       include: [
         {
           association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'bannerImage', 'bio', 'isVerified']
+          attributes: ['walletAddress', 'username', 'profileImage', 'coverImage', 'bio', 'isVerified']
         }
       ]
     });
@@ -2701,7 +2701,7 @@ const getDropDetailsByTaxon = async (req, res, next) => {
         walletAddress: drop.creator.walletAddress,
         username: drop.creator.username,
         profileImage: drop.creator.profileImage,
-        bannerImage: drop.creator.bannerImage,
+        coverImage: drop.creator.coverImage,
         bio: drop.creator.bio,
         isVerified: drop.creator.isVerified
       } : null,

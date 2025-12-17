@@ -5312,7 +5312,7 @@ Fetch basic drop details for public view using taxonId. This is a lighter endpoi
       "walletAddress": "rCreator...",
       "username": "creator",
       "profileImage": "https://...",
-      "bannerImage": "https://...",
+      "coverImage": "https://...",
       "bio": "Creator bio",
       "isVerified": true
     },
