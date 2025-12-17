@@ -7,6 +7,7 @@ router.post('/', dropController.createDrop);
 router.get('/', dropController.getDrops);
 router.get('/active', dropController.getActiveDrops);
 router.get('/upcoming', dropController.getUpcomingDrops);
+router.get('/explore', dropController.getExploreDrops);
 router.get('/:id', dropController.getDropById);
 router.put('/:id', dropController.updateDrop);
 router.delete('/:id', dropController.deleteDrop);
