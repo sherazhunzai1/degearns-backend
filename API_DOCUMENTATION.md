@@ -5318,6 +5318,9 @@ Fetch basic drop details for public view using taxonId. This is a lighter endpoi
     },
     "floorPrice": "5000000",
     "floorPriceXrp": "5.000000",
+    "mintPrice": "5000000",
+    "mintPriceXrp": "5.000000",
+    "isFreeMint": false,
     "items": 1000,
     "totalSupply": 1000,
     "mintedCount": 250,
@@ -5338,6 +5341,9 @@ Fetch basic drop details for public view using taxonId. This is a lighter endpoi
 |-------|-------------|
 | `floorPrice` | Price per NFT in drops |
 | `floorPriceXrp` | Price per NFT in XRP |
+| `mintPrice` | Minting price per NFT in drops |
+| `mintPriceXrp` | Minting price per NFT in XRP |
+| `isFreeMint` | Whether minting is free |
 | `items` | Total supply of NFTs |
 | `volume` | Total volume from mints in drops |
 | `volumeXrp` | Total volume in XRP |

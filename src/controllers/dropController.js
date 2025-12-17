@@ -2708,6 +2708,9 @@ const getDropDetailsByTaxon = async (req, res, next) => {
       // Stats
       floorPrice: drop.pricePerNft,
       floorPriceXrp: (Number(drop.pricePerNft || 0) / 1000000).toFixed(6),
+      mintPrice: drop.pricePerNft,
+      mintPriceXrp: (Number(drop.pricePerNft || 0) / 1000000).toFixed(6),
+      isFreeMint: drop.isFreeMint,
       items: drop.totalSupply,
       totalSupply: drop.totalSupply,
       mintedCount: drop.mintedCount,
