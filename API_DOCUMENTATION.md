@@ -4285,6 +4285,86 @@ Get scheduled drops that haven't started yet.
 
 ---
 
+### Get Explore Drops (Live & Coming Soon)
+
+**GET** `/drops/explore`
+
+Get drops for marketplace exploration. Returns both live drops and drops coming soon (within 10 days).
+
+**Filter Logic:**
+- **Live**: `status='active'`, `startDate <= now`, `endDate > now`
+- **Coming Soon**: `status='active'`, `startDate` within next 10 days, `endDate > now`
+
+**Query Parameters:**
+- `page` (optional, default: 1)
+- `limit` (optional, default: 20)
+- `sortBy` (optional, default: startDate)
+- `order` (optional, default: ASC)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "drops": [
+      {
+        "id": "uuid",
+        "name": "My NFT Drop",
+        "description": "...",
+        "image": "https://...",
+        "taxonId": 843,
+        "pricePerNft": "5000000",
+        "totalSupply": 1000,
+        "mintedCount": 50,
+        "startDate": "2025-01-20T10:00:00Z",
+        "endDate": "2025-02-20T10:00:00Z",
+        "dropStatus": "coming_soon",
+        "daysUntilStart": 5,
+        "remainingSupply": 950,
+        "isCurrentlyActive": false,
+        "isSoldOut": false,
+        "collection": { "id": "...", "name": "...", "slug": "..." },
+        "creator": { "walletAddress": "r...", "username": "..." }
+      },
+      {
+        "id": "uuid2",
+        "name": "Live Drop",
+        "dropStatus": "live",
+        "daysUntilStart": null,
+        "isCurrentlyActive": true,
+        "..."
+      }
+    ],
+    "liveDrops": [...],
+    "comingSoonDrops": [...],
+    "summary": {
+      "totalLive": 5,
+      "totalComingSoon": 3
+    },
+    "pagination": {
+      "total": 8,
+      "page": 1,
+      "limit": 20,
+      "pages": 1
+    }
+  },
+  "message": "Explore drops retrieved successfully"
+}
+```
+
+**Drop Status Values:**
+| Status | Description |
+|--------|-------------|
+| `live` | Drop has started and is currently active |
+| `coming_soon` | Drop starts within the next 10 days |
+
+**Additional Fields:**
+- `dropStatus`: Either `"live"` or `"coming_soon"`
+- `daysUntilStart`: Number of days until drop starts (null for live drops)
+
+---
+
 ### Get Drop by ID
 
 **GET** `/drops/:id`
