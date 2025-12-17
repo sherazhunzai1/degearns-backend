@@ -1,5 +1,5 @@
 const xrplService = require('../services/xrplService');
-const { User } = require('../models');
+const { User, Collection } = require('../models');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
 const ApiError = require('../utils/ApiError');
@@ -83,8 +83,8 @@ exports.getNFTDetail = async (req, res) => {
       logger.warn(`Could not fetch metadata for NFT ${nftTokenId}:`, error.message);
     }
 
-    // Step 4: Get owner and issuer information from database
-    const [ownerUser, issuerUser] = await Promise.all([
+    // Step 4: Get owner, issuer, and collection information from database
+    const [ownerUser, issuerUser, collection] = await Promise.all([
       User.findOne({
         where: { walletAddress: ownerAddress },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
@@ -92,6 +92,17 @@ exports.getNFTDetail = async (req, res) => {
       User.findOne({
         where: { walletAddress: nftData.Issuer },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      Collection.findOne({
+        where: {
+          taxon: nftData.NFTokenTaxon,
+          creatorWalletAddress: nftData.Issuer
+        },
+        attributes: ['id', 'name', 'slug', 'description', 'image', 'bannerImage', 'taxon', 'category', 'floorPrice', 'totalVolume', 'isVerified'],
+        include: [{
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }]
       })
     ]);
 
@@ -129,6 +140,25 @@ exports.getNFTDetail = async (req, res) => {
         username: issuerUser.username,
         profileImage: issuerUser.profileImage,
         isVerified: issuerUser.isVerified
+      } : null,
+      collection: collection ? {
+        id: collection.id,
+        name: collection.name,
+        slug: collection.slug,
+        description: collection.description,
+        image: collection.image,
+        bannerImage: collection.bannerImage,
+        taxon: collection.taxon,
+        category: collection.category,
+        floorPrice: collection.floorPrice,
+        totalVolume: collection.totalVolume,
+        isVerified: collection.isVerified,
+        creator: collection.creator ? {
+          walletAddress: collection.creator.walletAddress,
+          username: collection.creator.username,
+          profileImage: collection.creator.profileImage,
+          isVerified: collection.creator.isVerified
+        } : null
       } : null,
       owner: ownerAddress,
       ownerInfo: ownerUser ? {
