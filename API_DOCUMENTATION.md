@@ -5281,9 +5281,74 @@ Upload bulk NFTs to a drop using its taxonId.
 
 ---
 
+### Get Drop Details by TaxonId
+
+Fetch basic drop details for public view using taxonId. This is a lighter endpoint compared to the dashboard, suitable for displaying drop information on collection/drop pages.
+
+**Endpoint:** `GET /drops/taxon/:taxonId/details`
+
+**Query Parameters:**
+- `walletAddress` (optional): Filter by creator wallet address
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "taxonId": 843,
+    "name": "My NFT Collection",
+    "description": "Collection description",
+    "image": "https://...",
+    "bannerImage": "https://...",
+    "socialLinks": {
+      "websiteUrl": "https://mysite.com",
+      "twitterUrl": "https://twitter.com/myproject",
+      "discordUrl": "https://discord.gg/myproject",
+      "telegramUrl": "https://t.me/myproject"
+    },
+    "creator": {
+      "walletAddress": "rCreator...",
+      "username": "creator",
+      "profileImage": "https://...",
+      "bannerImage": "https://...",
+      "bio": "Creator bio",
+      "isVerified": true
+    },
+    "floorPrice": "5000000",
+    "floorPriceXrp": "5.000000",
+    "items": 1000,
+    "totalSupply": 1000,
+    "mintedCount": 250,
+    "remainingSupply": 750,
+    "volume": "1250000000",
+    "volumeXrp": "1250.000000",
+    "listedCount": 50,
+    "listingPercentage": 20.00,
+    "status": "active",
+    "isMintingEnabled": true
+  },
+  "message": "Drop details retrieved successfully"
+}
+```
+
+**Response Fields:**
+| Field | Description |
+|-------|-------------|
+| `floorPrice` | Price per NFT in drops |
+| `floorPriceXrp` | Price per NFT in XRP |
+| `items` | Total supply of NFTs |
+| `volume` | Total volume from mints in drops |
+| `volumeXrp` | Total volume in XRP |
+| `listedCount` | Number of minted NFTs |
+| `listingPercentage` | Percentage of minted NFTs |
+
+---
+
 ### Get Drop Dashboard by TaxonId
 
-Fetch complete drop dashboard data using taxonId.
+Fetch complete drop dashboard data using taxonId (for creator dashboard).
 
 **Endpoint:** `GET /drops/taxon/:taxonId/dashboard?walletAddress=rCreatorWallet`
 
@@ -5693,6 +5758,7 @@ The `GET /drops/creator/:walletAddress` endpoint now includes workflow step info
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/drops/taxon/:taxonId/nfts` | Upload bulk NFTs to drop |
-| GET | `/drops/taxon/:taxonId/dashboard` | Get complete dashboard data |
+| GET | `/drops/taxon/:taxonId/details` | Get basic drop details (public) |
+| GET | `/drops/taxon/:taxonId/dashboard` | Get complete dashboard data (creator) |
 | PUT | `/drops/taxon/:taxonId/platform-fees` | Update fees payment status |
 | PUT | `/drops/taxon/:taxonId/authorize-minter` | Authorize minter wallet |

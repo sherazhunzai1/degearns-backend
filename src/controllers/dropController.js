@@ -2627,6 +2627,108 @@ const getDropDashboard = async (req, res, next) => {
 /**
  * Get drop dashboard data by taxonId
  */
+/**
+ * Get drop details by taxonId - Basic drop information for public view
+ */
+const getDropDetailsByTaxon = async (req, res, next) => {
+  try {
+    const { taxonId } = req.params;
+    const { walletAddress } = req.query;
+
+    // Build where clause
+    const whereClause = {
+      taxonId: parseInt(taxonId)
+    };
+
+    // If walletAddress provided, filter by creator
+    if (walletAddress) {
+      whereClause.creatorWalletAddress = walletAddress;
+    }
+
+    // Find drop by taxonId
+    const drop = await Drop.findOne({
+      where: whereClause,
+      include: [
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'bannerImage', 'bio', 'isVerified']
+        }
+      ]
+    });
+
+    if (!drop) {
+      throw new ApiError(404, 'Drop not found with this taxonId');
+    }
+
+    // Get listing stats - count of NFTs listed for sale from this drop
+    const [listedCount, totalVolume] = await Promise.all([
+      // Count NFTs from this drop that are currently listed
+      DropNft.count({
+        where: {
+          dropId: drop.id,
+          status: 'minted'
+        }
+      }),
+      // Get total volume from mints
+      DropMint.sum('pricePaid', {
+        where: { dropId: drop.id }
+      })
+    ]);
+
+    // Calculate listing percentage
+    const mintedCount = drop.mintedCount || 0;
+    const listingPercentage = mintedCount > 0
+      ? ((listedCount / mintedCount) * 100).toFixed(2)
+      : '0.00';
+
+    // Build response with requested fields
+    const dropDetails = {
+      id: drop.id,
+      taxonId: drop.taxonId,
+      name: drop.name,
+      description: drop.description,
+      image: drop.image,
+      bannerImage: drop.bannerImage,
+      // Social links
+      socialLinks: {
+        websiteUrl: drop.websiteUrl,
+        twitterUrl: drop.twitterUrl,
+        discordUrl: drop.discordUrl,
+        telegramUrl: drop.telegramUrl
+      },
+      // Creator information
+      creator: drop.creator ? {
+        walletAddress: drop.creator.walletAddress,
+        username: drop.creator.username,
+        profileImage: drop.creator.profileImage,
+        bannerImage: drop.creator.bannerImage,
+        bio: drop.creator.bio,
+        isVerified: drop.creator.isVerified
+      } : null,
+      // Stats
+      floorPrice: drop.pricePerNft,
+      floorPriceXrp: (Number(drop.pricePerNft || 0) / 1000000).toFixed(6),
+      items: drop.totalSupply,
+      totalSupply: drop.totalSupply,
+      mintedCount: drop.mintedCount,
+      remainingSupply: drop.getRemainingSupply(),
+      volume: (totalVolume || 0).toString(),
+      volumeXrp: (Number(totalVolume || 0) / 1000000).toFixed(6),
+      listedCount: listedCount,
+      listingPercentage: parseFloat(listingPercentage),
+      // Status
+      status: drop.status,
+      isMintingEnabled: drop.isMintingEnabled
+    };
+
+    res.status(200).json(
+      new ApiResponse(200, dropDetails, 'Drop details retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getDropDashboardByTaxon = async (req, res, next) => {
   try {
     const { taxonId } = req.params;
@@ -3200,6 +3302,7 @@ module.exports = {
   saveDropSettings,
   getDropDashboard,
   getDropDashboardByTaxon,
+  getDropDetailsByTaxon,
   updatePlatformFeesPaymentByTaxon,
   authorizeMinterWalletByTaxon,
   saveDropSettingsByTaxon
