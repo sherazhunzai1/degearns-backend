@@ -2881,6 +2881,31 @@ const saveDropSettingsByTaxon = async (req, res, next) => {
       if (dashboard.isFreeMint !== undefined) updateData.isFreeMint = dashboard.isFreeMint;
     }
 
+    // Also check for isMintingEnabled in flags (support both locations)
+    if (flags && flags.isMintingEnabled !== undefined) {
+      updateData.isMintingEnabled = flags.isMintingEnabled;
+    }
+
+    // Auto-update drop status based on isMintingEnabled and prerequisites
+    if (updateData.isMintingEnabled !== undefined) {
+      // Check prerequisites from current drop data
+      const authorizedMinterWallet = drop.authorizedMinterWallet;
+      const platformFeesStatus = drop.platformFeesStatus;
+
+      // Prerequisites: minter must be authorized AND platform fees must be paid
+      const prerequisitesMet = authorizedMinterWallet && platformFeesStatus === 'paid';
+
+      if (updateData.isMintingEnabled === true && prerequisitesMet) {
+        // If minting is being enabled and prerequisites are met, set status to active
+        updateData.status = 'active';
+        logger.info(`Drop ${drop.id} status set to active - minting enabled with prerequisites met`);
+      } else if (updateData.isMintingEnabled === false && prerequisitesMet) {
+        // If minting is being disabled and prerequisites were met, set status to paused
+        updateData.status = 'paused';
+        logger.info(`Drop ${drop.id} status set to paused - minting disabled`);
+      }
+    }
+
     // Update drop settings
     await drop.update(updateData, { transaction });
 
