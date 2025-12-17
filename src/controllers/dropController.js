@@ -2662,15 +2662,15 @@ const getDropDetailsByTaxon = async (req, res, next) => {
 
     // Get listing stats - count of NFTs listed for sale from this drop
     const [listedCount, totalVolume] = await Promise.all([
-      // Count NFTs from this drop that are currently listed
+      // Count NFTs from this drop that are currently minted
       DropNft.count({
         where: {
           dropId: drop.id,
           status: 'minted'
         }
       }),
-      // Get total volume from mints
-      DropMint.sum('pricePaid', {
+      // Get total volume from mints (using mintPrice field)
+      DropMint.sum('mintPrice', {
         where: { dropId: drop.id }
       })
     ]);
