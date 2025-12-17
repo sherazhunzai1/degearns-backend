@@ -451,6 +451,120 @@ const getUpcomingDrops = async (req, res, next) => {
 };
 
 /**
+ * Get explore drops - Live and Coming Soon drops for marketplace
+ * Live: status='active', startDate <= now, endDate > now
+ * Coming Soon: status='active', startDate within next 10 days, endDate > now
+ */
+const getExploreDrops = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      sortBy = 'startDate',
+      order = 'ASC'
+    } = req.query;
+
+    const now = new Date();
+    const tenDaysFromNow = new Date(now.getTime() + (10 * 24 * 60 * 60 * 1000)); // 10 days in milliseconds
+    const offset = (page - 1) * limit;
+
+    const { count, rows: drops } = await Drop.findAndCountAll({
+      where: {
+        status: 'active',
+        // End date must be greater than current date (or null for no end date)
+        [Op.or]: [
+          { endDate: null },
+          { endDate: { [Op.gt]: now } }
+        ],
+        // Start date must be either:
+        // 1. Less than or equal to now (live)
+        // 2. Within the next 10 days (coming soon)
+        // 3. Null (no start date = live)
+        [Op.or]: [
+          { startDate: null },
+          { startDate: { [Op.lte]: now } },
+          {
+            startDate: {
+              [Op.and]: [
+                { [Op.gt]: now },
+                { [Op.lte]: tenDaysFromNow }
+              ]
+            }
+          }
+        ]
+      },
+      include: [
+        {
+          association: 'collection',
+          attributes: ['id', 'name', 'slug', 'image', 'bannerImage', 'taxon', 'category']
+        },
+        {
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }
+      ],
+      order: [[sortBy, order.toUpperCase()]],
+      limit: parseInt(limit),
+      offset: parseInt(offset)
+    });
+
+    // Add computed fields and dropStatus (live/coming_soon)
+    const exploreDrops = drops.map(drop => {
+      const dropData = drop.toJSON();
+      const startDate = drop.startDate ? new Date(drop.startDate) : null;
+
+      // Determine if drop is live or coming soon
+      let dropStatus;
+      let daysUntilStart = null;
+
+      if (!startDate || startDate <= now) {
+        // No start date or start date has passed = LIVE
+        dropStatus = 'live';
+      } else {
+        // Start date is in the future (within 10 days) = COMING SOON
+        dropStatus = 'coming_soon';
+        // Calculate days until start
+        const timeDiff = startDate.getTime() - now.getTime();
+        daysUntilStart = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+      }
+
+      return {
+        ...dropData,
+        dropStatus,
+        daysUntilStart,
+        remainingSupply: drop.getRemainingSupply(),
+        isCurrentlyActive: drop.isCurrentlyActive(),
+        isSoldOut: drop.isSoldOut()
+      };
+    });
+
+    // Separate live and coming soon for frontend convenience
+    const liveDrops = exploreDrops.filter(d => d.dropStatus === 'live');
+    const comingSoonDrops = exploreDrops.filter(d => d.dropStatus === 'coming_soon');
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        drops: exploreDrops,
+        liveDrops,
+        comingSoonDrops,
+        summary: {
+          totalLive: liveDrops.length,
+          totalComingSoon: comingSoonDrops.length
+        },
+        pagination: {
+          total: count,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(count / limit)
+        }
+      }, 'Explore drops retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Delete a draft drop
  */
 const deleteDrop = async (req, res, next) => {
@@ -3054,6 +3168,7 @@ module.exports = {
   getDrops,
   getActiveDrops,
   getUpcomingDrops,
+  getExploreDrops,
   deleteDrop,
   updateDropStatus,
   toggleDropSettings,
