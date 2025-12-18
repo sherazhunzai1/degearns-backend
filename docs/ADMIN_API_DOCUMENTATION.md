@@ -1703,6 +1703,566 @@ When initialized, the following default settings are created:
 
 ---
 
+## Rewards & Top Performers
+
+### Get All Top Performers
+
+Returns top 10 traders, creators, and influencers combined.
+
+```
+GET /admin/rewards/top-performers
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| month | number | current | Target month (1-12) |
+| year | number | current | Target year |
+| limit | number | 10 | Number of results per category |
+
+**Response:**
+```json
+{
+  "data": {
+    "period": {
+      "month": 12,
+      "year": 2025
+    },
+    "traders": [
+      {
+        "rank": 1,
+        "walletAddress": "rXXX...",
+        "totalSpent": "50000000000",
+        "totalSpentXrp": "50000.000000",
+        "mintCount": 150,
+        "user": {
+          "walletAddress": "rXXX...",
+          "username": "TopTrader",
+          "profileImage": "https://...",
+          "isVerified": true
+        }
+      }
+    ],
+    "creators": [...],
+    "influencers": [...]
+  }
+}
+```
+
+---
+
+### Get Top Traders
+
+Returns top 10 traders ranked by total NFT minting spend.
+
+```
+GET /admin/rewards/top-traders
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| month | number | current | Target month (1-12) |
+| year | number | current | Target year |
+| limit | number | 10 | Number of results |
+
+**Response:**
+```json
+{
+  "data": {
+    "category": "trader",
+    "period": {
+      "month": 12,
+      "year": 2025
+    },
+    "topPerformers": [
+      {
+        "rank": 1,
+        "walletAddress": "rXXX...",
+        "totalSpent": "50000000000",
+        "totalSpentXrp": "50000.000000",
+        "mintCount": 150,
+        "user": { ... }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Get Top Creators
+
+Returns top 10 creators ranked by total revenue from drops.
+
+```
+GET /admin/rewards/top-creators
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| month | number | current | Target month (1-12) |
+| year | number | current | Target year |
+| limit | number | 10 | Number of results |
+
+**Response:**
+```json
+{
+  "data": {
+    "category": "creator",
+    "period": {
+      "month": 12,
+      "year": 2025
+    },
+    "topPerformers": [
+      {
+        "rank": 1,
+        "walletAddress": "rXXX...",
+        "totalRevenue": "100000000000",
+        "totalRevenueXrp": "100000.000000",
+        "totalMints": 500,
+        "dropCount": 5,
+        "collectionCount": 3,
+        "user": { ... }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Get Top Influencers
+
+Returns top 10 influencers ranked by engagement score (followers + likes + comments + posts).
+
+```
+GET /admin/rewards/top-influencers
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| month | number | current | Target month (1-12) |
+| year | number | current | Target year |
+| limit | number | 10 | Number of results |
+
+**Response:**
+```json
+{
+  "data": {
+    "category": "influencer",
+    "period": {
+      "month": 12,
+      "year": 2025
+    },
+    "topPerformers": [
+      {
+        "rank": 1,
+        "walletAddress": "rXXX...",
+        "newFollowers": 500,
+        "totalFollowers": 2000,
+        "postsInPeriod": 50,
+        "likesReceived": 1000,
+        "commentsReceived": 200,
+        "engagementScore": 3850,
+        "user": { ... }
+      }
+    ]
+  }
+}
+```
+
+**Engagement Score Formula:**
+- New followers: × 1 point each
+- Likes received: × 2 points each
+- Comments received: × 3 points each
+- Posts created: × 5 points each
+
+---
+
+### Get Reward Configuration
+
+Returns default reward amounts for each category and rank.
+
+```
+GET /admin/rewards/config
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "rewardConfig": {
+      "trader": {
+        "1": 100, "2": 80, "3": 60, "4": 50, "5": 40,
+        "6": 30, "7": 25, "8": 20, "9": 15, "10": 10
+      },
+      "creator": {
+        "1": 150, "2": 120, "3": 100, "4": 80, "5": 60,
+        "6": 50, "7": 40, "8": 30, "9": 25, "10": 20
+      },
+      "influencer": {
+        "1": 80, "2": 60, "3": 50, "4": 40, "5": 35,
+        "6": 30, "7": 25, "8": 20, "9": 15, "10": 10
+      }
+    },
+    "note": "Amounts are in XRP. Can be customized via platform settings."
+  }
+}
+```
+
+---
+
+### Distribute Rewards
+
+Distributes XRP rewards to top performers.
+
+```
+POST /admin/rewards/distribute
+```
+
+**Request Body:**
+```json
+{
+  "month": 12,
+  "year": 2025,
+  "category": "trader",
+  "rewards": [
+    {
+      "rank": 1,
+      "walletAddress": "rXXX...",
+      "amount": 100,
+      "metricValue": "50000.000000",
+      "metricType": "totalSpent"
+    },
+    {
+      "rank": 2,
+      "walletAddress": "rYYY...",
+      "amount": 80
+    }
+  ],
+  "dryRun": false
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| month | number | Yes | Target month (1-12) |
+| year | number | Yes | Target year |
+| category | string | Yes | `trader`, `creator`, `influencer`, or `all` |
+| rewards | array | Yes | Array of reward objects |
+| rewards[].rank | number | Yes | Performer rank |
+| rewards[].walletAddress | string | Yes | Recipient wallet address |
+| rewards[].amount | number | Yes | Reward amount in XRP |
+| rewards[].metricValue | string | No | The metric value that earned this reward |
+| rewards[].metricType | string | No | Type of metric |
+| dryRun | boolean | No | If true, previews without sending payments |
+
+**Response:**
+```json
+{
+  "data": {
+    "dryRun": false,
+    "period": {
+      "month": 12,
+      "year": 2025
+    },
+    "category": "trader",
+    "results": {
+      "successful": [
+        {
+          "rank": 1,
+          "walletAddress": "rXXX...",
+          "category": "trader",
+          "amount": 100,
+          "amountDrops": "100000000",
+          "transactionHash": "ABC123..."
+        }
+      ],
+      "failed": [],
+      "totalAmount": 100,
+      "totalAmountXrp": "100.000000"
+    }
+  },
+  "message": "Rewards distributed successfully"
+}
+```
+
+**Notes:**
+- Cannot distribute rewards for a period/category that already has completed distributions
+- Use `dryRun: true` to preview distributions without sending payments
+- Failed transactions are logged but don't stop other distributions
+
+---
+
+### Get Reward History
+
+Returns history of all reward distributions.
+
+```
+GET /admin/rewards/history
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| page | number | 1 | Page number |
+| limit | number | 20 | Items per page |
+| month | number | - | Filter by month |
+| year | number | - | Filter by year |
+| category | string | - | Filter by category |
+| walletAddress | string | - | Filter by recipient |
+| status | string | - | Filter by transaction status |
+
+**Response:**
+```json
+{
+  "data": {
+    "rewards": [
+      {
+        "id": "uuid",
+        "periodMonth": 12,
+        "periodYear": 2025,
+        "category": "trader",
+        "rank": 1,
+        "recipientWalletAddress": "rXXX...",
+        "rewardAmount": "100000000",
+        "metricValue": "50000.000000",
+        "metricType": "totalSpent",
+        "transactionHash": "ABC123...",
+        "transactionStatus": "completed",
+        "paidAt": "2025-12-15T10:00:00Z",
+        "recipient": {
+          "walletAddress": "rXXX...",
+          "username": "TopTrader",
+          "profileImage": "https://...",
+          "isVerified": true
+        }
+      }
+    ],
+    "totals": {
+      "totalDistributed": "1000000000",
+      "totalDistributedXrp": "1000.000000",
+      "totalRewards": 30
+    },
+    "pagination": { ... }
+  }
+}
+```
+
+---
+
+### Get Reward Summary
+
+Returns reward distribution summary by year.
+
+```
+GET /admin/rewards/summary
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| year | number | current | Target year |
+
+**Response:**
+```json
+{
+  "data": {
+    "year": 2025,
+    "monthlyBreakdown": {
+      "1": {
+        "trader": { "amount": "500000000", "amountXrp": "500.000000", "count": 10 },
+        "creator": { "amount": "700000000", "amountXrp": "700.000000", "count": 10 },
+        "influencer": { "amount": "400000000", "amountXrp": "400.000000", "count": 10 },
+        "total": { "amount": "1600000000", "amountXrp": "1600.000000", "count": 30 }
+      },
+      "2": { ... },
+      ...
+    },
+    "yearTotal": {
+      "amount": "19200000000",
+      "amountXrp": "19200.000000",
+      "count": 360
+    }
+  }
+}
+```
+
+---
+
+## Admin Wallet Management
+
+### Get All Admin Wallets
+
+Returns all configured admin wallets.
+
+```
+GET /admin/wallets
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "wallets": [
+      {
+        "id": "uuid",
+        "walletAddress": "rPLATFORM...",
+        "type": "platformFees",
+        "label": "Platform Fees Wallet",
+        "description": "Wallet for receiving platform fees",
+        "isActive": true,
+        "createdAt": "2025-01-01T00:00:00Z",
+        "updatedAt": "2025-01-15T00:00:00Z"
+      },
+      {
+        "id": "uuid",
+        "walletAddress": "rREWARDS...",
+        "type": "rewards",
+        "label": "Rewards Wallet",
+        "description": "Wallet for distributing rewards",
+        "isActive": true
+      }
+    ]
+  }
+}
+```
+
+**Wallet Types:**
+- `platformFees` - Receives platform fees from drops
+- `royalties` - Receives marketplace royalties
+- `marketplace` - Marketplace operations wallet
+- `treasury` - Treasury wallet
+- `rewards` - Wallet for distributing rewards
+- `other` - Other administrative wallets
+
+---
+
+### Get Platform Fees Wallet
+
+Returns the active platform fees wallet.
+
+```
+GET /admin/wallets/platform-fees
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "wallet": {
+      "id": "uuid",
+      "walletAddress": "rPLATFORM...",
+      "type": "platformFees",
+      "label": "Platform Fees Wallet",
+      "description": "Wallet for receiving platform fees",
+      "isActive": true,
+      "createdAt": "2025-01-01T00:00:00Z",
+      "updatedAt": "2025-01-15T00:00:00Z"
+    }
+  }
+}
+```
+
+---
+
+### Update Platform Fees Wallet
+
+Updates the active platform fees wallet address.
+
+```
+PUT /admin/wallets/platform-fees
+```
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rNEWWALLET...",
+  "label": "New Platform Fees Wallet",
+  "description": "Updated platform fees wallet"
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "wallet": {
+      "id": "uuid",
+      "walletAddress": "rNEWWALLET...",
+      "type": "platformFees",
+      "label": "New Platform Fees Wallet",
+      "description": "Updated platform fees wallet",
+      "isActive": true
+    }
+  },
+  "message": "Platform fees wallet updated successfully"
+}
+```
+
+**Notes:**
+- Validates XRPL wallet address format (must start with 'r', 25-35 characters)
+- Automatically deactivates previous platform fees wallet
+- If wallet already exists, reactivates and updates it
+
+---
+
+### Create/Update Admin Wallet
+
+Creates a new admin wallet or updates an existing one.
+
+```
+POST /admin/wallets
+```
+
+**Request Body:**
+```json
+{
+  "walletAddress": "rNEWWALLET...",
+  "type": "rewards",
+  "label": "Rewards Distribution Wallet",
+  "description": "Wallet for monthly reward distributions",
+  "isActive": true
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| walletAddress | string | Yes | XRPL wallet address (r-address) |
+| type | string | Yes | Wallet type (see types above) |
+| label | string | No | Display label for the wallet |
+| description | string | No | Description of wallet purpose |
+| isActive | boolean | No | Whether wallet is active (default: true) |
+
+**Notes:**
+- If setting as active, automatically deactivates other wallets of the same type
+- If wallet with same address and type exists, updates instead of creating
+
+---
+
+### Delete Admin Wallet
+
+Removes an admin wallet.
+
+```
+DELETE /admin/wallets/:walletId
+```
+
+**Response:**
+```json
+{
+  "data": null,
+  "message": "Admin wallet deleted successfully"
+}
+```
+
+---
+
 ## Error Codes
 
 | Status Code | Description |
