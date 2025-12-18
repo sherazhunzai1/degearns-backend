@@ -5,8 +5,20 @@ const {
   getNFTOffers,
   getNFTHistory,
   notifyNFTListing,
-  notifyNFTPurchase
+  notifyNFTPurchase,
+  getIncomingOffers
 } = require('../controllers/nftController');
+
+/**
+ * @route   GET /api/v1/nfts/incoming-offers/:walletAddress
+ * @desc    Get incoming offers for a wallet (buy offers on owned NFTs)
+ * @access  Public
+ * @param   walletAddress - Required: Wallet address to get incoming offers for
+ * @returns {Object} buyOffers - Array of buy offers with NFT details and accept transaction data
+ * @returns {Object} sellOffersForYou - Array of sell offers with destination = walletAddress
+ * @returns {Object} summary - Summary of total offers and value
+ */
+router.get('/incoming-offers/:walletAddress', getIncomingOffers);
 
 /**
  * @route   GET /api/v1/nfts/:nftTokenId

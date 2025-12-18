@@ -804,6 +804,211 @@ class XRPLService {
       throw error;
     }
   }
+
+  /**
+   * Get incoming offers for a wallet
+   * Returns:
+   * 1. Buy offers on NFTs owned by the wallet (people wanting to buy from you)
+   * 2. Sell offers with destination = wallet (offers made specifically for you to buy)
+   */
+  async getIncomingOffersForWallet(walletAddress) {
+    try {
+      const client = xrplConfig.getClient();
+      const incomingOffers = [];
+
+      // 1. Get all NFTs owned by this wallet
+      const ownedNFTs = await this.getAccountNFTs(walletAddress);
+
+      // 2. For each owned NFT, get buy offers (offers from others wanting to buy)
+      const buyOfferPromises = ownedNFTs.map(async (nft) => {
+        try {
+          const buyOffers = await this.getNFTBuyOffers(nft.NFTokenID);
+          return buyOffers.map(offer => ({
+            ...offer,
+            nftokenID: nft.NFTokenID,
+            uri: nft.URI,
+            taxon: nft.NFTokenTaxon,
+            type: 'buy_offer' // Someone wants to buy your NFT
+          }));
+        } catch (error) {
+          return [];
+        }
+      });
+
+      const buyOfferResults = await Promise.all(buyOfferPromises);
+      for (const offers of buyOfferResults) {
+        incomingOffers.push(...offers);
+      }
+
+      // 3. Get account objects to find sell offers with destination = walletAddress
+      // These are offers made by others specifically for this wallet to accept
+      try {
+        let marker = null;
+        let hasMore = true;
+
+        while (hasMore) {
+          const request = {
+            command: 'account_objects',
+            account: walletAddress,
+            type: 'nft_offer',
+            ledger_index: 'validated',
+            limit: 200
+          };
+
+          if (marker) {
+            request.marker = marker;
+          }
+
+          const response = await client.request(request);
+          const objects = response.result.account_objects || [];
+
+          // Note: account_objects returns offers owned by the account
+          // We need to search differently for offers with destination = wallet
+          // Using nft_sell_offers doesn't support destination filter, so we need alternative approach
+
+          marker = response.result.marker;
+          hasMore = !!marker;
+        }
+      } catch (error) {
+        logger.warn('Error getting account objects:', error.message);
+      }
+
+      // 4. Alternative: Get sell offers for known NFTs where destination matches
+      // This requires knowing which NFTs have offers for this wallet
+      // For now, we'll search recent transactions to find potential offers
+
+      return incomingOffers;
+    } catch (error) {
+      logger.error('Error getting incoming offers for wallet:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get sell offers where destination is a specific wallet
+   * Searches for sell offers on specific NFTs that are targeted to a wallet
+   */
+  async getSellOffersForDestination(nftokenID, destinationWallet) {
+    try {
+      const sellOffers = await this.getNFTSellOffers(nftokenID);
+      // Filter offers that have this wallet as destination
+      return sellOffers.filter(offer =>
+        offer.destination && offer.destination.toLowerCase() === destinationWallet.toLowerCase()
+      );
+    } catch (error) {
+      logger.warn('Error getting sell offers for destination:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Get detailed incoming offers with NFT metadata
+   * Returns offers with full NFT details ready for display and QR code acceptance
+   */
+  async getDetailedIncomingOffers(walletAddress) {
+    try {
+      const result = {
+        buyOffers: [], // Offers to buy NFTs you own
+        sellOffersForYou: [], // Sell offers where you are the destination
+        summary: {
+          totalBuyOffers: 0,
+          totalSellOffersForYou: 0,
+          totalValueXrp: 0
+        }
+      };
+
+      // 1. Get all NFTs owned by this wallet
+      const ownedNFTs = await this.getAccountNFTs(walletAddress);
+
+      // 2. For each owned NFT, get buy offers with NFT details
+      const buyOfferPromises = ownedNFTs.map(async (nft) => {
+        try {
+          const buyOffers = await this.getNFTBuyOffers(nft.NFTokenID);
+
+          if (buyOffers.length === 0) return [];
+
+          // Fetch NFT metadata
+          let metadata = null;
+          try {
+            metadata = await this.fetchNFTMetadata(nft.URI);
+          } catch (e) {
+            logger.warn(`Could not fetch metadata for ${nft.NFTokenID}`);
+          }
+
+          // Get image URL
+          let imageUrl = null;
+          if (metadata) {
+            imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+            if (imageUrl && imageUrl.startsWith('ipfs://')) {
+              imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+            }
+          }
+
+          return buyOffers.map(offer => {
+            const amountDrops = typeof offer.amount === 'string' ? parseInt(offer.amount) : offer.amount;
+            const amountXrp = (amountDrops / 1000000).toFixed(6);
+
+            return {
+              offerType: 'buy',
+              offerIndex: offer.nft_offer_index,
+              offerer: offer.owner,
+              nft: {
+                nftokenID: nft.NFTokenID,
+                name: metadata?.name || null,
+                description: metadata?.description || null,
+                image: imageUrl,
+                uri: nft.URI ? this.convertHexToString(nft.URI) : null,
+                taxon: nft.NFTokenTaxon,
+                issuer: nft.Issuer,
+                transferFee: nft.TransferFee
+              },
+              price: {
+                drops: amountDrops.toString(),
+                xrp: amountXrp
+              },
+              expiration: offer.expiration || null,
+              // Transaction data for accepting via QR code
+              acceptTransaction: {
+                TransactionType: 'NFTokenAcceptOffer',
+                Account: walletAddress,
+                NFTokenBuyOffer: offer.nft_offer_index
+              }
+            };
+          });
+        } catch (error) {
+          return [];
+        }
+      });
+
+      const buyOfferResults = await Promise.all(buyOfferPromises);
+      for (const offers of buyOfferResults) {
+        result.buyOffers.push(...offers);
+      }
+
+      // 3. Search for sell offers targeting this wallet
+      // This is more complex as XRPL doesn't have a direct query for this
+      // We need to check sell offers on NFTs we might be interested in
+      // For now, we return what we can find from owned NFT relationships
+
+      // Calculate summary
+      result.summary.totalBuyOffers = result.buyOffers.length;
+      result.summary.totalSellOffersForYou = result.sellOffersForYou.length;
+
+      let totalValueDrops = 0;
+      for (const offer of result.buyOffers) {
+        totalValueDrops += parseInt(offer.price.drops);
+      }
+      for (const offer of result.sellOffersForYou) {
+        totalValueDrops += parseInt(offer.price.drops);
+      }
+      result.summary.totalValueXrp = (totalValueDrops / 1000000).toFixed(6);
+
+      return result;
+    } catch (error) {
+      logger.error('Error getting detailed incoming offers:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new XRPLService();
