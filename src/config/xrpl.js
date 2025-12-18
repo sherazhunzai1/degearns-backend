@@ -16,7 +16,7 @@ class XRPLConfig {
    * 1. ADMIN_WALLET_SEED - Family seed (starts with 's')
    * 2. ADMIN_WALLET_SECRET_NUMBERS - Comma-separated 8 groups of 6 digits
    *
-   * Optional: ADMIN_WALLET_ALGORITHM - 'ed25519' or 'secp256k1' (default: 'ed25519' for secret numbers)
+   * Optional: ADMIN_WALLET_ALGORITHM - 'ed25519' or 'secp256k1' (default: 'secp256k1' for secret numbers)
    */
   initializeAdminWallet() {
     try {
@@ -48,8 +48,8 @@ class XRPLConfig {
 
         const entropy = secretToEntropy(secretNumbers);
 
-        // Default to ed25519 for secret numbers (XUMM uses ed25519)
-        const algorithm = process.env.ADMIN_WALLET_ALGORITHM || 'ed25519';
+        // Default to secp256k1 for secret numbers
+        const algorithm = process.env.ADMIN_WALLET_ALGORITHM || 'secp256k1';
         this.adminWallet = Wallet.fromEntropy(entropy, { algorithm });
         logger.info(`Admin wallet initialized from secret numbers (${algorithm}): ${this.adminWallet.address}`);
         return;

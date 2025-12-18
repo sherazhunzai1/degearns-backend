@@ -31,7 +31,7 @@ router.get('/debug/platform-wallet', async (req, res) => {
     const secretNumbersLength = process.env.ADMIN_WALLET_SECRET_NUMBERS
       ? process.env.ADMIN_WALLET_SECRET_NUMBERS.split(',').length
       : 0;
-    const configuredAlgorithm = process.env.ADMIN_WALLET_ALGORITHM || (hasSecretNumbers ? 'ed25519' : 'auto');
+    const configuredAlgorithm = process.env.ADMIN_WALLET_ALGORITHM || (hasSecretNumbers ? 'secp256k1' : 'auto');
 
     let walletAddress = null;
     let walletError = null;
