@@ -2635,7 +2635,7 @@ const getDropDashboard = async (req, res, next) => {
 const getDropDetailsByTaxon = async (req, res, next) => {
   try {
     const { taxonId } = req.params;
-    const { walletAddress } = req.query;
+    const { walletAddress, includeNfts = 'true', page = 1, limit = 20 } = req.query;
 
     // Build where clause
     const whereClause = {
@@ -2663,7 +2663,7 @@ const getDropDetailsByTaxon = async (req, res, next) => {
     }
 
     // Get listing stats - count of NFTs listed for sale from this drop
-    const [listedCount, totalVolume] = await Promise.all([
+    const [mintedNftCount, totalVolume] = await Promise.all([
       // Count NFTs from this drop that are currently minted
       DropNft.count({
         where: {
@@ -2679,9 +2679,6 @@ const getDropDetailsByTaxon = async (req, res, next) => {
 
     // Calculate listing percentage
     const mintedCount = drop.mintedCount || 0;
-    const listingPercentage = mintedCount > 0
-      ? ((listedCount / mintedCount) * 100).toFixed(2)
-      : '0.00';
 
     // Build response with requested fields
     const dropDetails = {
@@ -2719,12 +2716,142 @@ const getDropDetailsByTaxon = async (req, res, next) => {
       remainingSupply: drop.getRemainingSupply(),
       volume: (totalVolume || 0).toString(),
       volumeXrp: (Number(totalVolume || 0) / 1000000).toFixed(6),
-      listedCount: listedCount,
-      listingPercentage: parseFloat(listingPercentage),
       // Status
       status: drop.status,
       isMintingEnabled: drop.isMintingEnabled
     };
+
+    // Get minted NFTs with their details if requested
+    if (includeNfts === 'true') {
+      const offset = (parseInt(page) - 1) * parseInt(limit);
+
+      // Get minted NFTs from database
+      const { count: totalMintedNfts, rows: mintedNfts } = await DropNft.findAndCountAll({
+        where: {
+          dropId: drop.id,
+          status: 'minted',
+          nftTokenId: { [Op.ne]: null }
+        },
+        order: [['mintedAt', 'DESC']],
+        limit: parseInt(limit),
+        offset
+      });
+
+      // Get owner details from Users table for minted NFTs
+      const minterAddresses = [...new Set(mintedNfts.map(nft => nft.mintedTo).filter(Boolean))];
+      const minterUsers = await User.findAll({
+        where: { walletAddress: { [Op.in]: minterAddresses } },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+      const minterMap = minterUsers.reduce((acc, user) => {
+        acc[user.walletAddress] = user;
+        return acc;
+      }, {});
+
+      // Get XRPL details for each minted NFT (owner and listing info)
+      const nftsWithDetails = await Promise.all(
+        mintedNfts.map(async (nft) => {
+          let xrplDetails = null;
+          let currentOwner = null;
+          let ownerUser = null;
+
+          if (nft.nftTokenId) {
+            try {
+              xrplDetails = await xrplService.getNFTDetailsWithOffers(nft.nftTokenId);
+              currentOwner = xrplDetails?.owner || nft.mintedTo;
+
+              // If owner is different from minter, get owner's user info
+              if (currentOwner && currentOwner !== nft.mintedTo) {
+                ownerUser = await User.findOne({
+                  where: { walletAddress: currentOwner },
+                  attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+                });
+              } else {
+                ownerUser = minterMap[nft.mintedTo] || null;
+              }
+            } catch (err) {
+              logger.warn(`Failed to get XRPL details for NFT ${nft.nftTokenId}:`, err.message);
+              currentOwner = nft.mintedTo;
+              ownerUser = minterMap[nft.mintedTo] || null;
+            }
+          }
+
+          return {
+            id: nft.id,
+            index: nft.index,
+            name: nft.name,
+            description: nft.description,
+            image: nft.image,
+            animationUrl: nft.animationUrl,
+            attributes: nft.attributes,
+            nftTokenId: nft.nftTokenId,
+            metadataUri: nft.metadataUri,
+            // Minting info
+            mintedTo: nft.mintedTo,
+            mintedAt: nft.mintedAt,
+            transactionHash: nft.transactionHash,
+            // Minter (original buyer)
+            minter: minterMap[nft.mintedTo] ? {
+              walletAddress: minterMap[nft.mintedTo].walletAddress,
+              username: minterMap[nft.mintedTo].username,
+              profileImage: minterMap[nft.mintedTo].profileImage,
+              isVerified: minterMap[nft.mintedTo].isVerified
+            } : {
+              walletAddress: nft.mintedTo,
+              username: null,
+              profileImage: null,
+              isVerified: false
+            },
+            // Current owner (may be different if NFT was transferred)
+            currentOwner: {
+              walletAddress: currentOwner,
+              username: ownerUser?.username || null,
+              profileImage: ownerUser?.profileImage || null,
+              isVerified: ownerUser?.isVerified || false
+            },
+            // Listing info
+            isListed: xrplDetails?.isListed || false,
+            listingPrice: xrplDetails?.lowestSellOffer?.amount || null,
+            listingPriceXrp: xrplDetails?.lowestSellOffer?.amountXrp || null,
+            sellOffersCount: xrplDetails?.sellOffersCount || 0,
+            lowestSellOffer: xrplDetails?.lowestSellOffer || null
+          };
+        })
+      );
+
+      // Calculate listing stats from the NFTs we fetched
+      const listedNfts = nftsWithDetails.filter(nft => nft.isListed);
+      const listedCount = listedNfts.length;
+
+      // Calculate floor price from listings
+      let floorPriceFromListings = null;
+      if (listedNfts.length > 0) {
+        const prices = listedNfts
+          .map(nft => nft.listingPrice)
+          .filter(p => p !== null)
+          .map(p => parseInt(p));
+        if (prices.length > 0) {
+          floorPriceFromListings = Math.min(...prices);
+        }
+      }
+
+      dropDetails.mintedNfts = {
+        items: nftsWithDetails,
+        pagination: {
+          total: totalMintedNfts,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(totalMintedNfts / parseInt(limit))
+        },
+        stats: {
+          totalMinted: totalMintedNfts,
+          listedCount: listedCount,
+          listingPercentage: totalMintedNfts > 0 ? ((listedCount / totalMintedNfts) * 100).toFixed(2) : '0.00',
+          floorPriceFromListings: floorPriceFromListings?.toString() || null,
+          floorPriceFromListingsXrp: floorPriceFromListings ? (floorPriceFromListings / 1000000).toFixed(6) : null
+        }
+      };
+    }
 
     res.status(200).json(
       new ApiResponse(200, dropDetails, 'Drop details retrieved successfully')
