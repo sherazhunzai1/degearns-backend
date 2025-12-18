@@ -10,6 +10,7 @@ const followRoutes = require('./followRoutes');
 const notificationRoutes = require('./notificationRoutes');
 const dropRoutes = require('./dropRoutes');
 const adminWalletRoutes = require('./adminWalletRoutes');
+const adminRoutes = require('./adminRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -21,6 +22,7 @@ router.use('/follow', followRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/drops', dropRoutes);
 router.use('/admin-wallets', adminWalletRoutes);
+router.use('/admin', adminRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

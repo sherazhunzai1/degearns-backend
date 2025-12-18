@@ -107,6 +107,17 @@ class XRPLConfig {
     return this.adminWallet;
   }
 
+  /**
+   * Get admin wallet address (safe method that doesn't throw)
+   * Returns null if admin wallet is not configured
+   */
+  getAdminWalletAddress() {
+    if (this.adminWallet) {
+      return this.adminWallet.address;
+    }
+    return null;
+  }
+
   getNetwork() {
     return this.network;
   }
