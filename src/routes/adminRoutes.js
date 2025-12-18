@@ -16,6 +16,54 @@ const {
   adminRewardsController
 } = require('../controllers/admin');
 
+const xrplConfig = require('../config/xrpl');
+
+// ============================================
+// DEBUG / DIAGNOSTIC ROUTES
+// ============================================
+
+// GET /admin/debug/platform-wallet - Debug platform wallet configuration
+router.get('/debug/platform-wallet', (req, res) => {
+  try {
+    const hasSeed = !!process.env.ADMIN_WALLET_SEED;
+    const hasSecretNumbers = !!process.env.ADMIN_WALLET_SECRET_NUMBERS;
+    const secretNumbersLength = process.env.ADMIN_WALLET_SECRET_NUMBERS
+      ? process.env.ADMIN_WALLET_SECRET_NUMBERS.split(',').length
+      : 0;
+
+    let walletAddress = null;
+    let error = null;
+
+    try {
+      const wallet = xrplConfig.getAdminWallet();
+      walletAddress = wallet?.address;
+    } catch (e) {
+      error = e.message;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        configuration: {
+          ADMIN_WALLET_SEED_SET: hasSeed,
+          ADMIN_WALLET_SECRET_NUMBERS_SET: hasSecretNumbers,
+          SECRET_NUMBERS_GROUPS_COUNT: secretNumbersLength,
+          ACTIVE_METHOD: hasSeed ? 'SEED (takes priority)' : (hasSecretNumbers ? 'SECRET_NUMBERS' : 'NONE')
+        },
+        derivedWallet: {
+          address: walletAddress,
+          error: error
+        },
+        hint: hasSeed && hasSecretNumbers
+          ? 'Both SEED and SECRET_NUMBERS are set. SEED takes priority!'
+          : null
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ============================================
 // DASHBOARD & ANALYTICS ROUTES
 // ============================================
