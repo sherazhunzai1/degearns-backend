@@ -438,3 +438,103 @@ exports.notifyNFTPurchase = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Get incoming offers for a wallet
+ * Returns buy offers on NFTs owned by the wallet with NFT details and accept transaction data
+ * @route GET /api/v1/nfts/incoming-offers/:walletAddress
+ */
+exports.getIncomingOffers = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Validate wallet address format (basic XRPL address validation)
+    if (!walletAddress.startsWith('r') || walletAddress.length < 25 || walletAddress.length > 35) {
+      throw new ApiError(400, 'Invalid wallet address format');
+    }
+
+    // Get incoming offers from XRPL service
+    const incomingOffers = await xrplService.getDetailedIncomingOffers(walletAddress);
+
+    // Enrich with user data from database
+    const enrichedBuyOffers = await Promise.all(
+      incomingOffers.buyOffers.map(async (offer) => {
+        // Get offerer info
+        let offererInfo = null;
+        try {
+          const offerer = await User.findOne({
+            where: { walletAddress: offer.offerer },
+            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+          });
+          if (offerer) {
+            offererInfo = {
+              walletAddress: offerer.walletAddress,
+              username: offerer.username,
+              profileImage: offerer.profileImage,
+              isVerified: offerer.isVerified
+            };
+          }
+        } catch (e) {
+          // Ignore error, offerer info is optional
+        }
+
+        // Get collection info
+        let collectionInfo = null;
+        try {
+          const collection = await Collection.findOne({
+            where: {
+              taxon: offer.nft.taxon,
+              creatorWalletAddress: offer.nft.issuer
+            },
+            attributes: ['id', 'name', 'slug', 'image', 'isVerified']
+          });
+          if (collection) {
+            collectionInfo = {
+              id: collection.id,
+              name: collection.name,
+              slug: collection.slug,
+              image: collection.image,
+              isVerified: collection.isVerified
+            };
+          }
+        } catch (e) {
+          // Ignore error, collection info is optional
+        }
+
+        return {
+          ...offer,
+          offererInfo,
+          collection: collectionInfo
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: {
+        walletAddress,
+        buyOffers: enrichedBuyOffers,
+        sellOffersForYou: incomingOffers.sellOffersForYou,
+        summary: {
+          totalBuyOffers: enrichedBuyOffers.length,
+          totalSellOffersForYou: incomingOffers.sellOffersForYou.length,
+          totalOffersCount: enrichedBuyOffers.length + incomingOffers.sellOffersForYou.length,
+          totalValueXrp: incomingOffers.summary.totalValueXrp
+        },
+        hint: {
+          buyOffers: 'These are offers from others wanting to buy NFTs you own. Use acceptTransaction data to accept via QR code.',
+          sellOffersForYou: 'These are sell offers specifically made for you to accept (destination = your wallet).',
+          acceptTransaction: 'The acceptTransaction object contains all fields needed for NFTokenAcceptOffer. Sign this with your wallet via QR code to accept the offer.'
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error getting incoming offers:', error);
+    next(error);
+  }
+};
