@@ -15,12 +15,15 @@ class XRPLConfig {
    * Supports two formats:
    * 1. ADMIN_WALLET_SEED - Family seed (starts with 's')
    * 2. ADMIN_WALLET_SECRET_NUMBERS - Comma-separated 8 groups of 6 digits
+   *
+   * Optional: ADMIN_WALLET_ALGORITHM - 'ed25519' or 'secp256k1' (default: 'ed25519' for secret numbers)
    */
   initializeAdminWallet() {
     try {
       // Option 1: Family Seed (e.g., sEdV...)
       if (process.env.ADMIN_WALLET_SEED) {
-        this.adminWallet = Wallet.fromSeed(process.env.ADMIN_WALLET_SEED);
+        const algorithm = process.env.ADMIN_WALLET_ALGORITHM || undefined;
+        this.adminWallet = Wallet.fromSeed(process.env.ADMIN_WALLET_SEED, { algorithm });
         logger.info(`Admin wallet initialized from seed: ${this.adminWallet.address}`);
         return;
       }
@@ -44,8 +47,11 @@ class XRPLConfig {
         }
 
         const entropy = secretToEntropy(secretNumbers);
-        this.adminWallet = Wallet.fromEntropy(entropy);
-        logger.info(`Admin wallet initialized from secret numbers: ${this.adminWallet.address}`);
+
+        // Default to ed25519 for secret numbers (XUMM uses ed25519)
+        const algorithm = process.env.ADMIN_WALLET_ALGORITHM || 'ed25519';
+        this.adminWallet = Wallet.fromEntropy(entropy, { algorithm });
+        logger.info(`Admin wallet initialized from secret numbers (${algorithm}): ${this.adminWallet.address}`);
         return;
       }
 
@@ -53,6 +59,37 @@ class XRPLConfig {
     } catch (error) {
       logger.error('Failed to initialize admin wallet:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Get wallet addresses for both algorithms (for debugging)
+   */
+  getWalletAddressesForBothAlgorithms() {
+    if (!process.env.ADMIN_WALLET_SECRET_NUMBERS) {
+      return null;
+    }
+
+    try {
+      const secretNumbers = process.env.ADMIN_WALLET_SECRET_NUMBERS
+        .split(',')
+        .map(num => num.trim());
+
+      if (secretNumbers.length !== 8) {
+        return null;
+      }
+
+      const entropy = secretToEntropy(secretNumbers);
+
+      const secp256k1Wallet = Wallet.fromEntropy(entropy, { algorithm: 'secp256k1' });
+      const ed25519Wallet = Wallet.fromEntropy(entropy, { algorithm: 'ed25519' });
+
+      return {
+        secp256k1: secp256k1Wallet.address,
+        ed25519: ed25519Wallet.address
+      };
+    } catch (error) {
+      return { error: error.message };
     }
   }
 
