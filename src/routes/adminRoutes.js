@@ -17,13 +17,14 @@ const {
 } = require('../controllers/admin');
 
 const xrplConfig = require('../config/xrpl');
+const xrplService = require('../services/xrplService');
 
 // ============================================
 // DEBUG / DIAGNOSTIC ROUTES
 // ============================================
 
 // GET /admin/debug/platform-wallet - Debug platform wallet configuration
-router.get('/debug/platform-wallet', (req, res) => {
+router.get('/debug/platform-wallet', async (req, res) => {
   try {
     const hasSeed = !!process.env.ADMIN_WALLET_SEED;
     const hasSecretNumbers = !!process.env.ADMIN_WALLET_SECRET_NUMBERS;
@@ -32,13 +33,29 @@ router.get('/debug/platform-wallet', (req, res) => {
       : 0;
 
     let walletAddress = null;
-    let error = null;
+    let walletError = null;
+    let balance = null;
+    let balanceXrp = null;
+    let balanceError = null;
 
     try {
       const wallet = xrplConfig.getAdminWallet();
       walletAddress = wallet?.address;
     } catch (e) {
-      error = e.message;
+      walletError = e.message;
+    }
+
+    // Fetch balance if wallet address is available
+    if (walletAddress) {
+      try {
+        const accountInfo = await xrplService.getAccountInfo(walletAddress);
+        if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+          balance = accountInfo.result.account_data.Balance;
+          balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+        }
+      } catch (e) {
+        balanceError = e.message;
+      }
     }
 
     res.json({
@@ -52,7 +69,12 @@ router.get('/debug/platform-wallet', (req, res) => {
         },
         derivedWallet: {
           address: walletAddress,
-          error: error
+          error: walletError
+        },
+        balance: {
+          drops: balance,
+          xrp: balanceXrp,
+          error: balanceError
         },
         hint: hasSeed && hasSecretNumbers
           ? 'Both SEED and SECRET_NUMBERS are set. SEED takes priority!'
