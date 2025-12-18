@@ -17,6 +17,8 @@ const DropNft = require('./DropNft')(sequelize, DataTypes);
 const DropAllowedWallet = require('./DropAllowedWallet')(sequelize, DataTypes);
 const DropMint = require('./DropMint')(sequelize, DataTypes);
 const AdminWallet = require('./AdminWallet')(sequelize, DataTypes);
+const PlatformSettings = require('./PlatformSettings')(sequelize, DataTypes);
+const AdminActivity = require('./AdminActivity')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -273,6 +275,18 @@ DropMint.belongsTo(User, {
   as: 'minter'
 });
 
+// User and AdminActivity associations
+User.hasMany(AdminActivity, {
+  foreignKey: 'adminWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'adminActivities'
+});
+AdminActivity.belongsTo(User, {
+  foreignKey: 'adminWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'admin'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -293,5 +307,7 @@ module.exports = {
   DropNft,
   DropAllowedWallet,
   DropMint,
-  AdminWallet
+  AdminWallet,
+  PlatformSettings,
+  AdminActivity
 };

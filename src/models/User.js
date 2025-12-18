@@ -49,6 +49,26 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'user',
       allowNull: false
     },
+    isBanned: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: 'Whether the user is banned'
+    },
+    banReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'Reason for ban (if banned)'
+    },
+    bannedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Date when user was banned'
+    },
+    bannedBy: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Wallet address of admin who banned the user'
+    },
     socialLinks: {
       type: DataTypes.JSON,
       allowNull: true,
