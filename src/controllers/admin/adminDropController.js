@@ -410,6 +410,7 @@ const updateDrop = async (req, res) => {
     twitterUrl,
     discordUrl,
     telegramUrl,
+    authorizedMinterWallet,
     reason
   } = req.body;
 
@@ -440,6 +441,7 @@ const updateDrop = async (req, res) => {
   if (twitterUrl !== undefined) updateData.twitterUrl = twitterUrl;
   if (discordUrl !== undefined) updateData.discordUrl = discordUrl;
   if (telegramUrl !== undefined) updateData.telegramUrl = telegramUrl;
+  if (authorizedMinterWallet !== undefined) updateData.authorizedMinterWallet = authorizedMinterWallet;
 
   await drop.update(updateData);
 
