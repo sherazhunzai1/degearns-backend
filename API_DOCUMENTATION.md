@@ -475,6 +475,107 @@ Get transaction history for a specific NFT.
 
 ---
 
+### Get Incoming Offers for Wallet
+
+**GET** `/nfts/incoming-offers/:walletAddress`
+
+Get all incoming buy offers on NFTs owned by a wallet. Returns NFT details (name, image, description) with each offer and transaction data for accepting offers via QR code signing.
+
+**Parameters:**
+- `walletAddress` (path parameter): The XRPL wallet address to get incoming offers for
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "walletAddress": "r8Ax6s9QUFh3hjQ3e9hndJX964g55g7Wv",
+    "buyOffers": [
+      {
+        "offerType": "buy",
+        "offerIndex": "5A0E2D3B4C5F6E7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5A6B7C8D9E0F1A",
+        "offerer": "rBuyerWalletAddress",
+        "offererInfo": {
+          "walletAddress": "rBuyerWalletAddress",
+          "username": "buyer_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "nft": {
+          "nftokenID": "00081388000000000000000000000000000000000000000000000000",
+          "name": "Cool NFT #123",
+          "description": "A unique digital artwork",
+          "image": "https://ipfs.io/ipfs/QmExample...",
+          "uri": "https://example.com/metadata.json",
+          "taxon": 127,
+          "issuer": "rIssuerWalletAddress",
+          "transferFee": 5000
+        },
+        "collection": {
+          "id": "uuid",
+          "name": "Cool Collection",
+          "slug": "cool-collection",
+          "image": "https://example.com/collection.jpg",
+          "isVerified": true
+        },
+        "price": {
+          "drops": "1000000",
+          "xrp": "1.000000"
+        },
+        "expiration": null,
+        "acceptTransaction": {
+          "TransactionType": "NFTokenAcceptOffer",
+          "Account": "r8Ax6s9QUFh3hjQ3e9hndJX964g55g7Wv",
+          "NFTokenBuyOffer": "5A0E2D3B4C5F6E7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5A6B7C8D9E0F1A"
+        }
+      }
+    ],
+    "sellOffersForYou": [],
+    "summary": {
+      "totalBuyOffers": 1,
+      "totalSellOffersForYou": 0,
+      "totalOffersCount": 1,
+      "totalValueXrp": "1.000000"
+    },
+    "hint": {
+      "buyOffers": "These are offers from others wanting to buy NFTs you own. Use acceptTransaction data to accept via QR code.",
+      "sellOffersForYou": "These are sell offers specifically made for you to accept (destination = your wallet).",
+      "acceptTransaction": "The acceptTransaction object contains all fields needed for NFTokenAcceptOffer. Sign this with your wallet via QR code to accept the offer."
+    }
+  }
+}
+```
+
+**Response Fields:**
+- `buyOffers`: Array of buy offers on NFTs you own
+  - `offerType`: Type of offer ("buy")
+  - `offerIndex`: XRPL offer index (used for accepting)
+  - `offerer`: Wallet address of the person making the offer
+  - `offererInfo`: User info from database (if registered)
+  - `nft`: NFT details including metadata (name, image, description)
+  - `collection`: Collection info from database (if registered)
+  - `price`: Offer amount in drops and XRP
+  - `expiration`: Offer expiration time (null if no expiration)
+  - `acceptTransaction`: Transaction data for signing via QR code to accept the offer
+- `sellOffersForYou`: Array of sell offers where you are the destination
+- `summary`: Summary statistics of all offers
+
+**Accepting an Offer via QR Code:**
+1. Take the `acceptTransaction` object from the offer
+2. Encode it as a QR code for the user to scan with their XRPL wallet app
+3. The wallet app will sign and submit the `NFTokenAcceptOffer` transaction
+4. Once accepted, the NFT is transferred and payment is received
+
+**Error (400):**
+```json
+{
+  "success": false,
+  "message": "Invalid wallet address format"
+}
+```
+
+---
+
 ## Collection Endpoints
 
 Collections store **metadata only** in the database. NFTs are fetched from the XRPL blockchain using the collection's **taxon** field.
