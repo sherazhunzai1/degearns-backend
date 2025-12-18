@@ -303,6 +303,81 @@ class XRPLService {
   }
 
   /**
+   * Get NFT info including owner (uses nft_info command)
+   * Note: This requires Clio server or rippled with nft_info support
+   */
+  async getNFTInfo(nftokenID) {
+    try {
+      const client = xrplConfig.getClient();
+      const response = await client.request({
+        command: 'nft_info',
+        nft_id: nftokenID
+      });
+      return response.result;
+    } catch (error) {
+      // If nft_info is not supported, return null
+      if (error.data && (error.data.error === 'unknownCmd' || error.data.error === 'objectNotFound')) {
+        return null;
+      }
+      logger.error('Error getting NFT info:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get NFT details with owner and sell offers
+   */
+  async getNFTDetailsWithOffers(nftokenID) {
+    try {
+      const [nftInfo, sellOffers] = await Promise.all([
+        this.getNFTInfo(nftokenID),
+        this.getNFTSellOffers(nftokenID)
+      ]);
+
+      // Find the lowest sell offer (floor price)
+      let lowestOffer = null;
+      if (sellOffers && sellOffers.length > 0) {
+        lowestOffer = sellOffers.reduce((lowest, offer) => {
+          const amount = typeof offer.amount === 'string' ? parseInt(offer.amount) : offer.amount;
+          const lowestAmount = lowest ? (typeof lowest.amount === 'string' ? parseInt(lowest.amount) : lowest.amount) : Infinity;
+          return amount < lowestAmount ? offer : lowest;
+        }, null);
+      }
+
+      return {
+        nftokenID,
+        owner: nftInfo?.owner || null,
+        issuer: nftInfo?.issuer || null,
+        uri: nftInfo?.uri || null,
+        flags: nftInfo?.flags || null,
+        transferFee: nftInfo?.transfer_fee || null,
+        isListed: sellOffers.length > 0,
+        sellOffers: sellOffers,
+        sellOffersCount: sellOffers.length,
+        lowestSellOffer: lowestOffer ? {
+          offerID: lowestOffer.nft_offer_index,
+          owner: lowestOffer.owner,
+          amount: lowestOffer.amount,
+          amountXrp: (parseInt(lowestOffer.amount) / 1000000).toFixed(6),
+          destination: lowestOffer.destination || null,
+          expiration: lowestOffer.expiration || null
+        } : null
+      };
+    } catch (error) {
+      logger.error('Error getting NFT details with offers:', error);
+      return {
+        nftokenID,
+        owner: null,
+        isListed: false,
+        sellOffers: [],
+        sellOffersCount: 0,
+        lowestSellOffer: null,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Get transaction details
    */
   async getTransaction(txHash) {
