@@ -31,6 +31,7 @@ router.get('/debug/platform-wallet', async (req, res) => {
     const secretNumbersLength = process.env.ADMIN_WALLET_SECRET_NUMBERS
       ? process.env.ADMIN_WALLET_SECRET_NUMBERS.split(',').length
       : 0;
+    const configuredAlgorithm = process.env.ADMIN_WALLET_ALGORITHM || (hasSecretNumbers ? 'ed25519' : 'auto');
 
     let walletAddress = null;
     let walletError = null;
@@ -44,6 +45,9 @@ router.get('/debug/platform-wallet', async (req, res) => {
     } catch (e) {
       walletError = e.message;
     }
+
+    // Get addresses for both algorithms (for debugging)
+    const bothAlgorithms = xrplConfig.getWalletAddressesForBothAlgorithms();
 
     // Fetch balance if wallet address is available
     if (walletAddress) {
@@ -65,20 +69,23 @@ router.get('/debug/platform-wallet', async (req, res) => {
           ADMIN_WALLET_SEED_SET: hasSeed,
           ADMIN_WALLET_SECRET_NUMBERS_SET: hasSecretNumbers,
           SECRET_NUMBERS_GROUPS_COUNT: secretNumbersLength,
+          ADMIN_WALLET_ALGORITHM: configuredAlgorithm,
           ACTIVE_METHOD: hasSeed ? 'SEED (takes priority)' : (hasSecretNumbers ? 'SECRET_NUMBERS' : 'NONE')
         },
         derivedWallet: {
           address: walletAddress,
+          algorithm: configuredAlgorithm,
           error: walletError
         },
+        bothAlgorithms: bothAlgorithms,
         balance: {
           drops: balance,
           xrp: balanceXrp,
           error: balanceError
         },
-        hint: hasSeed && hasSecretNumbers
-          ? 'Both SEED and SECRET_NUMBERS are set. SEED takes priority!'
-          : null
+        hint: bothAlgorithms && !bothAlgorithms.error
+          ? `If your wallet is not "${walletAddress}", check bothAlgorithms above. Set ADMIN_WALLET_ALGORITHM=secp256k1 or ADMIN_WALLET_ALGORITHM=ed25519 in .env`
+          : (hasSeed && hasSecretNumbers ? 'Both SEED and SECRET_NUMBERS are set. SEED takes priority!' : null)
       }
     });
   } catch (err) {
