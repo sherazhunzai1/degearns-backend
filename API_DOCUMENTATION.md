@@ -5869,30 +5869,54 @@ Mint NFTs from a drop after user has paid the creator. The platform wallet (auth
         "destination": "rBuyerWallet..."
       }
     ],
-    "qrCodeData": [
-      {
-        "offerID": "OFFER_ID_1",
-        "nftTokenId": "000800006203F...",
-        "xrplTx": {
-          "TransactionType": "NFTokenAcceptOffer",
-          "NFTokenSellOffer": "OFFER_ID_1"
-        }
+    "claimData": {
+      "totalOffers": 2,
+      "offerIds": ["OFFER_ID_1", "OFFER_ID_2"],
+      "batchPayload": {
+        "type": "NFT_CLAIM_BATCH",
+        "buyer": "rBuyerWallet...",
+        "drop": {
+          "taxonId": 843,
+          "name": "My NFT Collection"
+        },
+        "offers": ["OFFER_ID_1", "OFFER_ID_2"],
+        "transactions": [
+          {
+            "TransactionType": "NFTokenAcceptOffer",
+            "NFTokenSellOffer": "OFFER_ID_1"
+          },
+          {
+            "TransactionType": "NFTokenAcceptOffer",
+            "NFTokenSellOffer": "OFFER_ID_2"
+          }
+        ]
       },
-      {
-        "offerID": "OFFER_ID_2",
-        "nftTokenId": "000800006203F...",
-        "xrplTx": {
-          "TransactionType": "NFTokenAcceptOffer",
-          "NFTokenSellOffer": "OFFER_ID_2"
-        }
+      "qrCode": {
+        "type": "BATCH_NFT_ACCEPT",
+        "version": "1.0",
+        "buyer": "rBuyerWallet...",
+        "offerCount": 2,
+        "offerIds": ["OFFER_ID_1", "OFFER_ID_2"],
+        "primaryOffer": "OFFER_ID_1",
+        "transactions": [
+          {
+            "TransactionType": "NFTokenAcceptOffer",
+            "NFTokenSellOffer": "OFFER_ID_1"
+          },
+          {
+            "TransactionType": "NFTokenAcceptOffer",
+            "NFTokenSellOffer": "OFFER_ID_2"
+          }
+        ]
       }
-    ],
+    },
     "instructions": {
-      "message": "Accept the sell offers to claim your NFTs",
+      "message": "Accept all 2 sell offers to claim your NFTs",
+      "note": "XRPL requires accepting each offer individually, but your wallet can process them in sequence",
       "steps": [
         "1. Use your XRPL wallet (XUMM, GemWallet, etc.)",
-        "2. Accept each sell offer using the offerID",
-        "3. The NFTs will be transferred to your wallet for free"
+        "2. Sign the batch transaction or accept offers sequentially",
+        "3. All NFTs will be transferred to your wallet for free"
       ]
     }
   },
