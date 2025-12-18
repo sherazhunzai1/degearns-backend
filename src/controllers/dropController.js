@@ -3578,16 +3578,45 @@ const mintDropNftsByTaxon = async (req, res, next) => {
 
     await transaction.commit();
 
-    // Generate QR code data for accepting offers
-    const qrCodeData = offers.map(offer => ({
-      offerID: offer.offerID,
-      nftTokenId: offer.nftTokenId,
-      // QR data for XUMM or other wallet apps
-      xrplTx: {
-        TransactionType: 'NFTokenAcceptOffer',
-        NFTokenSellOffer: offer.offerID
-      }
+    // Generate consolidated claim data for accepting all offers
+    // Note: XRPL requires one NFTokenAcceptOffer per NFT, but we batch them for UX
+    const offerIds = offers.map(offer => offer.offerID);
+
+    // Individual transactions (required by XRPL)
+    const individualTransactions = offers.map(offer => ({
+      TransactionType: 'NFTokenAcceptOffer',
+      NFTokenSellOffer: offer.offerID
     }));
+
+    // Consolidated claim object for frontend
+    const claimData = {
+      totalOffers: offers.length,
+      offerIds: offerIds,
+      // Single payload containing all offer IDs for batch processing
+      batchPayload: {
+        type: 'NFT_CLAIM_BATCH',
+        buyer: buyerWalletAddress,
+        drop: {
+          taxonId: drop.taxonId,
+          name: drop.name
+        },
+        offers: offerIds,
+        // For XUMM batch signing or sequential processing
+        transactions: individualTransactions
+      },
+      // QR code data - single object with all offers for scanning
+      qrCode: {
+        type: 'BATCH_NFT_ACCEPT',
+        version: '1.0',
+        buyer: buyerWalletAddress,
+        offerCount: offers.length,
+        offerIds: offerIds,
+        // First offer for single scan (frontend can iterate through rest)
+        primaryOffer: offerIds[0] || null,
+        // All transactions to execute
+        transactions: individualTransactions
+      }
+    };
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -3611,15 +3640,19 @@ const mintDropNftsByTaxon = async (req, res, next) => {
         },
         mintedNfts: mintedNfts,
         offers: offers,
-        qrCodeData: qrCodeData,
+        // Consolidated claim data for single-action claiming
+        claimData: claimData,
         errors: errors.length > 0 ? errors : undefined,
         // Instructions for claiming
         instructions: {
-          message: 'Accept the sell offers to claim your NFTs',
+          message: offers.length === 1
+            ? 'Accept the sell offer to claim your NFT'
+            : `Accept all ${offers.length} sell offers to claim your NFTs`,
+          note: 'XRPL requires accepting each offer individually, but your wallet can process them in sequence',
           steps: [
             '1. Use your XRPL wallet (XUMM, GemWallet, etc.)',
-            '2. Accept each sell offer using the offerID',
-            '3. The NFTs will be transferred to your wallet for free'
+            '2. Sign the batch transaction or accept offers sequentially',
+            '3. All NFTs will be transferred to your wallet for free'
           ]
         }
       }, `Successfully minted ${mintedNfts.length} NFT(s)`)
