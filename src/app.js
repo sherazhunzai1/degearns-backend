@@ -21,6 +21,7 @@ app.use(helmet());
 // CORS
 const allowedOrigins = [
   'https://degearns.com',
+  'https://admin.degearns.com',
   'http://localhost:3000',
   'http://localhost:3001'
 ];
