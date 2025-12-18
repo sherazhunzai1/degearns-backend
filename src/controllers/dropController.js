@@ -3431,7 +3431,8 @@ const mintDropNftsByTaxon = async (req, res, next) => {
 
     // Verify admin wallet is authorized minter for this drop
     if (drop.authorizedMinterWallet !== adminWallet.address) {
-      throw new ApiError(500, 'Platform wallet is not authorized to mint for this drop');
+      logger.error(`Authorized minter mismatch - Drop authorizedMinterWallet: ${drop.authorizedMinterWallet}, Platform wallet: ${adminWallet.address}`);
+      throw new ApiError(500, `Platform wallet is not authorized to mint for this drop. Drop expects: ${drop.authorizedMinterWallet}, Platform has: ${adminWallet.address}`);
     }
 
     // Reserve the NFTs first
