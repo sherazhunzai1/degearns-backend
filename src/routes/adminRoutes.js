@@ -12,7 +12,8 @@ const {
   adminPostController,
   adminDashboardController,
   adminSettingsController,
-  adminFeeController
+  adminFeeController,
+  adminRewardsController
 } = require('../controllers/admin');
 
 // ============================================
@@ -228,5 +229,52 @@ router.put('/fees/:dropId/mark-paid', adminFeeController.markFeesAsPaid);
 
 // PUT /admin/fees/:dropId/mark-refunded - Mark fees as refunded
 router.put('/fees/:dropId/mark-refunded', adminFeeController.markFeesAsRefunded);
+
+// ============================================
+// REWARDS & TOP PERFORMERS ROUTES
+// ============================================
+
+// GET /admin/rewards/top-performers - Get all top performers (traders, creators, influencers)
+router.get('/rewards/top-performers', adminRewardsController.getAllTopPerformers);
+
+// GET /admin/rewards/top-traders - Get top 10 traders
+router.get('/rewards/top-traders', adminRewardsController.getTopTraders);
+
+// GET /admin/rewards/top-creators - Get top 10 creators
+router.get('/rewards/top-creators', adminRewardsController.getTopCreators);
+
+// GET /admin/rewards/top-influencers - Get top 10 influencers
+router.get('/rewards/top-influencers', adminRewardsController.getTopInfluencers);
+
+// GET /admin/rewards/config - Get reward configuration
+router.get('/rewards/config', adminRewardsController.getRewardConfig);
+
+// POST /admin/rewards/distribute - Distribute rewards to top performers
+router.post('/rewards/distribute', adminRewardsController.distributeRewards);
+
+// GET /admin/rewards/history - Get reward distribution history
+router.get('/rewards/history', adminRewardsController.getRewardHistory);
+
+// GET /admin/rewards/summary - Get reward summary by period
+router.get('/rewards/summary', adminRewardsController.getRewardSummary);
+
+// ============================================
+// ADMIN WALLET MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/wallets - Get all admin wallets
+router.get('/wallets', adminRewardsController.getAllAdminWallets);
+
+// GET /admin/wallets/platform-fees - Get platform fees wallet
+router.get('/wallets/platform-fees', adminRewardsController.getPlatformFeesWallet);
+
+// PUT /admin/wallets/platform-fees - Update platform fees wallet
+router.put('/wallets/platform-fees', adminRewardsController.updatePlatformFeesWallet);
+
+// POST /admin/wallets - Create or update admin wallet
+router.post('/wallets', adminRewardsController.upsertAdminWallet);
+
+// DELETE /admin/wallets/:walletId - Delete admin wallet
+router.delete('/wallets/:walletId', adminRewardsController.deleteAdminWallet);
 
 module.exports = router;

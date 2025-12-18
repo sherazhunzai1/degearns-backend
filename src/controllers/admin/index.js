@@ -5,6 +5,7 @@ const adminPostController = require('./adminPostController');
 const adminDashboardController = require('./adminDashboardController');
 const adminSettingsController = require('./adminSettingsController');
 const adminFeeController = require('./adminFeeController');
+const adminRewardsController = require('./adminRewardsController');
 
 module.exports = {
   adminUserController,
@@ -13,5 +14,6 @@ module.exports = {
   adminPostController,
   adminDashboardController,
   adminSettingsController,
-  adminFeeController
+  adminFeeController,
+  adminRewardsController
 };

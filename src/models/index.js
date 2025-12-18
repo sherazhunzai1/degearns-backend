@@ -19,6 +19,7 @@ const DropMint = require('./DropMint')(sequelize, DataTypes);
 const AdminWallet = require('./AdminWallet')(sequelize, DataTypes);
 const PlatformSettings = require('./PlatformSettings')(sequelize, DataTypes);
 const AdminActivity = require('./AdminActivity')(sequelize, DataTypes);
+const RewardDistribution = require('./RewardDistribution')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -287,6 +288,18 @@ AdminActivity.belongsTo(User, {
   as: 'admin'
 });
 
+// User and RewardDistribution associations
+User.hasMany(RewardDistribution, {
+  foreignKey: 'recipientWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'rewards'
+});
+RewardDistribution.belongsTo(User, {
+  foreignKey: 'recipientWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'recipient'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -309,5 +322,6 @@ module.exports = {
   DropMint,
   AdminWallet,
   PlatformSettings,
-  AdminActivity
+  AdminActivity,
+  RewardDistribution
 };
