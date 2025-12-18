@@ -5768,3 +5768,161 @@ The `GET /drops/creator/:walletAddress` endpoint now includes workflow step info
 | GET | `/drops/taxon/:taxonId/dashboard` | Get complete dashboard data (creator) |
 | PUT | `/drops/taxon/:taxonId/platform-fees` | Update fees payment status |
 | PUT | `/drops/taxon/:taxonId/authorize-minter` | Authorize minter wallet |
+| PUT | `/drops/taxon/:taxonId/settings` | Update drop settings |
+| POST | `/drops/taxon/:taxonId/mint` | Mint NFTs after payment |
+
+---
+
+### Mint Drop NFTs by TaxonId
+
+Mint NFTs from a drop after user has paid the creator. The platform wallet (authorized minter) mints NFTs on behalf of the creator and creates 0 XRP sell offers for the buyer to claim.
+
+**Endpoint:** `POST /drops/taxon/:taxonId/mint`
+
+**Flow:**
+1. User pays mint fee directly to creator from frontend
+2. Frontend calls this API with payment details
+3. API validates payment and calculates NFTs to mint (totalAmountPaid / mintPrice)
+4. Platform wallet mints random NFTs from the drop
+5. Creates 0 XRP sell offers to transfer NFTs to buyer
+6. Returns offer details for user to accept and claim NFTs
+
+**Request Body:**
+```json
+{
+  "paymentTransactionHash": "ABCD1234...",
+  "totalAmountPaid": "10000000",
+  "creatorWalletAddress": "rCreatorWallet...",
+  "buyerWalletAddress": "rBuyerWallet..."
+}
+```
+
+**Request Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `paymentTransactionHash` | String | Yes | XRPL transaction hash of payment to creator |
+| `totalAmountPaid` | String | Yes | Total amount paid in drops (1 XRP = 1,000,000 drops) |
+| `creatorWalletAddress` | String | Yes | Creator wallet address of the drop |
+| `buyerWalletAddress` | String | Yes | Buyer wallet address who paid |
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "data": {
+    "success": true,
+    "drop": {
+      "id": "uuid",
+      "taxonId": 843,
+      "name": "My NFT Collection"
+    },
+    "payment": {
+      "transactionHash": "ABCD1234...",
+      "totalAmountPaid": "10000000",
+      "totalAmountPaidXrp": "10.000000",
+      "mintPrice": "5000000",
+      "mintPriceXrp": "5.000000"
+    },
+    "minting": {
+      "requested": 2,
+      "successful": 2,
+      "failed": 0
+    },
+    "mintedNfts": [
+      {
+        "id": "nft-uuid-1",
+        "name": "Cosmic Creature #42",
+        "description": "A unique cosmic creature",
+        "image": "ipfs://...",
+        "attributes": [...],
+        "nftTokenId": "000800006203F...",
+        "mintTransactionHash": "MINT_TX_HASH_1"
+      },
+      {
+        "id": "nft-uuid-2",
+        "name": "Cosmic Creature #156",
+        "description": "Another unique cosmic creature",
+        "image": "ipfs://...",
+        "attributes": [...],
+        "nftTokenId": "000800006203F...",
+        "mintTransactionHash": "MINT_TX_HASH_2"
+      }
+    ],
+    "offers": [
+      {
+        "offerID": "OFFER_ID_1",
+        "offerTransactionHash": "OFFER_TX_HASH_1",
+        "nftTokenId": "000800006203F...",
+        "nftName": "Cosmic Creature #42",
+        "nftImage": "ipfs://...",
+        "amount": "0",
+        "destination": "rBuyerWallet..."
+      },
+      {
+        "offerID": "OFFER_ID_2",
+        "offerTransactionHash": "OFFER_TX_HASH_2",
+        "nftTokenId": "000800006203F...",
+        "nftName": "Cosmic Creature #156",
+        "nftImage": "ipfs://...",
+        "amount": "0",
+        "destination": "rBuyerWallet..."
+      }
+    ],
+    "qrCodeData": [
+      {
+        "offerID": "OFFER_ID_1",
+        "nftTokenId": "000800006203F...",
+        "xrplTx": {
+          "TransactionType": "NFTokenAcceptOffer",
+          "NFTokenSellOffer": "OFFER_ID_1"
+        }
+      },
+      {
+        "offerID": "OFFER_ID_2",
+        "nftTokenId": "000800006203F...",
+        "xrplTx": {
+          "TransactionType": "NFTokenAcceptOffer",
+          "NFTokenSellOffer": "OFFER_ID_2"
+        }
+      }
+    ],
+    "instructions": {
+      "message": "Accept the sell offers to claim your NFTs",
+      "steps": [
+        "1. Use your XRPL wallet (XUMM, GemWallet, etc.)",
+        "2. Accept each sell offer using the offerID",
+        "3. The NFTs will be transferred to your wallet for free"
+      ]
+    }
+  },
+  "message": "Successfully minted 2 NFT(s)"
+}
+```
+
+**Validation Checks:**
+- Drop must exist with given taxonId and creatorWalletAddress
+- Drop status must be `active`
+- `isMintingEnabled` must be `true`
+- Drop must be within schedule (startDate/endDate)
+- Payment amount must be sufficient for at least 1 NFT
+- Wallet must not exceed mint limit (if set)
+- Wallet must be on allowlist (if allowlist is enabled)
+- Available NFTs must exist in the drop
+- Platform wallet must be the authorized minter
+
+**Error Responses:**
+| Code | Message |
+|------|---------|
+| 400 | Payment transaction hash is required |
+| 400 | Drop is not active |
+| 400 | Minting is not enabled for this drop |
+| 400 | Drop has not started yet |
+| 400 | Drop has ended |
+| 400 | Insufficient payment |
+| 400 | Wallet has reached the mint limit |
+| 400 | No NFTs available for minting |
+| 403 | Wallet is not on the allowlist |
+| 404 | Drop not found |
+| 500 | Platform minting wallet is not configured |
+| 500 | Platform wallet is not authorized to mint |
