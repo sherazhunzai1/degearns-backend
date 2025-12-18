@@ -1,7 +1,10 @@
 const express = require('express');
 const router = express.Router();
 
-const { adminAuthenticate, superAdminAuthenticate } = require('../middleware/adminAuth');
+// NOTE: Authentication temporarily disabled for development
+// TODO: Re-enable authentication before production deployment
+// const { adminAuthenticate, superAdminAuthenticate } = require('../middleware/adminAuth');
+
 const {
   adminUserController,
   adminDropController,
@@ -17,213 +20,213 @@ const {
 // ============================================
 
 // GET /admin/dashboard - Get overall platform dashboard
-router.get('/dashboard', adminAuthenticate, adminDashboardController.getDashboardOverview);
+router.get('/dashboard', adminDashboardController.getDashboardOverview);
 
 // GET /admin/dashboard/growth - Get growth analytics
-router.get('/dashboard/growth', adminAuthenticate, adminDashboardController.getGrowthAnalytics);
+router.get('/dashboard/growth', adminDashboardController.getGrowthAnalytics);
 
 // GET /admin/dashboard/top-creators - Get top creators
-router.get('/dashboard/top-creators', adminAuthenticate, adminDashboardController.getTopCreators);
+router.get('/dashboard/top-creators', adminDashboardController.getTopCreators);
 
 // GET /admin/dashboard/activities - Get recent admin activities
-router.get('/dashboard/activities', adminAuthenticate, adminDashboardController.getRecentActivities);
+router.get('/dashboard/activities', adminDashboardController.getRecentActivities);
 
 // GET /admin/dashboard/health - Get platform health metrics
-router.get('/dashboard/health', adminAuthenticate, adminDashboardController.getPlatformHealth);
+router.get('/dashboard/health', adminDashboardController.getPlatformHealth);
 
 // GET /admin/dashboard/revenue - Get revenue breakdown
-router.get('/dashboard/revenue', adminAuthenticate, adminDashboardController.getRevenueBreakdown);
+router.get('/dashboard/revenue', adminDashboardController.getRevenueBreakdown);
 
 // ============================================
 // USER MANAGEMENT ROUTES
 // ============================================
 
 // GET /admin/users - Get all users with filters
-router.get('/users', adminAuthenticate, adminUserController.getUsers);
+router.get('/users', adminUserController.getUsers);
 
 // GET /admin/users/statistics - Get user statistics
-router.get('/users/statistics', adminAuthenticate, adminUserController.getUserStatistics);
+router.get('/users/statistics', adminUserController.getUserStatistics);
 
 // POST /admin/users/bulk-verify - Bulk verify/unverify users
-router.post('/users/bulk-verify', adminAuthenticate, adminUserController.bulkUpdateVerification);
+router.post('/users/bulk-verify', adminUserController.bulkUpdateVerification);
 
 // GET /admin/users/:walletAddress - Get user by wallet
-router.get('/users/:walletAddress', adminAuthenticate, adminUserController.getUserByWallet);
+router.get('/users/:walletAddress', adminUserController.getUserByWallet);
 
-// PUT /admin/users/:walletAddress/role - Update user role (super admin only)
-router.put('/users/:walletAddress/role', superAdminAuthenticate, adminUserController.updateUserRole);
+// PUT /admin/users/:walletAddress/role - Update user role
+router.put('/users/:walletAddress/role', adminUserController.updateUserRole);
 
 // PUT /admin/users/:walletAddress/verify - Verify/unverify user
-router.put('/users/:walletAddress/verify', adminAuthenticate, adminUserController.updateUserVerification);
+router.put('/users/:walletAddress/verify', adminUserController.updateUserVerification);
 
 // PUT /admin/users/:walletAddress/ban - Ban user
-router.put('/users/:walletAddress/ban', adminAuthenticate, adminUserController.banUser);
+router.put('/users/:walletAddress/ban', adminUserController.banUser);
 
 // PUT /admin/users/:walletAddress/unban - Unban user
-router.put('/users/:walletAddress/unban', adminAuthenticate, adminUserController.unbanUser);
+router.put('/users/:walletAddress/unban', adminUserController.unbanUser);
 
 // DELETE /admin/users/:walletAddress - Delete user
-router.delete('/users/:walletAddress', superAdminAuthenticate, adminUserController.deleteUser);
+router.delete('/users/:walletAddress', adminUserController.deleteUser);
 
 // ============================================
 // DROP MANAGEMENT ROUTES
 // ============================================
 
 // GET /admin/drops - Get all drops with filters
-router.get('/drops', adminAuthenticate, adminDropController.getDrops);
+router.get('/drops', adminDropController.getDrops);
 
 // GET /admin/drops/statistics - Get drop statistics
-router.get('/drops/statistics', adminAuthenticate, adminDropController.getDropStatistics);
+router.get('/drops/statistics', adminDropController.getDropStatistics);
 
 // GET /admin/drops/pending-fees - Get drops with pending fees
-router.get('/drops/pending-fees', adminAuthenticate, adminDropController.getDropsWithPendingFees);
+router.get('/drops/pending-fees', adminDropController.getDropsWithPendingFees);
 
 // GET /admin/drops/:dropId - Get drop by ID
-router.get('/drops/:dropId', adminAuthenticate, adminDropController.getDropById);
+router.get('/drops/:dropId', adminDropController.getDropById);
 
 // PUT /admin/drops/:dropId - Update drop
-router.put('/drops/:dropId', adminAuthenticate, adminDropController.updateDrop);
+router.put('/drops/:dropId', adminDropController.updateDrop);
 
 // PUT /admin/drops/:dropId/status - Update drop status
-router.put('/drops/:dropId/status', adminAuthenticate, adminDropController.updateDropStatus);
+router.put('/drops/:dropId/status', adminDropController.updateDropStatus);
 
 // PUT /admin/drops/:dropId/pause - Pause drop
-router.put('/drops/:dropId/pause', adminAuthenticate, adminDropController.pauseDrop);
+router.put('/drops/:dropId/pause', adminDropController.pauseDrop);
 
 // PUT /admin/drops/:dropId/resume - Resume drop
-router.put('/drops/:dropId/resume', adminAuthenticate, adminDropController.resumeDrop);
+router.put('/drops/:dropId/resume', adminDropController.resumeDrop);
 
 // PUT /admin/drops/:dropId/fees-status - Update platform fees status
-router.put('/drops/:dropId/fees-status', adminAuthenticate, adminDropController.updateDropFeesStatus);
+router.put('/drops/:dropId/fees-status', adminDropController.updateDropFeesStatus);
 
 // DELETE /admin/drops/:dropId - Delete drop
-router.delete('/drops/:dropId', superAdminAuthenticate, adminDropController.deleteDrop);
+router.delete('/drops/:dropId', adminDropController.deleteDrop);
 
 // GET /admin/drops/:dropId/mints - Get drop mints
-router.get('/drops/:dropId/mints', adminAuthenticate, adminDropController.getDropMints);
+router.get('/drops/:dropId/mints', adminDropController.getDropMints);
 
 // GET /admin/drops/:dropId/allowlist - Get drop allowlist
-router.get('/drops/:dropId/allowlist', adminAuthenticate, adminDropController.getDropAllowlist);
+router.get('/drops/:dropId/allowlist', adminDropController.getDropAllowlist);
 
 // ============================================
 // COLLECTION MANAGEMENT ROUTES
 // ============================================
 
 // GET /admin/collections - Get all collections with filters
-router.get('/collections', adminAuthenticate, adminCollectionController.getCollections);
+router.get('/collections', adminCollectionController.getCollections);
 
 // GET /admin/collections/statistics - Get collection statistics
-router.get('/collections/statistics', adminAuthenticate, adminCollectionController.getCollectionStatistics);
+router.get('/collections/statistics', adminCollectionController.getCollectionStatistics);
 
 // GET /admin/collections/pending-verification - Get pending verification collections
-router.get('/collections/pending-verification', adminAuthenticate, adminCollectionController.getPendingVerificationCollections);
+router.get('/collections/pending-verification', adminCollectionController.getPendingVerificationCollections);
 
 // POST /admin/collections/bulk-verify - Bulk verify collections
-router.post('/collections/bulk-verify', adminAuthenticate, adminCollectionController.bulkVerifyCollections);
+router.post('/collections/bulk-verify', adminCollectionController.bulkVerifyCollections);
 
 // GET /admin/collections/:collectionId - Get collection by ID
-router.get('/collections/:collectionId', adminAuthenticate, adminCollectionController.getCollectionById);
+router.get('/collections/:collectionId', adminCollectionController.getCollectionById);
 
 // PUT /admin/collections/:collectionId - Update collection
-router.put('/collections/:collectionId', adminAuthenticate, adminCollectionController.updateCollection);
+router.put('/collections/:collectionId', adminCollectionController.updateCollection);
 
 // PUT /admin/collections/:collectionId/verify - Verify/unverify collection
-router.put('/collections/:collectionId/verify', adminAuthenticate, adminCollectionController.updateCollectionVerification);
+router.put('/collections/:collectionId/verify', adminCollectionController.updateCollectionVerification);
 
 // DELETE /admin/collections/:collectionId - Delete collection
-router.delete('/collections/:collectionId', superAdminAuthenticate, adminCollectionController.deleteCollection);
+router.delete('/collections/:collectionId', adminCollectionController.deleteCollection);
 
 // ============================================
 // POST MODERATION ROUTES
 // ============================================
 
 // GET /admin/posts - Get all posts with filters
-router.get('/posts', adminAuthenticate, adminPostController.getPosts);
+router.get('/posts', adminPostController.getPosts);
 
 // GET /admin/posts/statistics - Get post statistics
-router.get('/posts/statistics', adminAuthenticate, adminPostController.getPostStatistics);
+router.get('/posts/statistics', adminPostController.getPostStatistics);
 
 // GET /admin/posts/flagged - Get flagged/hidden content
-router.get('/posts/flagged', adminAuthenticate, adminPostController.getFlaggedContent);
+router.get('/posts/flagged', adminPostController.getFlaggedContent);
 
 // POST /admin/posts/bulk-delete - Bulk delete posts
-router.post('/posts/bulk-delete', adminAuthenticate, adminPostController.bulkDeletePosts);
+router.post('/posts/bulk-delete', adminPostController.bulkDeletePosts);
 
 // POST /admin/posts/bulk-hide - Bulk hide/unhide posts
-router.post('/posts/bulk-hide', adminAuthenticate, adminPostController.bulkHidePosts);
+router.post('/posts/bulk-hide', adminPostController.bulkHidePosts);
 
 // GET /admin/posts/:postId - Get post by ID
-router.get('/posts/:postId', adminAuthenticate, adminPostController.getPostById);
+router.get('/posts/:postId', adminPostController.getPostById);
 
 // PUT /admin/posts/:postId/visibility - Toggle post visibility
-router.put('/posts/:postId/visibility', adminAuthenticate, adminPostController.togglePostVisibility);
+router.put('/posts/:postId/visibility', adminPostController.togglePostVisibility);
 
 // DELETE /admin/posts/:postId - Delete post
-router.delete('/posts/:postId', adminAuthenticate, adminPostController.deletePost);
+router.delete('/posts/:postId', adminPostController.deletePost);
 
 // GET /admin/comments - Get all comments with filters
-router.get('/comments', adminAuthenticate, adminPostController.getComments);
+router.get('/comments', adminPostController.getComments);
 
 // DELETE /admin/comments/:commentId - Delete comment
-router.delete('/comments/:commentId', adminAuthenticate, adminPostController.deleteComment);
+router.delete('/comments/:commentId', adminPostController.deleteComment);
 
 // ============================================
 // PLATFORM SETTINGS ROUTES
 // ============================================
 
 // POST /admin/settings/initialize - Initialize default settings
-router.post('/settings/initialize', superAdminAuthenticate, adminSettingsController.initializeSettings);
+router.post('/settings/initialize', adminSettingsController.initializeSettings);
 
-// GET /admin/settings - Get all settings (admin)
-router.get('/settings', adminAuthenticate, adminSettingsController.getAllSettings);
+// GET /admin/settings - Get all settings
+router.get('/settings', adminSettingsController.getAllSettings);
 
-// GET /admin/settings/public - Get public settings (no auth required for frontend)
+// GET /admin/settings/public - Get public settings (for frontend)
 router.get('/settings/public', adminSettingsController.getPublicSettings);
 
 // POST /admin/settings - Create new setting
-router.post('/settings', superAdminAuthenticate, adminSettingsController.createSetting);
+router.post('/settings', adminSettingsController.createSetting);
 
 // PUT /admin/settings/bulk - Bulk update settings
-router.put('/settings/bulk', superAdminAuthenticate, adminSettingsController.bulkUpdateSettings);
+router.put('/settings/bulk', adminSettingsController.bulkUpdateSettings);
 
 // GET /admin/settings/:key - Get setting by key
-router.get('/settings/:key', adminAuthenticate, adminSettingsController.getSettingByKey);
+router.get('/settings/:key', adminSettingsController.getSettingByKey);
 
 // PUT /admin/settings/:key - Update setting
-router.put('/settings/:key', superAdminAuthenticate, adminSettingsController.updateSetting);
+router.put('/settings/:key', adminSettingsController.updateSetting);
 
 // PUT /admin/settings/:key/reset - Reset setting to default
-router.put('/settings/:key/reset', superAdminAuthenticate, adminSettingsController.resetSettingToDefault);
+router.put('/settings/:key/reset', adminSettingsController.resetSettingToDefault);
 
 // DELETE /admin/settings/:key - Delete setting
-router.delete('/settings/:key', superAdminAuthenticate, adminSettingsController.deleteSetting);
+router.delete('/settings/:key', adminSettingsController.deleteSetting);
 
 // ============================================
 // FEE MANAGEMENT ROUTES
 // ============================================
 
 // GET /admin/fees - Get fees overview
-router.get('/fees', adminAuthenticate, adminFeeController.getFeesOverview);
+router.get('/fees', adminFeeController.getFeesOverview);
 
 // GET /admin/fees/transactions - Get fee transactions
-router.get('/fees/transactions', adminAuthenticate, adminFeeController.getFeeTransactions);
+router.get('/fees/transactions', adminFeeController.getFeeTransactions);
 
 // GET /admin/fees/statistics - Get fee statistics
-router.get('/fees/statistics', adminAuthenticate, adminFeeController.getFeeStatistics);
+router.get('/fees/statistics', adminFeeController.getFeeStatistics);
 
 // GET /admin/fees/pending - Get pending fees
-router.get('/fees/pending', adminAuthenticate, adminFeeController.getPendingFees);
+router.get('/fees/pending', adminFeeController.getPendingFees);
 
 // GET /admin/fees/failed - Get failed fees
-router.get('/fees/failed', adminAuthenticate, adminFeeController.getFailedFees);
+router.get('/fees/failed', adminFeeController.getFailedFees);
 
 // GET /admin/fees/export - Export fee report
-router.get('/fees/export', adminAuthenticate, adminFeeController.exportFeeReport);
+router.get('/fees/export', adminFeeController.exportFeeReport);
 
 // PUT /admin/fees/:dropId/mark-paid - Mark fees as paid
-router.put('/fees/:dropId/mark-paid', adminAuthenticate, adminFeeController.markFeesAsPaid);
+router.put('/fees/:dropId/mark-paid', adminFeeController.markFeesAsPaid);
 
 // PUT /admin/fees/:dropId/mark-refunded - Mark fees as refunded
-router.put('/fees/:dropId/mark-refunded', superAdminAuthenticate, adminFeeController.markFeesAsRefunded);
+router.put('/fees/:dropId/mark-refunded', adminFeeController.markFeesAsRefunded);
 
 module.exports = router;

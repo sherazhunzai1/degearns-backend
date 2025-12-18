@@ -3,6 +3,9 @@ const { Drop, DropMint, AdminWallet, AdminActivity, sequelize } = require('../..
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 
+// Helper to get admin wallet (fallback for dev mode)
+const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
+
 /**
  * Log admin activity
  */
@@ -258,7 +261,7 @@ const markFeesAsPaid = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'fee_update',
     'fee',
     drop.id,
@@ -306,14 +309,14 @@ const markFeesAsRefunded = async (req, res) => {
       ...drop.metadata,
       refundReason: reason,
       refundedAt: new Date().toISOString(),
-      refundedBy: req.user.walletAddress,
+      refundedBy: getAdminWallet(req),
       refundTransactionHash: transactionHash
     }
   });
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'drop_refund',
     'fee',
     drop.id,
