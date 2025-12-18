@@ -3,6 +3,9 @@ const { Collection, User, Drop, AdminActivity, sequelize } = require('../../mode
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 
+// Helper to get admin wallet (fallback for dev mode)
+const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
+
 /**
  * Log admin activity
  */
@@ -156,7 +159,7 @@ const updateCollectionVerification = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     isVerified ? 'collection_verify' : 'collection_unverify',
     'collection',
     collection.id,
@@ -223,7 +226,7 @@ const updateCollection = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'collection_update',
     'collection',
     collection.id,
@@ -262,7 +265,7 @@ const deleteCollection = async (req, res) => {
 
   // Log activity before deletion
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'collection_delete',
     'collection',
     collection.id,
@@ -358,7 +361,7 @@ const bulkVerifyCollections = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     isVerified ? 'collection_verify' : 'collection_unverify',
     'collection',
     null,

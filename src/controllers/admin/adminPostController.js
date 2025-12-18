@@ -3,6 +3,9 @@ const { Post, PostMedia, PostComment, PostLike, User, AdminActivity, sequelize }
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 
+// Helper to get admin wallet (fallback for dev mode)
+const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
+
 /**
  * Log admin activity
  */
@@ -165,7 +168,7 @@ const togglePostVisibility = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     isActive ? 'post_hide' : 'post_hide',
     'post',
     post.id,
@@ -201,7 +204,7 @@ const deletePost = async (req, res) => {
 
   // Log activity before deletion
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'post_delete',
     'post',
     post.id,
@@ -319,7 +322,7 @@ const deleteComment = async (req, res) => {
 
   // Log activity before deletion
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'comment_delete',
     'comment',
     comment.id,
@@ -461,7 +464,7 @@ const bulkDeletePosts = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'post_delete',
     'post',
     null,
@@ -504,7 +507,7 @@ const bulkHidePosts = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'post_hide',
     'post',
     null,

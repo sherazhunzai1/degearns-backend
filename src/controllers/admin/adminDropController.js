@@ -3,6 +3,9 @@ const { Drop, DropNft, DropMint, DropAllowedWallet, User, Collection, AdminActiv
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 
+// Helper to get admin wallet (fallback for dev mode)
+const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
+
 /**
  * Log admin activity
  */
@@ -193,7 +196,7 @@ const updateDropStatus = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     status === 'paused' ? 'drop_pause' : 'drop_update',
     'drop',
     drop.id,
@@ -236,7 +239,7 @@ const pauseDrop = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'drop_pause',
     'drop',
     drop.id,
@@ -275,7 +278,7 @@ const resumeDrop = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'drop_resume',
     'drop',
     drop.id,
@@ -321,7 +324,7 @@ const updateDropFeesStatus = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'fee_update',
     'drop',
     drop.id,
@@ -356,7 +359,7 @@ const deleteDrop = async (req, res) => {
 
   // Log activity before deletion
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'drop_delete',
     'drop',
     drop.id,
@@ -442,7 +445,7 @@ const updateDrop = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'drop_update',
     'drop',
     drop.id,

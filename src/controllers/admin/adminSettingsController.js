@@ -3,6 +3,9 @@ const { PlatformSettings, AdminActivity } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 
+// Helper to get admin wallet (fallback for dev mode)
+const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
+
 /**
  * Log admin activity
  */
@@ -186,7 +189,7 @@ const initializeSettings = async (req, res) => {
       where: { key: setting.key },
       defaults: {
         ...setting,
-        lastUpdatedBy: req.user.walletAddress
+        lastUpdatedBy: getAdminWallet(req)
       }
     });
 
@@ -299,7 +302,7 @@ const updateSetting = async (req, res) => {
   const previousValue = setting.toJSON();
 
   const updateData = {
-    lastUpdatedBy: req.user.walletAddress
+    lastUpdatedBy: getAdminWallet(req)
   };
 
   if (value !== undefined) {
@@ -328,7 +331,7 @@ const updateSetting = async (req, res) => {
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'setting_update',
     'setting',
     setting.id,
@@ -383,12 +386,12 @@ const createSetting = async (req, res) => {
     description,
     isPublic,
     isEditable: true,
-    lastUpdatedBy: req.user.walletAddress
+    lastUpdatedBy: getAdminWallet(req)
   });
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'setting_update',
     'setting',
     setting.id,
@@ -425,7 +428,7 @@ const deleteSetting = async (req, res) => {
 
   // Log activity before deletion
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'setting_update',
     'setting',
     setting.id,
@@ -474,7 +477,7 @@ const bulkUpdateSettings = async (req, res) => {
 
       await setting.update({
         value: String(value),
-        lastUpdatedBy: req.user.walletAddress
+        lastUpdatedBy: getAdminWallet(req)
       });
 
       results.updated.push({ key, previousValue, newValue: String(value) });
@@ -486,7 +489,7 @@ const bulkUpdateSettings = async (req, res) => {
   // Log activity
   if (results.updated.length > 0) {
     await logActivity(
-      req.user.walletAddress,
+      getAdminWallet(req),
       'setting_update',
       'setting',
       null,
@@ -525,12 +528,12 @@ const resetSettingToDefault = async (req, res) => {
 
   await setting.update({
     value: defaultSetting.value,
-    lastUpdatedBy: req.user.walletAddress
+    lastUpdatedBy: getAdminWallet(req)
   });
 
   // Log activity
   await logActivity(
-    req.user.walletAddress,
+    getAdminWallet(req),
     'setting_update',
     'setting',
     setting.id,
