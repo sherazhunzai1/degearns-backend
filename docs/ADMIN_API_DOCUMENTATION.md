@@ -2263,6 +2263,269 @@ DELETE /admin/wallets/:walletId
 
 ---
 
+## Banner Management
+
+Manage homepage banners for the platform. Banners can be scheduled with start/end dates and ordered by position.
+
+### Get All Banners
+
+Returns all banners with filtering and pagination.
+
+```
+GET /admin/banners
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| page | number | 1 | Page number |
+| limit | number | 20 | Items per page |
+| search | string | - | Search in title/subtitle |
+| isActive | boolean | - | Filter by active status |
+| sortBy | string | position | Sort field (position, createdAt, title, isActive) |
+| sortOrder | string | ASC | Sort order (ASC, DESC) |
+
+**Response:**
+```json
+{
+  "data": {
+    "banners": [
+      {
+        "id": "uuid",
+        "title": "Welcome to DeGearns",
+        "subtitle": "The premier NFT marketplace on XRPL",
+        "image": "https://example.com/banner.jpg",
+        "link": "/collections",
+        "linkText": "Explore Now",
+        "position": 1,
+        "isActive": true,
+        "startDate": null,
+        "endDate": null,
+        "isCurrentlyVisible": true,
+        "createdBy": "rAdminWallet...",
+        "createdAt": "2024-01-01T00:00:00.000Z"
+      }
+    ],
+    "pagination": {
+      "total": 5,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+---
+
+### Get Banner Statistics
+
+Returns banner statistics overview.
+
+```
+GET /admin/banners/statistics
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "totalBanners": 10,
+    "activeBanners": 5,
+    "inactiveBanners": 3,
+    "scheduledBanners": 1,
+    "expiredBanners": 1,
+    "currentlyVisibleCount": 4
+  }
+}
+```
+
+---
+
+### Create Banner
+
+Creates a new banner.
+
+```
+POST /admin/banners
+```
+
+**Request Body:**
+```json
+{
+  "title": "Summer Sale",
+  "subtitle": "Up to 50% off on selected NFTs",
+  "image": "https://example.com/summer-banner.jpg",
+  "link": "/collections/summer-sale",
+  "linkText": "Shop Now",
+  "position": 1,
+  "isActive": true,
+  "startDate": "2024-06-01T00:00:00.000Z",
+  "endDate": "2024-08-31T23:59:59.000Z"
+}
+```
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| title | string | Yes | Banner title/headline (max 200 chars) |
+| subtitle | string | No | Optional subtitle (max 500 chars) |
+| image | string | Yes | Banner image URL |
+| link | string | No | URL to navigate when clicked |
+| linkText | string | No | CTA button text (e.g., "Learn More") |
+| position | number | No | Display order (auto-incremented if not provided) |
+| isActive | boolean | No | Active status (default: true) |
+| startDate | date | No | Scheduled start date |
+| endDate | date | No | Scheduled end date |
+
+**Response (201):**
+```json
+{
+  "data": {
+    "banner": {
+      "id": "uuid",
+      "title": "Summer Sale",
+      "subtitle": "Up to 50% off on selected NFTs",
+      "image": "https://example.com/summer-banner.jpg",
+      "link": "/collections/summer-sale",
+      "linkText": "Shop Now",
+      "position": 1,
+      "isActive": true,
+      "startDate": "2024-06-01T00:00:00.000Z",
+      "endDate": "2024-08-31T23:59:59.000Z",
+      "isCurrentlyVisible": false,
+      "createdBy": "rAdminWallet...",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  },
+  "message": "Banner created successfully"
+}
+```
+
+---
+
+### Get Banner by ID
+
+Returns a single banner by ID.
+
+```
+GET /admin/banners/:bannerId
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "banner": {
+      "id": "uuid",
+      "title": "Summer Sale",
+      "isCurrentlyVisible": true,
+      ...
+    }
+  }
+}
+```
+
+---
+
+### Update Banner
+
+Updates an existing banner.
+
+```
+PUT /admin/banners/:bannerId
+```
+
+**Request Body:**
+```json
+{
+  "title": "Updated Title",
+  "isActive": false
+}
+```
+
+All fields are optional - only provided fields will be updated.
+
+---
+
+### Toggle Banner Status
+
+Toggles the active/inactive status of a banner.
+
+```
+PUT /admin/banners/:bannerId/toggle
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "banner": {
+      "id": "uuid",
+      "isActive": false,
+      "isCurrentlyVisible": false,
+      ...
+    }
+  },
+  "message": "Banner deactivated successfully"
+}
+```
+
+---
+
+### Reorder Banners
+
+Updates the position/order of multiple banners at once.
+
+```
+PUT /admin/banners/reorder
+```
+
+**Request Body:**
+```json
+{
+  "bannerOrders": [
+    { "id": "banner-uuid-1", "position": 1 },
+    { "id": "banner-uuid-2", "position": 2 },
+    { "id": "banner-uuid-3", "position": 3 }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "updates": [
+      { "id": "banner-uuid-1", "position": 1, "success": true },
+      { "id": "banner-uuid-2", "position": 2, "success": true },
+      { "id": "banner-uuid-3", "position": 3, "success": true }
+    ]
+  },
+  "message": "Banners reordered successfully"
+}
+```
+
+---
+
+### Delete Banner
+
+Permanently deletes a banner.
+
+```
+DELETE /admin/banners/:bannerId
+```
+
+**Response:**
+```json
+{
+  "data": null,
+  "message": "Banner deleted successfully"
+}
+```
+
+---
+
 ## Error Codes
 
 | Status Code | Description |

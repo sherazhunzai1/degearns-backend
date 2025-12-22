@@ -576,6 +576,91 @@ Get all incoming buy offers on NFTs owned by a wallet. Returns NFT details (name
 
 ---
 
+## Banner Endpoints
+
+Public endpoints for fetching active banners to display on the homepage.
+
+### Get Active Banners
+
+**GET** `/banners?limit=10`
+
+Get all currently active and visible banners for the homepage. Only returns banners that are:
+- `isActive = true`
+- `startDate` is in the past or not set
+- `endDate` is in the future or not set
+
+**Query Parameters:**
+- `limit` (optional): Maximum number of banners to return (default: 10)
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "banners": [
+      {
+        "id": "uuid",
+        "title": "Welcome to DeGearns",
+        "subtitle": "The premier NFT marketplace on XRPL",
+        "image": "https://example.com/banner.jpg",
+        "link": "/collections",
+        "linkText": "Explore Now",
+        "position": 1
+      },
+      {
+        "id": "uuid-2",
+        "title": "New Collection Drop",
+        "subtitle": "Check out our latest artists",
+        "image": "https://example.com/banner2.jpg",
+        "link": "/drops",
+        "linkText": "View Drops",
+        "position": 2
+      }
+    ],
+    "count": 2
+  },
+  "message": "Active banners retrieved successfully",
+  "success": true
+}
+```
+
+---
+
+### Get Banner by ID
+
+**GET** `/banners/:bannerId`
+
+Get a single active banner by ID.
+
+**Response (200):**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "banner": {
+      "id": "uuid",
+      "title": "Welcome to DeGearns",
+      "subtitle": "The premier NFT marketplace on XRPL",
+      "image": "https://example.com/banner.jpg",
+      "link": "/collections",
+      "linkText": "Explore Now"
+    }
+  },
+  "message": "Banner retrieved successfully",
+  "success": true
+}
+```
+
+**Error (404):**
+```json
+{
+  "success": false,
+  "message": "Banner not found or not currently active"
+}
+```
+
+---
+
 ## Collection Endpoints
 
 Collections store **metadata only** in the database. NFTs are fetched from the XRPL blockchain using the collection's **taxon** field.
