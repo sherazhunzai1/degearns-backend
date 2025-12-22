@@ -13,7 +13,8 @@ const {
   adminDashboardController,
   adminSettingsController,
   adminFeeController,
-  adminRewardsController
+  adminRewardsController,
+  adminBannerController
 } = require('../controllers/admin');
 
 const xrplConfig = require('../config/xrpl');
@@ -353,5 +354,33 @@ router.post('/wallets', adminRewardsController.upsertAdminWallet);
 
 // DELETE /admin/wallets/:walletId - Delete admin wallet
 router.delete('/wallets/:walletId', adminRewardsController.deleteAdminWallet);
+
+// ============================================
+// BANNER MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/banners - Get all banners with filters
+router.get('/banners', adminBannerController.getBanners);
+
+// GET /admin/banners/statistics - Get banner statistics
+router.get('/banners/statistics', adminBannerController.getBannerStatistics);
+
+// POST /admin/banners - Create new banner
+router.post('/banners', adminBannerController.createBanner);
+
+// PUT /admin/banners/reorder - Reorder banners
+router.put('/banners/reorder', adminBannerController.reorderBanners);
+
+// GET /admin/banners/:bannerId - Get banner by ID
+router.get('/banners/:bannerId', adminBannerController.getBannerById);
+
+// PUT /admin/banners/:bannerId - Update banner
+router.put('/banners/:bannerId', adminBannerController.updateBanner);
+
+// PUT /admin/banners/:bannerId/toggle - Toggle banner active status
+router.put('/banners/:bannerId/toggle', adminBannerController.toggleBannerStatus);
+
+// DELETE /admin/banners/:bannerId - Delete banner
+router.delete('/banners/:bannerId', adminBannerController.deleteBanner);
 
 module.exports = router;
