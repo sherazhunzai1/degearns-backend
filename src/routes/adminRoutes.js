@@ -416,6 +416,19 @@ router.get('/distribution/batch/:batchId', adminRewardsController.getDistributio
 router.post('/distribution/retry', adminRewardsController.retryFailedDistributions);
 
 // ============================================
+// REWARD STATISTICS ROUTES
+// ============================================
+
+// GET /admin/rewards/stats - Get comprehensive reward statistics
+router.get('/rewards/stats', adminRewardsController.getRewardStats);
+
+// GET /admin/rewards/transactions - Get reward transaction history
+router.get('/rewards/transactions', adminRewardsController.getRewardTransactionHistory);
+
+// GET /admin/rewards/monthly-breakdown - Get monthly reward breakdown for charts
+router.get('/rewards/monthly-breakdown', adminRewardsController.getMonthlyRewardBreakdown);
+
+// ============================================
 // BANNER MANAGEMENT ROUTES
 // ============================================
 

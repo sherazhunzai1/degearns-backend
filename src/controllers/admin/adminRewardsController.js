@@ -2389,6 +2389,341 @@ const retryFailedDistributions = async (req, res) => {
   }, `Retry completed: ${results.successful.length} successful, ${results.stillFailed.length} still failed`));
 };
 
+// ============================================
+// REWARD STATISTICS
+// ============================================
+
+/**
+ * Get comprehensive reward statistics
+ */
+const getRewardStats = async (req, res) => {
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const currentYear = now.getFullYear();
+
+  // Get all-time statistics
+  const allTimeStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalTransactions']
+    ],
+    where: {
+      transactionStatus: 'completed'
+    },
+    raw: true
+  });
+
+  // Get this month's statistics
+  const thisMonthStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalTransactions']
+    ],
+    where: {
+      periodMonth: currentMonth,
+      periodYear: currentYear,
+      transactionStatus: 'completed'
+    },
+    raw: true
+  });
+
+  // Get last month's statistics for comparison
+  const lastMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+  const lastMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+
+  const lastMonthStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalTransactions']
+    ],
+    where: {
+      periodMonth: lastMonth,
+      periodYear: lastMonthYear,
+      transactionStatus: 'completed'
+    },
+    raw: true
+  });
+
+  // Get statistics by category (all-time)
+  const categoryStats = await RewardDistribution.findAll({
+    attributes: [
+      'category',
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalTransactions']
+    ],
+    where: {
+      transactionStatus: 'completed'
+    },
+    group: ['category'],
+    raw: true
+  });
+
+  // Get unique recipients count
+  const uniqueRecipients = await RewardDistribution.count({
+    distinct: true,
+    col: 'recipientWalletAddress',
+    where: {
+      transactionStatus: 'completed'
+    }
+  });
+
+  // Get pending and failed counts
+  const pendingCount = await RewardDistribution.count({
+    where: { transactionStatus: 'pending' }
+  });
+
+  const failedCount = await RewardDistribution.count({
+    where: { transactionStatus: 'failed' }
+  });
+
+  // Get distribution batch count
+  const batchCount = await MonthlyRanking.count({
+    where: { status: 'distributed' }
+  });
+
+  // Calculate month-over-month change
+  const thisMonthAmount = parseFloat(thisMonthStats?.totalAmount || 0);
+  const lastMonthAmount = parseFloat(lastMonthStats?.totalAmount || 0);
+  const monthOverMonthChange = lastMonthAmount > 0
+    ? (((thisMonthAmount - lastMonthAmount) / lastMonthAmount) * 100).toFixed(2)
+    : thisMonthAmount > 0 ? '100.00' : '0.00';
+
+  // Format category breakdown
+  const categoryBreakdown = {};
+  for (const stat of categoryStats) {
+    categoryBreakdown[stat.category] = {
+      totalAmount: stat.totalAmount || '0',
+      totalAmountXrp: ((parseFloat(stat.totalAmount) || 0) / 1000000).toFixed(6),
+      totalTransactions: parseInt(stat.totalTransactions) || 0
+    };
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    allTime: {
+      totalRewardsDrops: allTimeStats?.totalAmount || '0',
+      totalRewardsXrp: ((parseFloat(allTimeStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalTransactions: parseInt(allTimeStats?.totalTransactions) || 0,
+      uniqueRecipients,
+      distributionBatches: Math.floor(batchCount / 3) // 3 categories per batch
+    },
+    thisMonth: {
+      month: currentMonth,
+      year: currentYear,
+      totalRewardsDrops: thisMonthStats?.totalAmount || '0',
+      totalRewardsXrp: ((parseFloat(thisMonthStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalTransactions: parseInt(thisMonthStats?.totalTransactions) || 0
+    },
+    lastMonth: {
+      month: lastMonth,
+      year: lastMonthYear,
+      totalRewardsDrops: lastMonthStats?.totalAmount || '0',
+      totalRewardsXrp: ((parseFloat(lastMonthStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalTransactions: parseInt(lastMonthStats?.totalTransactions) || 0
+    },
+    monthOverMonthChange: `${monthOverMonthChange}%`,
+    categoryBreakdown,
+    status: {
+      pending: pendingCount,
+      failed: failedCount
+    }
+  }, 'Reward statistics retrieved successfully'));
+};
+
+/**
+ * Get reward transaction history with pagination and filters
+ */
+const getRewardTransactionHistory = async (req, res) => {
+  const {
+    page = 1,
+    limit = 20,
+    month,
+    year,
+    category,
+    status,
+    walletAddress,
+    sortBy = 'paidAt',
+    sortOrder = 'DESC'
+  } = req.query;
+
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const where = {};
+
+  if (month) where.periodMonth = parseInt(month);
+  if (year) where.periodYear = parseInt(year);
+  if (category) where.category = category;
+  if (status) where.transactionStatus = status;
+  if (walletAddress) where.recipientWalletAddress = walletAddress;
+
+  // Validate sort field
+  const allowedSortFields = ['paidAt', 'createdAt', 'rewardAmount', 'rank', 'category'];
+  const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'paidAt';
+  const order = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+  const { count, rows: transactions } = await RewardDistribution.findAndCountAll({
+    where,
+    include: [{
+      model: User,
+      as: 'recipient',
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    }],
+    order: [[sortField, order]],
+    limit: parseInt(limit),
+    offset
+  });
+
+  // Calculate summary for the filtered results
+  const filteredSummary = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalCount']
+    ],
+    where: { ...where, transactionStatus: 'completed' },
+    raw: true
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    transactions: transactions.map(t => ({
+      id: t.id,
+      periodMonth: t.periodMonth,
+      periodYear: t.periodYear,
+      category: t.category,
+      rank: t.rank,
+      recipientWallet: t.recipientWalletAddress,
+      recipient: t.recipient,
+      rewardAmount: t.rewardAmount,
+      rewardAmountXrp: (parseInt(t.rewardAmount) / 1000000).toFixed(6),
+      metricType: t.metricType,
+      metricValue: t.metricValue,
+      transactionHash: t.transactionHash,
+      transactionStatus: t.transactionStatus,
+      transactionError: t.transactionError,
+      paidAt: t.paidAt,
+      initiatedBy: t.initiatedBy,
+      createdAt: t.createdAt
+    })),
+    summary: {
+      totalAmount: filteredSummary?.totalAmount || '0',
+      totalAmountXrp: ((parseFloat(filteredSummary?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalTransactions: parseInt(filteredSummary?.totalCount) || 0
+    },
+    pagination: {
+      total: count,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(count / parseInt(limit))
+    },
+    filters: {
+      month: month ? parseInt(month) : null,
+      year: year ? parseInt(year) : null,
+      category: category || null,
+      status: status || null,
+      walletAddress: walletAddress || null
+    }
+  }, 'Reward transaction history retrieved successfully'));
+};
+
+/**
+ * Get monthly reward breakdown for charts
+ */
+const getMonthlyRewardBreakdown = async (req, res) => {
+  const { year } = req.query;
+  const targetYear = parseInt(year) || new Date().getFullYear();
+
+  // Get monthly breakdown
+  const monthlyStats = await RewardDistribution.findAll({
+    attributes: [
+      'periodMonth',
+      'category',
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'transactionCount']
+    ],
+    where: {
+      periodYear: targetYear,
+      transactionStatus: 'completed'
+    },
+    group: ['periodMonth', 'category'],
+    order: [['periodMonth', 'ASC']],
+    raw: true
+  });
+
+  // Organize by month
+  const months = {};
+  for (let m = 1; m <= 12; m++) {
+    months[m] = {
+      month: m,
+      monthName: new Date(targetYear, m - 1, 1).toLocaleString('default', { month: 'long' }),
+      trader: { amount: '0', amountXrp: '0.000000', transactions: 0 },
+      creator: { amount: '0', amountXrp: '0.000000', transactions: 0 },
+      influencer: { amount: '0', amountXrp: '0.000000', transactions: 0 },
+      total: { amount: '0', amountXrp: '0.000000', transactions: 0 }
+    };
+  }
+
+  let yearTotalDrops = BigInt(0);
+  let yearTotalTransactions = 0;
+
+  for (const stat of monthlyStats) {
+    const month = stat.periodMonth;
+    const category = stat.category;
+    const amount = stat.totalAmount || '0';
+    const transactions = parseInt(stat.transactionCount) || 0;
+
+    months[month][category] = {
+      amount,
+      amountXrp: (parseFloat(amount) / 1000000).toFixed(6),
+      transactions
+    };
+
+    // Update month total
+    const currentTotal = BigInt(months[month].total.amount);
+    months[month].total.amount = (currentTotal + BigInt(amount)).toString();
+    months[month].total.transactions += transactions;
+
+    yearTotalDrops += BigInt(amount);
+    yearTotalTransactions += transactions;
+  }
+
+  // Calculate XRP for month totals
+  for (const m of Object.keys(months)) {
+    months[m].total.amountXrp = (parseFloat(months[m].total.amount) / 1000000).toFixed(6);
+  }
+
+  // Get distribution status for each month
+  const distributedMonths = await MonthlyRanking.findAll({
+    attributes: ['periodMonth', 'category', 'status', 'distributedAt'],
+    where: {
+      periodYear: targetYear,
+      status: 'distributed'
+    },
+    raw: true
+  });
+
+  const monthlyDistributionStatus = {};
+  for (let m = 1; m <= 12; m++) {
+    const monthDistributions = distributedMonths.filter(d => d.periodMonth === m);
+    monthlyDistributionStatus[m] = {
+      distributed: monthDistributions.length === 3,
+      categories: {
+        trader: monthDistributions.some(d => d.category === 'trader'),
+        creator: monthDistributions.some(d => d.category === 'creator'),
+        influencer: monthDistributions.some(d => d.category === 'influencer')
+      }
+    };
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    year: targetYear,
+    monthlyBreakdown: Object.values(months),
+    distributionStatus: monthlyDistributionStatus,
+    yearTotal: {
+      amount: yearTotalDrops.toString(),
+      amountXrp: (Number(yearTotalDrops) / 1000000).toFixed(6),
+      transactions: yearTotalTransactions
+    }
+  }, 'Monthly reward breakdown retrieved successfully'));
+};
+
 module.exports = {
   getTopTraders,
   getTopCreators,
@@ -2421,5 +2756,9 @@ module.exports = {
   getDistributionStatus,
   executeDistribution,
   getDistributionBatch,
-  retryFailedDistributions
+  retryFailedDistributions,
+  // Reward statistics
+  getRewardStats,
+  getRewardTransactionHistory,
+  getMonthlyRewardBreakdown
 };

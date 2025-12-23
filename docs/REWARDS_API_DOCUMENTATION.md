@@ -583,6 +583,197 @@ Retry failed transactions in a distribution batch.
 
 ---
 
+## Reward Statistics
+
+### Get Reward Stats
+Get comprehensive reward statistics including all-time totals, this month, and category breakdowns.
+
+**Endpoint:** `GET /rewards/stats`
+
+**Response:**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "allTime": {
+      "totalRewardsDrops": "89970000000",
+      "totalRewardsXrp": "89970.000000",
+      "totalTransactions": 90,
+      "uniqueRecipients": 25,
+      "distributionBatches": 3
+    },
+    "thisMonth": {
+      "month": 12,
+      "year": 2025,
+      "totalRewardsDrops": "29990000000",
+      "totalRewardsXrp": "29990.000000",
+      "totalTransactions": 30
+    },
+    "lastMonth": {
+      "month": 11,
+      "year": 2025,
+      "totalRewardsDrops": "29990000000",
+      "totalRewardsXrp": "29990.000000",
+      "totalTransactions": 30
+    },
+    "monthOverMonthChange": "0.00%",
+    "categoryBreakdown": {
+      "trader": {
+        "totalAmount": "29990000000",
+        "totalAmountXrp": "29990.000000",
+        "totalTransactions": 30
+      },
+      "creator": {
+        "totalAmount": "29990000000",
+        "totalAmountXrp": "29990.000000",
+        "totalTransactions": 30
+      },
+      "influencer": {
+        "totalAmount": "29990000000",
+        "totalAmountXrp": "29990.000000",
+        "totalTransactions": 30
+      }
+    },
+    "status": {
+      "pending": 0,
+      "failed": 2
+    }
+  },
+  "message": "Reward statistics retrieved successfully"
+}
+```
+
+---
+
+### Get Reward Transaction History
+Get paginated reward transaction history with filters.
+
+**Endpoint:** `GET /rewards/transactions`
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| page | number | No | Page number (default: 1) |
+| limit | number | No | Results per page (default: 20) |
+| month | number | No | Filter by month (1-12) |
+| year | number | No | Filter by year |
+| category | string | No | Filter by category (trader, creator, influencer) |
+| status | string | No | Filter by status (pending, completed, failed) |
+| walletAddress | string | No | Filter by recipient wallet |
+| sortBy | string | No | Sort field (paidAt, createdAt, rewardAmount, rank, category) |
+| sortOrder | string | No | Sort order (ASC, DESC) |
+
+**Response:**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "transactions": [
+      {
+        "id": "uuid",
+        "periodMonth": 12,
+        "periodYear": 2025,
+        "category": "trader",
+        "rank": 1,
+        "recipientWallet": "rXXX...",
+        "recipient": {
+          "walletAddress": "rXXX...",
+          "username": "TopTrader",
+          "profileImage": "https://...",
+          "isVerified": true
+        },
+        "rewardAmount": "249975000",
+        "rewardAmountXrp": "249.975000",
+        "metricType": "trader_rank",
+        "metricValue": "1",
+        "transactionHash": "ABC123...",
+        "transactionStatus": "completed",
+        "transactionError": null,
+        "paidAt": "2025-12-20T10:00:00Z",
+        "initiatedBy": "admin-wallet",
+        "createdAt": "2025-12-20T10:00:00Z"
+      }
+    ],
+    "summary": {
+      "totalAmount": "2979900000",
+      "totalAmountXrp": "2979.900000",
+      "totalTransactions": 30
+    },
+    "pagination": {
+      "total": 90,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 5
+    },
+    "filters": {
+      "month": 12,
+      "year": 2025,
+      "category": null,
+      "status": null,
+      "walletAddress": null
+    }
+  }
+}
+```
+
+---
+
+### Get Monthly Reward Breakdown
+Get monthly breakdown of rewards for charts and analytics.
+
+**Endpoint:** `GET /rewards/monthly-breakdown`
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| year | number | No | Year to get breakdown for (default: current year) |
+
+**Response:**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "year": 2025,
+    "monthlyBreakdown": [
+      {
+        "month": 1,
+        "monthName": "January",
+        "trader": { "amount": "993300000", "amountXrp": "993.300000", "transactions": 10 },
+        "creator": { "amount": "993300000", "amountXrp": "993.300000", "transactions": 10 },
+        "influencer": { "amount": "993300000", "amountXrp": "993.300000", "transactions": 10 },
+        "total": { "amount": "2979900000", "amountXrp": "2979.900000", "transactions": 30 }
+      },
+      {
+        "month": 2,
+        "monthName": "February",
+        "trader": { "amount": "0", "amountXrp": "0.000000", "transactions": 0 },
+        "creator": { "amount": "0", "amountXrp": "0.000000", "transactions": 0 },
+        "influencer": { "amount": "0", "amountXrp": "0.000000", "transactions": 0 },
+        "total": { "amount": "0", "amountXrp": "0.000000", "transactions": 0 }
+      }
+    ],
+    "distributionStatus": {
+      "1": {
+        "distributed": true,
+        "categories": { "trader": true, "creator": true, "influencer": true }
+      },
+      "2": {
+        "distributed": false,
+        "categories": { "trader": false, "creator": false, "influencer": false }
+      }
+    },
+    "yearTotal": {
+      "amount": "89970000000",
+      "amountXrp": "89970.000000",
+      "transactions": 90
+    }
+  },
+  "message": "Monthly reward breakdown retrieved successfully"
+}
+```
+
+---
+
 ## Workflow
 
 ### Complete Distribution Workflow
