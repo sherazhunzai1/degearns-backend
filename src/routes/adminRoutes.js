@@ -356,6 +356,25 @@ router.post('/wallets', adminRewardsController.upsertAdminWallet);
 router.delete('/wallets/:walletId', adminRewardsController.deleteAdminWallet);
 
 // ============================================
+// TREASURY WALLET MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/treasury - Get treasury wallet details with balance and statistics
+router.get('/treasury', adminRewardsController.getTreasuryWallet);
+
+// GET /admin/treasury/statistics - Get detailed treasury wallet statistics
+router.get('/treasury/statistics', adminRewardsController.getTreasuryWalletStatistics);
+
+// GET /admin/treasury/history - Get treasury distribution history
+router.get('/treasury/history', adminRewardsController.getTreasuryDistributionHistory);
+
+// GET /admin/treasury/debug - Debug treasury wallet configuration
+router.get('/treasury/debug', adminRewardsController.debugTreasuryWallet);
+
+// PUT /admin/treasury - Update treasury wallet label/description
+router.put('/treasury', adminRewardsController.updateTreasuryWallet);
+
+// ============================================
 // BANNER MANAGEMENT ROUTES
 // ============================================
 

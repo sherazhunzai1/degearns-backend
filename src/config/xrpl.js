@@ -6,6 +6,7 @@ class XRPLConfig {
   constructor() {
     this.client = null;
     this.adminWallet = null;
+    this.treasuryWallet = null;
     this.network = process.env.XRPL_NETWORK || 'mainnet';
     this.wssUrl = process.env.XRPL_WSS_URL || 'wss://xrplcluster.com';
   }
@@ -63,6 +64,56 @@ class XRPLConfig {
   }
 
   /**
+   * Initialize treasury wallet from environment variables
+   * Used for reward distribution
+   * Supports:
+   * 1. TREASURY_WALLET_SEED - Family seed (starts with 's')
+   * 2. TREASURY_WALLET_SECRET_NUMBERS - Comma-separated 8 groups of 6 digits
+   */
+  initializeTreasuryWallet() {
+    try {
+      // Option 1: Family Seed (e.g., sEdV...)
+      if (process.env.TREASURY_WALLET_SEED) {
+        const algorithm = process.env.TREASURY_WALLET_ALGORITHM || undefined;
+        this.treasuryWallet = Wallet.fromSeed(process.env.TREASURY_WALLET_SEED, { algorithm });
+        logger.info(`Treasury wallet initialized from seed: ${this.treasuryWallet.address}`);
+        return;
+      }
+
+      // Option 2: Secret Numbers (8 groups of 6 digits, comma-separated)
+      if (process.env.TREASURY_WALLET_SECRET_NUMBERS) {
+        const secretNumbers = process.env.TREASURY_WALLET_SECRET_NUMBERS
+          .split(',')
+          .map(num => num.trim());
+
+        if (secretNumbers.length !== 8) {
+          throw new Error('Treasury secret numbers must have exactly 8 groups');
+        }
+
+        // Validate each group is 6 digits
+        for (const num of secretNumbers) {
+          if (!/^\d{6}$/.test(num)) {
+            throw new Error(`Invalid treasury secret number group: ${num}. Each group must be 6 digits.`);
+          }
+        }
+
+        const entropy = secretToEntropy(secretNumbers);
+
+        // Default to secp256k1 for secret numbers
+        const algorithm = process.env.TREASURY_WALLET_ALGORITHM || 'secp256k1';
+        this.treasuryWallet = Wallet.fromEntropy(entropy, { algorithm });
+        logger.info(`Treasury wallet initialized from secret numbers (${algorithm}): ${this.treasuryWallet.address}`);
+        return;
+      }
+
+      logger.warn('No treasury wallet configured. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in environment.');
+    } catch (error) {
+      logger.error('Failed to initialize treasury wallet:', error.message);
+      // Don't throw - treasury wallet is optional
+    }
+  }
+
+  /**
    * Get wallet addresses for both algorithms (for debugging)
    */
   getWalletAddressesForBothAlgorithms() {
@@ -106,6 +157,9 @@ class XRPLConfig {
 
       // Initialize admin wallet
       this.initializeAdminWallet();
+
+      // Initialize treasury wallet
+      this.initializeTreasuryWallet();
 
       // Handle connection events
       this.client.on('disconnected', (code) => {
@@ -153,6 +207,50 @@ class XRPLConfig {
       return this.adminWallet.address;
     }
     return null;
+  }
+
+  /**
+   * Get treasury wallet for signing reward distribution transactions
+   */
+  getTreasuryWallet() {
+    if (!this.treasuryWallet) {
+      throw new Error('Treasury wallet is not configured. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in environment.');
+    }
+    return this.treasuryWallet;
+  }
+
+  /**
+   * Get treasury wallet address (safe method that doesn't throw)
+   * Returns null if treasury wallet is not configured
+   */
+  getTreasuryWalletAddress() {
+    if (this.treasuryWallet) {
+      return this.treasuryWallet.address;
+    }
+    return null;
+  }
+
+  /**
+   * Check if treasury wallet is configured
+   */
+  hasTreasuryWallet() {
+    return !!this.treasuryWallet;
+  }
+
+  /**
+   * Get treasury wallet configuration status
+   */
+  getTreasuryWalletConfig() {
+    const hasSeed = !!process.env.TREASURY_WALLET_SEED;
+    const hasSecretNumbers = !!process.env.TREASURY_WALLET_SECRET_NUMBERS;
+    const algorithm = process.env.TREASURY_WALLET_ALGORITHM || (hasSecretNumbers ? 'secp256k1' : 'auto');
+
+    return {
+      configured: hasSeed || hasSecretNumbers,
+      method: hasSeed ? 'SEED' : (hasSecretNumbers ? 'SECRET_NUMBERS' : 'NONE'),
+      algorithm,
+      address: this.getTreasuryWalletAddress()
+    };
   }
 
   getNetwork() {

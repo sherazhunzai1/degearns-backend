@@ -2263,6 +2263,254 @@ DELETE /admin/wallets/:walletId
 
 ---
 
+## Treasury Wallet Management
+
+The treasury wallet is the main wallet used for distributing rewards to top performers. It must be configured in the `.env` file with either `TREASURY_WALLET_SEED` or `TREASURY_WALLET_SECRET_NUMBERS`.
+
+### Environment Configuration
+
+```bash
+# Option 1: Family Seed
+TREASURY_WALLET_SEED=sEdV...
+
+# Option 2: Secret Numbers (8 groups of 6 digits)
+TREASURY_WALLET_SECRET_NUMBERS=123456,234567,345678,456789,567890,678901,789012,890123
+
+# Optional: Specify algorithm (default: secp256k1 for secret numbers)
+TREASURY_WALLET_ALGORITHM=secp256k1
+```
+
+### Get Treasury Wallet
+
+Returns treasury wallet details with current balance and distribution statistics.
+
+```
+GET /admin/treasury
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "wallet": {
+      "address": "rTreasuryWallet...",
+      "type": "treasury",
+      "label": "Treasury Wallet",
+      "description": "Main wallet for reward distribution",
+      "isActive": true,
+      "configMethod": "SECRET_NUMBERS",
+      "algorithm": "secp256k1",
+      "databaseId": "uuid"
+    },
+    "balance": {
+      "drops": "100000000000",
+      "xrp": "100000.000000",
+      "error": null
+    },
+    "thisMonth": {
+      "month": 12,
+      "year": 2024,
+      "totalDistributed": "50000000",
+      "totalDistributedXrp": "50.000000",
+      "totalRewards": 30,
+      "categoryBreakdown": {
+        "trader": { "amount": "20000000", "amountXrp": "20.000000", "count": 10 },
+        "creator": { "amount": "20000000", "amountXrp": "20.000000", "count": 10 },
+        "influencer": { "amount": "10000000", "amountXrp": "10.000000", "count": 10 }
+      }
+    },
+    "allTime": {
+      "totalDistributed": "500000000",
+      "totalDistributedXrp": "500.000000",
+      "totalRewards": 300
+    }
+  }
+}
+```
+
+---
+
+### Get Treasury Wallet Statistics
+
+Returns detailed yearly statistics with monthly breakdown.
+
+```
+GET /admin/treasury/statistics?year=2024
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| year | number | current year | Year to get statistics for |
+
+**Response:**
+```json
+{
+  "data": {
+    "walletAddress": "rTreasuryWallet...",
+    "balance": {
+      "drops": "100000000000",
+      "xrp": "100000.000000"
+    },
+    "year": 2024,
+    "monthlyBreakdown": {
+      "1": {
+        "trader": { "amount": "10000000", "amountXrp": "10.000000", "count": 10 },
+        "creator": { "amount": "15000000", "amountXrp": "15.000000", "count": 10 },
+        "influencer": { "amount": "8000000", "amountXrp": "8.000000", "count": 10 },
+        "total": { "amount": "33000000", "amountXrp": "33.000000", "count": 30 }
+      }
+    },
+    "yearTotal": {
+      "amount": "500000000",
+      "amountXrp": "500.000000",
+      "count": 300
+    },
+    "recentDistributions": [...],
+    "pendingDistributions": 0,
+    "failedDistributions": 0
+  }
+}
+```
+
+---
+
+### Get Treasury Distribution History
+
+Returns paginated history of all reward distributions.
+
+```
+GET /admin/treasury/history
+```
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| page | number | 1 | Page number |
+| limit | number | 20 | Items per page |
+| month | number | - | Filter by month (1-12) |
+| year | number | - | Filter by year |
+| category | string | - | Filter by category (trader, creator, influencer) |
+| status | string | - | Filter by status (pending, processing, completed, failed) |
+
+**Response:**
+```json
+{
+  "data": {
+    "distributions": [
+      {
+        "id": "uuid",
+        "periodMonth": 12,
+        "periodYear": 2024,
+        "category": "trader",
+        "rank": 1,
+        "recipientWallet": "rRecipient...",
+        "recipient": {
+          "walletAddress": "rRecipient...",
+          "username": "top_trader",
+          "profileImage": "...",
+          "isVerified": true
+        },
+        "amount": "100000000",
+        "amountXrp": "100.000000",
+        "metricValue": "50000000000",
+        "metricType": "trading_volume",
+        "transactionHash": "ABC123...",
+        "transactionStatus": "completed",
+        "paidAt": "2024-12-01T00:00:00.000Z"
+      }
+    ],
+    "summary": {
+      "totalDistributed": "500000000",
+      "totalDistributedXrp": "500.000000",
+      "totalRewards": 100
+    },
+    "pagination": {
+      "total": 100,
+      "page": 1,
+      "limit": 20,
+      "totalPages": 5
+    }
+  }
+}
+```
+
+---
+
+### Update Treasury Wallet
+
+Updates the treasury wallet label and description in the database.
+
+```
+PUT /admin/treasury
+```
+
+**Request Body:**
+```json
+{
+  "label": "Main Treasury",
+  "description": "Primary wallet for monthly reward distributions"
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "wallet": {
+      "id": "uuid",
+      "walletAddress": "rTreasuryWallet...",
+      "type": "treasury",
+      "label": "Main Treasury",
+      "description": "Primary wallet for monthly reward distributions",
+      "isActive": true,
+      "configMethod": "SECRET_NUMBERS",
+      "algorithm": "secp256k1"
+    }
+  },
+  "message": "Treasury wallet updated successfully"
+}
+```
+
+---
+
+### Debug Treasury Wallet
+
+Returns treasury wallet configuration status for debugging.
+
+```
+GET /admin/treasury/debug
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "configuration": {
+      "TREASURY_WALLET_SEED_SET": false,
+      "TREASURY_WALLET_SECRET_NUMBERS_SET": true,
+      "SECRET_NUMBERS_GROUPS_COUNT": 8,
+      "TREASURY_WALLET_ALGORITHM": "secp256k1",
+      "ACTIVE_METHOD": "SECRET_NUMBERS"
+    },
+    "derivedWallet": {
+      "address": "rTreasuryWallet...",
+      "algorithm": "secp256k1",
+      "configured": true
+    },
+    "balance": {
+      "drops": "100000000000",
+      "xrp": "100000.000000",
+      "error": null
+    },
+    "hint": null
+  }
+}
+```
+
+---
+
 ## Banner Management
 
 Manage homepage banners for the platform. Banners can be scheduled with start/end dates and ordered by position.

@@ -16,6 +16,7 @@ const {
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 const xrplService = require('../../services/xrplService');
+const xrplConfig = require('../../config/xrpl');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -982,6 +983,483 @@ const deleteAdminWallet = async (req, res) => {
   res.status(200).json(new ApiResponse(200, null, 'Admin wallet deleted successfully'));
 };
 
+// ============================================
+// TREASURY WALLET MANAGEMENT
+// ============================================
+
+/**
+ * Get treasury wallet details with balance and statistics
+ */
+const getTreasuryWallet = async (req, res) => {
+  // Check if treasury wallet is configured in .env
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    return res.status(200).json(new ApiResponse(200, {
+      configured: false,
+      message: 'Treasury wallet not configured. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env file.'
+    }, 'Treasury wallet not configured'));
+  }
+
+  const walletAddress = treasuryConfig.address;
+
+  // Get database record for treasury wallet
+  let dbWallet = await AdminWallet.findOne({
+    where: { type: 'treasury', isActive: true }
+  });
+
+  // If no database record exists but wallet is configured, create one
+  if (!dbWallet && walletAddress) {
+    dbWallet = await AdminWallet.create({
+      walletAddress,
+      type: 'treasury',
+      label: 'Treasury Wallet',
+      description: 'Main wallet for reward distribution',
+      isActive: true
+    });
+  }
+
+  // Fetch balance from XRPL
+  let balance = null;
+  let balanceXrp = null;
+  let balanceError = null;
+
+  try {
+    const accountInfo = await xrplService.getAccountInfo(walletAddress);
+    if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+      balance = accountInfo.result.account_data.Balance;
+      balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+    }
+  } catch (error) {
+    balanceError = error.message;
+  }
+
+  // Get this month's distribution statistics
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const currentYear = now.getFullYear();
+
+  const thisMonthStats = await RewardDistribution.findAll({
+    attributes: [
+      'category',
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+    ],
+    where: {
+      periodMonth: currentMonth,
+      periodYear: currentYear,
+      transactionStatus: 'completed'
+    },
+    group: ['category'],
+    raw: true
+  });
+
+  // Calculate totals
+  let thisMonthTotalDrops = BigInt(0);
+  let thisMonthTotalCount = 0;
+  const categoryBreakdown = {};
+
+  for (const stat of thisMonthStats) {
+    thisMonthTotalDrops += BigInt(stat.totalAmount || 0);
+    thisMonthTotalCount += parseInt(stat.count);
+    categoryBreakdown[stat.category] = {
+      amount: stat.totalAmount || '0',
+      amountXrp: ((parseFloat(stat.totalAmount) || 0) / 1000000).toFixed(6),
+      count: parseInt(stat.count)
+    };
+  }
+
+  // Get all-time distribution statistics
+  const allTimeStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+    ],
+    where: {
+      transactionStatus: 'completed'
+    },
+    raw: true
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    wallet: {
+      address: walletAddress,
+      type: 'treasury',
+      label: dbWallet?.label || 'Treasury Wallet',
+      description: dbWallet?.description || 'Main wallet for reward distribution',
+      isActive: true,
+      configMethod: treasuryConfig.method,
+      algorithm: treasuryConfig.algorithm,
+      databaseId: dbWallet?.id || null
+    },
+    balance: {
+      drops: balance,
+      xrp: balanceXrp,
+      error: balanceError
+    },
+    thisMonth: {
+      month: currentMonth,
+      year: currentYear,
+      totalDistributed: thisMonthTotalDrops.toString(),
+      totalDistributedXrp: (Number(thisMonthTotalDrops) / 1000000).toFixed(6),
+      totalRewards: thisMonthTotalCount,
+      categoryBreakdown
+    },
+    allTime: {
+      totalDistributed: allTimeStats?.totalAmount || '0',
+      totalDistributedXrp: ((parseFloat(allTimeStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalRewards: parseInt(allTimeStats?.count) || 0
+    }
+  }, 'Treasury wallet retrieved successfully'));
+};
+
+/**
+ * Get treasury wallet statistics (detailed)
+ */
+const getTreasuryWalletStatistics = async (req, res) => {
+  const { year } = req.query;
+  const targetYear = parseInt(year) || new Date().getFullYear();
+
+  // Check if treasury wallet is configured
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    throw new ApiError(400, 'Treasury wallet not configured');
+  }
+
+  const walletAddress = treasuryConfig.address;
+
+  // Fetch current balance
+  let balance = null;
+  let balanceXrp = null;
+
+  try {
+    const accountInfo = await xrplService.getAccountInfo(walletAddress);
+    if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+      balance = accountInfo.result.account_data.Balance;
+      balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+    }
+  } catch (error) {
+    // Continue without balance
+  }
+
+  // Get monthly breakdown for the year
+  const monthlyStats = await RewardDistribution.findAll({
+    attributes: [
+      'periodMonth',
+      'category',
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'rewardCount']
+    ],
+    where: {
+      periodYear: targetYear,
+      transactionStatus: 'completed'
+    },
+    group: ['periodMonth', 'category'],
+    order: [['periodMonth', 'ASC']],
+    raw: true
+  });
+
+  // Organize by month
+  const byMonth = {};
+  for (let m = 1; m <= 12; m++) {
+    byMonth[m] = {
+      trader: { amount: '0', amountXrp: '0', count: 0 },
+      creator: { amount: '0', amountXrp: '0', count: 0 },
+      influencer: { amount: '0', amountXrp: '0', count: 0 },
+      total: { amount: '0', amountXrp: '0', count: 0 }
+    };
+  }
+
+  let yearTotal = BigInt(0);
+  let yearCount = 0;
+
+  for (const row of monthlyStats) {
+    const month = row.periodMonth;
+    const category = row.category;
+
+    byMonth[month][category] = {
+      amount: row.totalAmount || '0',
+      amountXrp: ((parseFloat(row.totalAmount) || 0) / 1000000).toFixed(6),
+      count: parseInt(row.rewardCount)
+    };
+
+    // Update month total
+    const currentTotal = BigInt(byMonth[month].total.amount);
+    byMonth[month].total.amount = (currentTotal + BigInt(row.totalAmount || 0)).toString();
+    byMonth[month].total.count += parseInt(row.rewardCount);
+
+    yearTotal += BigInt(row.totalAmount || 0);
+    yearCount += parseInt(row.rewardCount);
+  }
+
+  // Add XRP values for totals
+  for (const m of Object.keys(byMonth)) {
+    byMonth[m].total.amountXrp = (parseFloat(byMonth[m].total.amount) / 1000000).toFixed(6);
+  }
+
+  // Get recent distributions
+  const recentDistributions = await RewardDistribution.findAll({
+    where: {
+      transactionStatus: 'completed'
+    },
+    include: [{
+      model: User,
+      as: 'recipient',
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    }],
+    order: [['paidAt', 'DESC']],
+    limit: 20
+  });
+
+  // Get pending/failed distributions
+  const pendingCount = await RewardDistribution.count({
+    where: { transactionStatus: 'pending' }
+  });
+
+  const failedCount = await RewardDistribution.count({
+    where: { transactionStatus: 'failed' }
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    walletAddress,
+    balance: {
+      drops: balance,
+      xrp: balanceXrp
+    },
+    year: targetYear,
+    monthlyBreakdown: byMonth,
+    yearTotal: {
+      amount: yearTotal.toString(),
+      amountXrp: (Number(yearTotal) / 1000000).toFixed(6),
+      count: yearCount
+    },
+    recentDistributions: recentDistributions.map(d => ({
+      id: d.id,
+      category: d.category,
+      rank: d.rank,
+      recipientWallet: d.recipientWalletAddress,
+      recipient: d.recipient,
+      amount: d.rewardAmount,
+      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+      transactionHash: d.transactionHash,
+      paidAt: d.paidAt,
+      periodMonth: d.periodMonth,
+      periodYear: d.periodYear
+    })),
+    pendingDistributions: pendingCount,
+    failedDistributions: failedCount
+  }, 'Treasury wallet statistics retrieved successfully'));
+};
+
+/**
+ * Update treasury wallet in database
+ */
+const updateTreasuryWallet = async (req, res) => {
+  const { label, description } = req.body;
+
+  // Check if treasury wallet is configured in .env
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    throw new ApiError(400, 'Treasury wallet not configured in environment. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env file.');
+  }
+
+  const walletAddress = treasuryConfig.address;
+  const adminWallet = getAdminWallet(req);
+
+  // Deactivate any other treasury wallets
+  await AdminWallet.update(
+    { isActive: false },
+    { where: { type: 'treasury', isActive: true, walletAddress: { [Op.ne]: walletAddress } } }
+  );
+
+  // Find or create the treasury wallet record
+  let wallet = await AdminWallet.findOne({
+    where: { walletAddress, type: 'treasury' }
+  });
+
+  const previousData = wallet ? wallet.toJSON() : null;
+
+  if (wallet) {
+    await wallet.update({
+      label: label || wallet.label,
+      description: description || wallet.description,
+      isActive: true
+    });
+  } else {
+    wallet = await AdminWallet.create({
+      walletAddress,
+      type: 'treasury',
+      label: label || 'Treasury Wallet',
+      description: description || 'Main wallet for reward distribution',
+      isActive: true
+    });
+  }
+
+  // Log activity
+  await logActivity(
+    adminWallet,
+    previousData ? 'admin_wallet_update' : 'admin_wallet_create',
+    'wallet',
+    wallet.id,
+    wallet.walletAddress,
+    {
+      previousValue: previousData,
+      newValue: wallet.toJSON()
+    }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    wallet: {
+      id: wallet.id,
+      walletAddress: wallet.walletAddress,
+      type: wallet.type,
+      label: wallet.label,
+      description: wallet.description,
+      isActive: wallet.isActive,
+      configMethod: treasuryConfig.method,
+      algorithm: treasuryConfig.algorithm
+    }
+  }, 'Treasury wallet updated successfully'));
+};
+
+/**
+ * Get treasury wallet distribution history
+ */
+const getTreasuryDistributionHistory = async (req, res) => {
+  const {
+    page = 1,
+    limit = 20,
+    month,
+    year,
+    category,
+    status
+  } = req.query;
+
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const where = {};
+
+  if (month) where.periodMonth = parseInt(month);
+  if (year) where.periodYear = parseInt(year);
+  if (category) where.category = category;
+  if (status) where.transactionStatus = status;
+
+  const { count, rows: distributions } = await RewardDistribution.findAndCountAll({
+    where,
+    include: [{
+      model: User,
+      as: 'recipient',
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    }],
+    order: [
+      ['paidAt', 'DESC'],
+      ['createdAt', 'DESC']
+    ],
+    limit: parseInt(limit),
+    offset
+  });
+
+  // Get summary stats for the filter
+  const summaryStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalCount']
+    ],
+    where: { ...where, transactionStatus: 'completed' },
+    raw: true
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    distributions: distributions.map(d => ({
+      id: d.id,
+      periodMonth: d.periodMonth,
+      periodYear: d.periodYear,
+      category: d.category,
+      rank: d.rank,
+      recipientWallet: d.recipientWalletAddress,
+      recipient: d.recipient,
+      amount: d.rewardAmount,
+      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+      metricValue: d.metricValue,
+      metricType: d.metricType,
+      transactionHash: d.transactionHash,
+      transactionStatus: d.transactionStatus,
+      transactionError: d.transactionError,
+      paidAt: d.paidAt,
+      initiatedBy: d.initiatedBy,
+      createdAt: d.createdAt
+    })),
+    summary: {
+      totalDistributed: summaryStats?.totalAmount || '0',
+      totalDistributedXrp: ((parseFloat(summaryStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalRewards: parseInt(summaryStats?.totalCount) || 0
+    },
+    pagination: {
+      total: count,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(count / parseInt(limit))
+    }
+  }, 'Distribution history retrieved successfully'));
+};
+
+/**
+ * Debug/check treasury wallet configuration
+ */
+const debugTreasuryWallet = async (req, res) => {
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  const hasSeed = !!process.env.TREASURY_WALLET_SEED;
+  const hasSecretNumbers = !!process.env.TREASURY_WALLET_SECRET_NUMBERS;
+  const secretNumbersLength = process.env.TREASURY_WALLET_SECRET_NUMBERS
+    ? process.env.TREASURY_WALLET_SECRET_NUMBERS.split(',').length
+    : 0;
+
+  let balance = null;
+  let balanceXrp = null;
+  let balanceError = null;
+
+  if (treasuryConfig.address) {
+    try {
+      const accountInfo = await xrplService.getAccountInfo(treasuryConfig.address);
+      if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+        balance = accountInfo.result.account_data.Balance;
+        balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+      }
+    } catch (error) {
+      balanceError = error.message;
+    }
+  }
+
+  res.json({
+    success: true,
+    data: {
+      configuration: {
+        TREASURY_WALLET_SEED_SET: hasSeed,
+        TREASURY_WALLET_SECRET_NUMBERS_SET: hasSecretNumbers,
+        SECRET_NUMBERS_GROUPS_COUNT: secretNumbersLength,
+        TREASURY_WALLET_ALGORITHM: process.env.TREASURY_WALLET_ALGORITHM || (hasSecretNumbers ? 'secp256k1' : 'auto'),
+        ACTIVE_METHOD: hasSeed ? 'SEED (takes priority)' : (hasSecretNumbers ? 'SECRET_NUMBERS' : 'NONE')
+      },
+      derivedWallet: {
+        address: treasuryConfig.address,
+        algorithm: treasuryConfig.algorithm,
+        configured: treasuryConfig.configured
+      },
+      balance: {
+        drops: balance,
+        xrp: balanceXrp,
+        error: balanceError
+      },
+      hint: !treasuryConfig.configured
+        ? 'Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env file'
+        : null
+    }
+  });
+};
+
 module.exports = {
   getTopTraders,
   getTopCreators,
@@ -995,5 +1473,11 @@ module.exports = {
   updatePlatformFeesWallet,
   getAllAdminWallets,
   upsertAdminWallet,
-  deleteAdminWallet
+  deleteAdminWallet,
+  // Treasury wallet management
+  getTreasuryWallet,
+  getTreasuryWalletStatistics,
+  updateTreasuryWallet,
+  getTreasuryDistributionHistory,
+  debugTreasuryWallet
 };
