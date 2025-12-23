@@ -2,13 +2,41 @@ const { Client, Wallet } = require('xrpl');
 const { secretToEntropy } = require('@xrplf/secret-numbers');
 const logger = require('../utils/logger');
 
+// Network configurations
+const NETWORK_CONFIGS = {
+  testnet: {
+    wssUrl: 'wss://s.altnet.rippletest.net:51233',
+    faucetUrl: 'https://faucet.altnet.rippletest.net/accounts',
+    explorerUrl: 'https://testnet.xrpl.org'
+  },
+  devnet: {
+    wssUrl: 'wss://s.devnet.rippletest.net:51233',
+    faucetUrl: 'https://faucet.devnet.rippletest.net/accounts',
+    explorerUrl: 'https://devnet.xrpl.org'
+  },
+  mainnet: {
+    wssUrl: 'wss://xrplcluster.com',
+    faucetUrl: null,
+    explorerUrl: 'https://livenet.xrpl.org'
+  }
+};
+
 class XRPLConfig {
   constructor() {
     this.client = null;
     this.adminWallet = null;
     this.treasuryWallet = null;
-    this.network = process.env.XRPL_NETWORK || 'mainnet';
-    this.wssUrl = process.env.XRPL_WSS_URL || 'wss://xrplcluster.com';
+    this.network = process.env.XRPL_NETWORK || 'testnet';
+
+    // Get network config based on XRPL_NETWORK environment variable
+    const networkConfig = NETWORK_CONFIGS[this.network] || NETWORK_CONFIGS.testnet;
+
+    // Allow override via XRPL_WSS_URL, otherwise use network default
+    this.wssUrl = process.env.XRPL_WSS_URL || networkConfig.wssUrl;
+    this.explorerUrl = networkConfig.explorerUrl;
+    this.faucetUrl = networkConfig.faucetUrl;
+
+    logger.info(`XRPL Config: Network=${this.network}, WSS=${this.wssUrl}`);
   }
 
   /**
@@ -255,6 +283,34 @@ class XRPLConfig {
 
   getNetwork() {
     return this.network;
+  }
+
+  /**
+   * Get full network configuration info
+   */
+  getNetworkInfo() {
+    return {
+      network: this.network,
+      wssUrl: this.wssUrl,
+      explorerUrl: this.explorerUrl,
+      faucetUrl: this.faucetUrl,
+      isTestnet: this.network === 'testnet' || this.network === 'devnet',
+      isMainnet: this.network === 'mainnet'
+    };
+  }
+
+  /**
+   * Get transaction explorer URL
+   */
+  getTransactionUrl(txHash) {
+    return `${this.explorerUrl}/transactions/${txHash}`;
+  }
+
+  /**
+   * Get account explorer URL
+   */
+  getAccountUrl(address) {
+    return `${this.explorerUrl}/accounts/${address}`;
   }
 }
 
