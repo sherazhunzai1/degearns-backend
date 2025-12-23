@@ -356,6 +356,66 @@ router.post('/wallets', adminRewardsController.upsertAdminWallet);
 router.delete('/wallets/:walletId', adminRewardsController.deleteAdminWallet);
 
 // ============================================
+// TREASURY WALLET MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/treasury - Get treasury wallet details with balance and statistics
+router.get('/treasury', adminRewardsController.getTreasuryWallet);
+
+// GET /admin/treasury/statistics - Get detailed treasury wallet statistics
+router.get('/treasury/statistics', adminRewardsController.getTreasuryWalletStatistics);
+
+// GET /admin/treasury/history - Get treasury distribution history
+router.get('/treasury/history', adminRewardsController.getTreasuryDistributionHistory);
+
+// GET /admin/treasury/debug - Debug treasury wallet configuration
+router.get('/treasury/debug', adminRewardsController.debugTreasuryWallet);
+
+// PUT /admin/treasury - Update treasury wallet label/description
+router.put('/treasury', adminRewardsController.updateTreasuryWallet);
+
+// ============================================
+// MONTHLY RANKING MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/rankings/formula - Get reward distribution formula
+router.get('/rankings/formula', adminRewardsController.getDistributionFormula);
+
+// GET /admin/rankings - Get all rankings for a period
+router.get('/rankings', adminRewardsController.getMonthlyRankings);
+
+// POST /admin/rankings - Set/update ranking for a category
+router.post('/rankings', adminRewardsController.setMonthlyRanking);
+
+// GET /admin/rankings/:year/:month/:category - Get specific category ranking
+router.get('/rankings/:year/:month/:category', adminRewardsController.getCategoryRanking);
+
+// DELETE /admin/rankings/:year/:month/:category - Delete a ranking
+router.delete('/rankings/:year/:month/:category', adminRewardsController.deleteMonthlyRanking);
+
+// POST /admin/rankings/finalize - Finalize a category ranking
+router.post('/rankings/finalize', adminRewardsController.finalizeRanking);
+
+// POST /admin/rankings/unfinalize - Revert ranking to draft
+router.post('/rankings/unfinalize', adminRewardsController.unfinalizeRanking);
+
+// ============================================
+// REWARD DISTRIBUTION EXECUTION ROUTES
+// ============================================
+
+// GET /admin/distribution/status - Get distribution readiness status
+router.get('/distribution/status', adminRewardsController.getDistributionStatus);
+
+// POST /admin/distribution/execute - Execute reward distribution
+router.post('/distribution/execute', adminRewardsController.executeDistribution);
+
+// GET /admin/distribution/batch/:batchId - Get distribution batch details
+router.get('/distribution/batch/:batchId', adminRewardsController.getDistributionBatch);
+
+// POST /admin/distribution/retry - Retry failed distributions
+router.post('/distribution/retry', adminRewardsController.retryFailedDistributions);
+
+// ============================================
 // BANNER MANAGEMENT ROUTES
 // ============================================
 

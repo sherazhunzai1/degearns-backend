@@ -11,11 +11,13 @@ const {
   AdminWallet,
   RewardDistribution,
   AdminActivity,
+  MonthlyRanking,
   sequelize
 } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 const xrplService = require('../../services/xrplService');
+const xrplConfig = require('../../config/xrpl');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -982,6 +984,1411 @@ const deleteAdminWallet = async (req, res) => {
   res.status(200).json(new ApiResponse(200, null, 'Admin wallet deleted successfully'));
 };
 
+// ============================================
+// TREASURY WALLET MANAGEMENT
+// ============================================
+
+/**
+ * Get treasury wallet details with balance and statistics
+ */
+const getTreasuryWallet = async (req, res) => {
+  // Check if treasury wallet is configured in .env
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    return res.status(200).json(new ApiResponse(200, {
+      configured: false,
+      message: 'Treasury wallet not configured. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env file.'
+    }, 'Treasury wallet not configured'));
+  }
+
+  const walletAddress = treasuryConfig.address;
+
+  // Get database record for treasury wallet
+  let dbWallet = await AdminWallet.findOne({
+    where: { type: 'treasury', isActive: true }
+  });
+
+  // If no database record exists but wallet is configured, create one
+  if (!dbWallet && walletAddress) {
+    dbWallet = await AdminWallet.create({
+      walletAddress,
+      type: 'treasury',
+      label: 'Treasury Wallet',
+      description: 'Main wallet for reward distribution',
+      isActive: true
+    });
+  }
+
+  // Fetch balance from XRPL
+  let balance = null;
+  let balanceXrp = null;
+  let balanceError = null;
+
+  try {
+    const accountInfo = await xrplService.getAccountInfo(walletAddress);
+    if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+      balance = accountInfo.result.account_data.Balance;
+      balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+    }
+  } catch (error) {
+    balanceError = error.message;
+  }
+
+  // Get this month's distribution statistics
+  const now = new Date();
+  const currentMonth = now.getMonth() + 1;
+  const currentYear = now.getFullYear();
+
+  const thisMonthStats = await RewardDistribution.findAll({
+    attributes: [
+      'category',
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+    ],
+    where: {
+      periodMonth: currentMonth,
+      periodYear: currentYear,
+      transactionStatus: 'completed'
+    },
+    group: ['category'],
+    raw: true
+  });
+
+  // Calculate totals
+  let thisMonthTotalDrops = BigInt(0);
+  let thisMonthTotalCount = 0;
+  const categoryBreakdown = {};
+
+  for (const stat of thisMonthStats) {
+    thisMonthTotalDrops += BigInt(stat.totalAmount || 0);
+    thisMonthTotalCount += parseInt(stat.count);
+    categoryBreakdown[stat.category] = {
+      amount: stat.totalAmount || '0',
+      amountXrp: ((parseFloat(stat.totalAmount) || 0) / 1000000).toFixed(6),
+      count: parseInt(stat.count)
+    };
+  }
+
+  // Get all-time distribution statistics
+  const allTimeStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+    ],
+    where: {
+      transactionStatus: 'completed'
+    },
+    raw: true
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    wallet: {
+      address: walletAddress,
+      type: 'treasury',
+      label: dbWallet?.label || 'Treasury Wallet',
+      description: dbWallet?.description || 'Main wallet for reward distribution',
+      isActive: true,
+      configMethod: treasuryConfig.method,
+      algorithm: treasuryConfig.algorithm,
+      databaseId: dbWallet?.id || null
+    },
+    balance: {
+      drops: balance,
+      xrp: balanceXrp,
+      error: balanceError
+    },
+    thisMonth: {
+      month: currentMonth,
+      year: currentYear,
+      totalDistributed: thisMonthTotalDrops.toString(),
+      totalDistributedXrp: (Number(thisMonthTotalDrops) / 1000000).toFixed(6),
+      totalRewards: thisMonthTotalCount,
+      categoryBreakdown
+    },
+    allTime: {
+      totalDistributed: allTimeStats?.totalAmount || '0',
+      totalDistributedXrp: ((parseFloat(allTimeStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalRewards: parseInt(allTimeStats?.count) || 0
+    }
+  }, 'Treasury wallet retrieved successfully'));
+};
+
+/**
+ * Get treasury wallet statistics (detailed)
+ */
+const getTreasuryWalletStatistics = async (req, res) => {
+  const { year } = req.query;
+  const targetYear = parseInt(year) || new Date().getFullYear();
+
+  // Check if treasury wallet is configured
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    throw new ApiError(400, 'Treasury wallet not configured');
+  }
+
+  const walletAddress = treasuryConfig.address;
+
+  // Fetch current balance
+  let balance = null;
+  let balanceXrp = null;
+
+  try {
+    const accountInfo = await xrplService.getAccountInfo(walletAddress);
+    if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+      balance = accountInfo.result.account_data.Balance;
+      balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+    }
+  } catch (error) {
+    // Continue without balance
+  }
+
+  // Get monthly breakdown for the year
+  const monthlyStats = await RewardDistribution.findAll({
+    attributes: [
+      'periodMonth',
+      'category',
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'rewardCount']
+    ],
+    where: {
+      periodYear: targetYear,
+      transactionStatus: 'completed'
+    },
+    group: ['periodMonth', 'category'],
+    order: [['periodMonth', 'ASC']],
+    raw: true
+  });
+
+  // Organize by month
+  const byMonth = {};
+  for (let m = 1; m <= 12; m++) {
+    byMonth[m] = {
+      trader: { amount: '0', amountXrp: '0', count: 0 },
+      creator: { amount: '0', amountXrp: '0', count: 0 },
+      influencer: { amount: '0', amountXrp: '0', count: 0 },
+      total: { amount: '0', amountXrp: '0', count: 0 }
+    };
+  }
+
+  let yearTotal = BigInt(0);
+  let yearCount = 0;
+
+  for (const row of monthlyStats) {
+    const month = row.periodMonth;
+    const category = row.category;
+
+    byMonth[month][category] = {
+      amount: row.totalAmount || '0',
+      amountXrp: ((parseFloat(row.totalAmount) || 0) / 1000000).toFixed(6),
+      count: parseInt(row.rewardCount)
+    };
+
+    // Update month total
+    const currentTotal = BigInt(byMonth[month].total.amount);
+    byMonth[month].total.amount = (currentTotal + BigInt(row.totalAmount || 0)).toString();
+    byMonth[month].total.count += parseInt(row.rewardCount);
+
+    yearTotal += BigInt(row.totalAmount || 0);
+    yearCount += parseInt(row.rewardCount);
+  }
+
+  // Add XRP values for totals
+  for (const m of Object.keys(byMonth)) {
+    byMonth[m].total.amountXrp = (parseFloat(byMonth[m].total.amount) / 1000000).toFixed(6);
+  }
+
+  // Get recent distributions
+  const recentDistributions = await RewardDistribution.findAll({
+    where: {
+      transactionStatus: 'completed'
+    },
+    include: [{
+      model: User,
+      as: 'recipient',
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    }],
+    order: [['paidAt', 'DESC']],
+    limit: 20
+  });
+
+  // Get pending/failed distributions
+  const pendingCount = await RewardDistribution.count({
+    where: { transactionStatus: 'pending' }
+  });
+
+  const failedCount = await RewardDistribution.count({
+    where: { transactionStatus: 'failed' }
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    walletAddress,
+    balance: {
+      drops: balance,
+      xrp: balanceXrp
+    },
+    year: targetYear,
+    monthlyBreakdown: byMonth,
+    yearTotal: {
+      amount: yearTotal.toString(),
+      amountXrp: (Number(yearTotal) / 1000000).toFixed(6),
+      count: yearCount
+    },
+    recentDistributions: recentDistributions.map(d => ({
+      id: d.id,
+      category: d.category,
+      rank: d.rank,
+      recipientWallet: d.recipientWalletAddress,
+      recipient: d.recipient,
+      amount: d.rewardAmount,
+      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+      transactionHash: d.transactionHash,
+      paidAt: d.paidAt,
+      periodMonth: d.periodMonth,
+      periodYear: d.periodYear
+    })),
+    pendingDistributions: pendingCount,
+    failedDistributions: failedCount
+  }, 'Treasury wallet statistics retrieved successfully'));
+};
+
+/**
+ * Update treasury wallet in database
+ */
+const updateTreasuryWallet = async (req, res) => {
+  const { label, description } = req.body;
+
+  // Check if treasury wallet is configured in .env
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    throw new ApiError(400, 'Treasury wallet not configured in environment. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env file.');
+  }
+
+  const walletAddress = treasuryConfig.address;
+  const adminWallet = getAdminWallet(req);
+
+  // Deactivate any other treasury wallets
+  await AdminWallet.update(
+    { isActive: false },
+    { where: { type: 'treasury', isActive: true, walletAddress: { [Op.ne]: walletAddress } } }
+  );
+
+  // Find or create the treasury wallet record
+  let wallet = await AdminWallet.findOne({
+    where: { walletAddress, type: 'treasury' }
+  });
+
+  const previousData = wallet ? wallet.toJSON() : null;
+
+  if (wallet) {
+    await wallet.update({
+      label: label || wallet.label,
+      description: description || wallet.description,
+      isActive: true
+    });
+  } else {
+    wallet = await AdminWallet.create({
+      walletAddress,
+      type: 'treasury',
+      label: label || 'Treasury Wallet',
+      description: description || 'Main wallet for reward distribution',
+      isActive: true
+    });
+  }
+
+  // Log activity
+  await logActivity(
+    adminWallet,
+    previousData ? 'admin_wallet_update' : 'admin_wallet_create',
+    'wallet',
+    wallet.id,
+    wallet.walletAddress,
+    {
+      previousValue: previousData,
+      newValue: wallet.toJSON()
+    }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    wallet: {
+      id: wallet.id,
+      walletAddress: wallet.walletAddress,
+      type: wallet.type,
+      label: wallet.label,
+      description: wallet.description,
+      isActive: wallet.isActive,
+      configMethod: treasuryConfig.method,
+      algorithm: treasuryConfig.algorithm
+    }
+  }, 'Treasury wallet updated successfully'));
+};
+
+/**
+ * Get treasury wallet distribution history
+ */
+const getTreasuryDistributionHistory = async (req, res) => {
+  const {
+    page = 1,
+    limit = 20,
+    month,
+    year,
+    category,
+    status
+  } = req.query;
+
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const where = {};
+
+  if (month) where.periodMonth = parseInt(month);
+  if (year) where.periodYear = parseInt(year);
+  if (category) where.category = category;
+  if (status) where.transactionStatus = status;
+
+  const { count, rows: distributions } = await RewardDistribution.findAndCountAll({
+    where,
+    include: [{
+      model: User,
+      as: 'recipient',
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    }],
+    order: [
+      ['paidAt', 'DESC'],
+      ['createdAt', 'DESC']
+    ],
+    limit: parseInt(limit),
+    offset
+  });
+
+  // Get summary stats for the filter
+  const summaryStats = await RewardDistribution.findOne({
+    attributes: [
+      [sequelize.fn('SUM', sequelize.cast(sequelize.col('rewardAmount'), 'UNSIGNED')), 'totalAmount'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'totalCount']
+    ],
+    where: { ...where, transactionStatus: 'completed' },
+    raw: true
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    distributions: distributions.map(d => ({
+      id: d.id,
+      periodMonth: d.periodMonth,
+      periodYear: d.periodYear,
+      category: d.category,
+      rank: d.rank,
+      recipientWallet: d.recipientWalletAddress,
+      recipient: d.recipient,
+      amount: d.rewardAmount,
+      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+      metricValue: d.metricValue,
+      metricType: d.metricType,
+      transactionHash: d.transactionHash,
+      transactionStatus: d.transactionStatus,
+      transactionError: d.transactionError,
+      paidAt: d.paidAt,
+      initiatedBy: d.initiatedBy,
+      createdAt: d.createdAt
+    })),
+    summary: {
+      totalDistributed: summaryStats?.totalAmount || '0',
+      totalDistributedXrp: ((parseFloat(summaryStats?.totalAmount) || 0) / 1000000).toFixed(6),
+      totalRewards: parseInt(summaryStats?.totalCount) || 0
+    },
+    pagination: {
+      total: count,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(count / parseInt(limit))
+    }
+  }, 'Distribution history retrieved successfully'));
+};
+
+/**
+ * Debug/check treasury wallet configuration
+ */
+const debugTreasuryWallet = async (req, res) => {
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  const hasSeed = !!process.env.TREASURY_WALLET_SEED;
+  const hasSecretNumbers = !!process.env.TREASURY_WALLET_SECRET_NUMBERS;
+  const secretNumbersLength = process.env.TREASURY_WALLET_SECRET_NUMBERS
+    ? process.env.TREASURY_WALLET_SECRET_NUMBERS.split(',').length
+    : 0;
+
+  let balance = null;
+  let balanceXrp = null;
+  let balanceError = null;
+
+  if (treasuryConfig.address) {
+    try {
+      const accountInfo = await xrplService.getAccountInfo(treasuryConfig.address);
+      if (accountInfo && accountInfo.result && accountInfo.result.account_data) {
+        balance = accountInfo.result.account_data.Balance;
+        balanceXrp = (parseInt(balance) / 1000000).toFixed(6);
+      }
+    } catch (error) {
+      balanceError = error.message;
+    }
+  }
+
+  res.json({
+    success: true,
+    data: {
+      configuration: {
+        TREASURY_WALLET_SEED_SET: hasSeed,
+        TREASURY_WALLET_SECRET_NUMBERS_SET: hasSecretNumbers,
+        SECRET_NUMBERS_GROUPS_COUNT: secretNumbersLength,
+        TREASURY_WALLET_ALGORITHM: process.env.TREASURY_WALLET_ALGORITHM || (hasSecretNumbers ? 'secp256k1' : 'auto'),
+        ACTIVE_METHOD: hasSeed ? 'SEED (takes priority)' : (hasSecretNumbers ? 'SECRET_NUMBERS' : 'NONE')
+      },
+      derivedWallet: {
+        address: treasuryConfig.address,
+        algorithm: treasuryConfig.algorithm,
+        configured: treasuryConfig.configured
+      },
+      balance: {
+        drops: balance,
+        xrp: balanceXrp,
+        error: balanceError
+      },
+      hint: !treasuryConfig.configured
+        ? 'Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env file'
+        : null
+    }
+  });
+};
+
+// ============================================
+// MONTHLY RANKING MANAGEMENT
+// ============================================
+
+/**
+ * Reward distribution formula constants
+ * Total wallet balance split: 33.33% each category
+ * Within each category:
+ * - Rank 1: 25%
+ * - Rank 2: 15%
+ * - Rank 3: 10%
+ * - Ranks 4-10: 50% split equally (~7.14% each)
+ */
+const REWARD_DISTRIBUTION = {
+  categoryPercentage: 33.33, // Each of the 3 categories gets 33.33%
+  rankPercentages: {
+    1: 25.00,
+    2: 15.00,
+    3: 10.00,
+    4: 7.14,
+    5: 7.14,
+    6: 7.14,
+    7: 7.14,
+    8: 7.14,
+    9: 7.14,
+    10: 7.16  // Slightly more to account for rounding (50 / 7 = 7.142857...)
+  }
+};
+
+/**
+ * Get reward distribution formula/config
+ */
+const getDistributionFormula = async (req, res) => {
+  res.status(200).json(new ApiResponse(200, {
+    formula: {
+      categories: ['trader', 'creator', 'influencer'],
+      categoryAllocation: '33.33% each (1/3 of total wallet balance)',
+      rankDistribution: {
+        'Rank 1': '25% of category allocation',
+        'Rank 2': '15% of category allocation',
+        'Rank 3': '10% of category allocation',
+        'Ranks 4-10': '50% split equally (~7.14% each)'
+      },
+      example: {
+        walletBalance: '3000 XRP',
+        perCategory: '1000 XRP (33.33%)',
+        rank1: '250 XRP (25%)',
+        rank2: '150 XRP (15%)',
+        rank3: '100 XRP (10%)',
+        rank4to10: '~71.43 XRP each (7.14%)'
+      }
+    },
+    percentages: REWARD_DISTRIBUTION
+  }, 'Distribution formula retrieved successfully'));
+};
+
+/**
+ * Set or update monthly rankings for a category
+ */
+const setMonthlyRanking = async (req, res) => {
+  const {
+    month,
+    year,
+    category,
+    rankings, // Array of { rank: 1-10, walletAddress, username (optional) }
+    notes
+  } = req.body;
+
+  if (!month || !year) {
+    throw new ApiError(400, 'Month and year are required');
+  }
+
+  if (!category || !['trader', 'creator', 'influencer'].includes(category)) {
+    throw new ApiError(400, 'Valid category is required (trader, creator, influencer)');
+  }
+
+  if (!rankings || !Array.isArray(rankings) || rankings.length !== 10) {
+    throw new ApiError(400, 'Rankings must be an array of exactly 10 entries');
+  }
+
+  // Validate rankings structure
+  const ranks = rankings.map(r => r.rank);
+  for (let i = 1; i <= 10; i++) {
+    if (!ranks.includes(i)) {
+      throw new ApiError(400, `Missing rank ${i} in rankings`);
+    }
+  }
+
+  // Validate wallet addresses
+  for (const ranking of rankings) {
+    if (!ranking.walletAddress) {
+      throw new ApiError(400, `Wallet address is required for rank ${ranking.rank}`);
+    }
+    if (!ranking.walletAddress.startsWith('r') || ranking.walletAddress.length < 25) {
+      throw new ApiError(400, `Invalid wallet address for rank ${ranking.rank}`);
+    }
+  }
+
+  const adminWallet = getAdminWallet(req);
+
+  // Check if already distributed
+  const existingRanking = await MonthlyRanking.findOne({
+    where: {
+      periodMonth: month,
+      periodYear: year,
+      category
+    }
+  });
+
+  if (existingRanking && existingRanking.status === 'distributed') {
+    throw new ApiError(400, 'Cannot modify rankings that have already been distributed');
+  }
+
+  // Enrich rankings with user data
+  const enrichedRankings = await Promise.all(rankings.map(async (r) => {
+    const user = await User.findOne({
+      where: { walletAddress: r.walletAddress },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+    return {
+      rank: r.rank,
+      walletAddress: r.walletAddress,
+      username: user?.username || r.username || null,
+      profileImage: user?.profileImage || null,
+      isVerified: user?.isVerified || false
+    };
+  }));
+
+  // Sort by rank
+  enrichedRankings.sort((a, b) => a.rank - b.rank);
+
+  let monthlyRanking;
+  let previousData = null;
+
+  if (existingRanking) {
+    previousData = existingRanking.toJSON();
+    await existingRanking.update({
+      rankings: enrichedRankings,
+      status: 'draft', // Reset to draft if edited
+      notes: notes || existingRanking.notes,
+      setBy: adminWallet,
+      finalizedAt: null,
+      finalizedBy: null
+    });
+    monthlyRanking = existingRanking;
+  } else {
+    monthlyRanking = await MonthlyRanking.create({
+      periodMonth: month,
+      periodYear: year,
+      category,
+      rankings: enrichedRankings,
+      status: 'draft',
+      notes,
+      setBy: adminWallet
+    });
+  }
+
+  // Log activity
+  await logActivity(
+    adminWallet,
+    previousData ? 'ranking_update' : 'ranking_create',
+    'ranking',
+    monthlyRanking.id,
+    `${category} ${month}/${year}`,
+    {
+      previousValue: previousData,
+      newValue: monthlyRanking.toJSON()
+    }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    ranking: monthlyRanking
+  }, `${category} rankings ${previousData ? 'updated' : 'created'} successfully`));
+};
+
+/**
+ * Get monthly rankings for a period
+ */
+const getMonthlyRankings = async (req, res) => {
+  const { month, year, category } = req.query;
+
+  if (!month || !year) {
+    throw new ApiError(400, 'Month and year are required');
+  }
+
+  const where = {
+    periodMonth: parseInt(month),
+    periodYear: parseInt(year)
+  };
+
+  if (category) {
+    where.category = category;
+  }
+
+  const rankings = await MonthlyRanking.findAll({
+    where,
+    order: [['category', 'ASC']]
+  });
+
+  // Check distribution readiness
+  const categories = ['trader', 'creator', 'influencer'];
+  const categoryStatus = {};
+  let allFinalized = true;
+
+  for (const cat of categories) {
+    const ranking = rankings.find(r => r.category === cat);
+    categoryStatus[cat] = {
+      exists: !!ranking,
+      status: ranking?.status || 'not_set',
+      setBy: ranking?.setBy || null,
+      setAt: ranking?.createdAt || null,
+      finalizedBy: ranking?.finalizedBy || null,
+      finalizedAt: ranking?.finalizedAt || null
+    };
+    if (!ranking || ranking.status !== 'finalized') {
+      allFinalized = false;
+    }
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    period: {
+      month: parseInt(month),
+      year: parseInt(year)
+    },
+    rankings,
+    categoryStatus,
+    readyForDistribution: allFinalized,
+    message: allFinalized
+      ? 'All categories are finalized. Ready for distribution.'
+      : 'Not all categories are finalized yet.'
+  }, 'Monthly rankings retrieved successfully'));
+};
+
+/**
+ * Get single category ranking
+ */
+const getCategoryRanking = async (req, res) => {
+  const { month, year, category } = req.params;
+
+  if (!['trader', 'creator', 'influencer'].includes(category)) {
+    throw new ApiError(400, 'Invalid category');
+  }
+
+  const ranking = await MonthlyRanking.findOne({
+    where: {
+      periodMonth: parseInt(month),
+      periodYear: parseInt(year),
+      category
+    }
+  });
+
+  if (!ranking) {
+    return res.status(200).json(new ApiResponse(200, {
+      ranking: null,
+      message: `No ranking set for ${category} in ${month}/${year}`
+    }, 'Ranking not found'));
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    ranking
+  }, 'Category ranking retrieved successfully'));
+};
+
+/**
+ * Finalize rankings for a category
+ */
+const finalizeRanking = async (req, res) => {
+  const { month, year, category } = req.body;
+
+  if (!month || !year) {
+    throw new ApiError(400, 'Month and year are required');
+  }
+
+  if (!category || !['trader', 'creator', 'influencer'].includes(category)) {
+    throw new ApiError(400, 'Valid category is required');
+  }
+
+  const ranking = await MonthlyRanking.findOne({
+    where: {
+      periodMonth: month,
+      periodYear: year,
+      category
+    }
+  });
+
+  if (!ranking) {
+    throw new ApiError(404, `No ranking found for ${category} in ${month}/${year}`);
+  }
+
+  if (ranking.status === 'distributed') {
+    throw new ApiError(400, 'Cannot modify rankings that have already been distributed');
+  }
+
+  if (ranking.status === 'finalized') {
+    return res.status(200).json(new ApiResponse(200, {
+      ranking,
+      message: 'Ranking is already finalized'
+    }, 'Ranking already finalized'));
+  }
+
+  const adminWallet = getAdminWallet(req);
+
+  await ranking.update({
+    status: 'finalized',
+    finalizedBy: adminWallet,
+    finalizedAt: new Date()
+  });
+
+  // Check if all categories are now finalized
+  const allFinalized = await MonthlyRanking.areAllCategoriesFinalized(month, year);
+
+  // Log activity
+  await logActivity(
+    adminWallet,
+    'ranking_finalize',
+    'ranking',
+    ranking.id,
+    `${category} ${month}/${year}`,
+    {
+      newValue: { status: 'finalized', finalizedAt: ranking.finalizedAt }
+    }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    ranking,
+    allCategoriesFinalized: allFinalized,
+    message: allFinalized
+      ? 'All categories are now finalized. Ready for distribution!'
+      : `${category} ranking finalized. Other categories still pending.`
+  }, 'Ranking finalized successfully'));
+};
+
+/**
+ * Unfinalize ranking (revert to draft)
+ */
+const unfinalizeRanking = async (req, res) => {
+  const { month, year, category } = req.body;
+
+  const ranking = await MonthlyRanking.findOne({
+    where: {
+      periodMonth: month,
+      periodYear: year,
+      category
+    }
+  });
+
+  if (!ranking) {
+    throw new ApiError(404, 'Ranking not found');
+  }
+
+  if (ranking.status === 'distributed') {
+    throw new ApiError(400, 'Cannot unfinalize rankings that have already been distributed');
+  }
+
+  const adminWallet = getAdminWallet(req);
+
+  await ranking.update({
+    status: 'draft',
+    finalizedBy: null,
+    finalizedAt: null
+  });
+
+  await logActivity(
+    adminWallet,
+    'ranking_unfinalize',
+    'ranking',
+    ranking.id,
+    `${category} ${month}/${year}`,
+    { newValue: { status: 'draft' } }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    ranking
+  }, 'Ranking reverted to draft'));
+};
+
+/**
+ * Delete monthly ranking
+ */
+const deleteMonthlyRanking = async (req, res) => {
+  const { month, year, category } = req.params;
+
+  const ranking = await MonthlyRanking.findOne({
+    where: {
+      periodMonth: parseInt(month),
+      periodYear: parseInt(year),
+      category
+    }
+  });
+
+  if (!ranking) {
+    throw new ApiError(404, 'Ranking not found');
+  }
+
+  if (ranking.status === 'distributed') {
+    throw new ApiError(400, 'Cannot delete rankings that have already been distributed');
+  }
+
+  const adminWallet = getAdminWallet(req);
+
+  await logActivity(
+    adminWallet,
+    'ranking_delete',
+    'ranking',
+    ranking.id,
+    `${category} ${month}/${year}`,
+    { previousValue: ranking.toJSON() }
+  );
+
+  await ranking.destroy();
+
+  res.status(200).json(new ApiResponse(200, null, 'Ranking deleted successfully'));
+};
+
+/**
+ * Get distribution readiness status
+ */
+const getDistributionStatus = async (req, res) => {
+  const { month, year } = req.query;
+
+  if (!month || !year) {
+    throw new ApiError(400, 'Month and year are required');
+  }
+
+  // Check treasury wallet configuration
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  // Get treasury balance
+  let treasuryBalance = null;
+  let treasuryBalanceXrp = null;
+  let treasuryError = null;
+
+  if (treasuryConfig.configured) {
+    try {
+      const accountInfo = await xrplService.getAccountInfo(treasuryConfig.address);
+      if (accountInfo?.result?.account_data) {
+        treasuryBalance = accountInfo.result.account_data.Balance;
+        treasuryBalanceXrp = (parseInt(treasuryBalance) / 1000000).toFixed(6);
+      }
+    } catch (error) {
+      treasuryError = error.message;
+    }
+  }
+
+  // Get all rankings for the period
+  const rankings = await MonthlyRanking.findAll({
+    where: {
+      periodMonth: parseInt(month),
+      periodYear: parseInt(year)
+    }
+  });
+
+  const categories = ['trader', 'creator', 'influencer'];
+  const categoryDetails = {};
+  let allFinalized = true;
+  let anyDistributed = false;
+
+  for (const cat of categories) {
+    const ranking = rankings.find(r => r.category === cat);
+    categoryDetails[cat] = {
+      exists: !!ranking,
+      status: ranking?.status || 'not_set',
+      rankings: ranking?.rankings || [],
+      setBy: ranking?.setBy || null,
+      finalizedBy: ranking?.finalizedBy || null,
+      finalizedAt: ranking?.finalizedAt || null,
+      distributedAt: ranking?.distributedAt || null
+    };
+
+    if (!ranking || ranking.status !== 'finalized') {
+      if (ranking?.status !== 'distributed') {
+        allFinalized = false;
+      }
+    }
+    if (ranking?.status === 'distributed') {
+      anyDistributed = true;
+    }
+  }
+
+  // Calculate expected distribution if we have balance
+  let expectedDistribution = null;
+  if (treasuryBalanceXrp && parseFloat(treasuryBalanceXrp) > 0) {
+    const totalBalance = parseFloat(treasuryBalanceXrp);
+    const perCategory = totalBalance * (REWARD_DISTRIBUTION.categoryPercentage / 100);
+
+    expectedDistribution = {
+      totalBalance: `${totalBalance.toFixed(6)} XRP`,
+      perCategory: `${perCategory.toFixed(6)} XRP`,
+      breakdown: {}
+    };
+
+    for (let rank = 1; rank <= 10; rank++) {
+      const percentage = REWARD_DISTRIBUTION.rankPercentages[rank];
+      const amount = perCategory * (percentage / 100);
+      expectedDistribution.breakdown[`rank${rank}`] = {
+        percentage: `${percentage}%`,
+        amount: `${amount.toFixed(6)} XRP`
+      };
+    }
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    period: {
+      month: parseInt(month),
+      year: parseInt(year)
+    },
+    treasury: {
+      configured: treasuryConfig.configured,
+      address: treasuryConfig.address,
+      balance: treasuryBalance,
+      balanceXrp: treasuryBalanceXrp,
+      error: treasuryError
+    },
+    categories: categoryDetails,
+    readyForDistribution: allFinalized && treasuryConfig.configured && !anyDistributed,
+    alreadyDistributed: anyDistributed,
+    expectedDistribution,
+    requirements: {
+      treasuryConfigured: treasuryConfig.configured,
+      allCategoriesFinalized: allFinalized,
+      notYetDistributed: !anyDistributed
+    }
+  }, 'Distribution status retrieved successfully'));
+};
+
+/**
+ * Execute reward distribution from treasury wallet
+ */
+const executeDistribution = async (req, res) => {
+  const { month, year, dryRun = false } = req.body;
+
+  if (!month || !year) {
+    throw new ApiError(400, 'Month and year are required');
+  }
+
+  // Check treasury wallet configuration
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+
+  if (!treasuryConfig.configured) {
+    throw new ApiError(400, 'Treasury wallet not configured. Set TREASURY_WALLET_SEED or TREASURY_WALLET_SECRET_NUMBERS in .env');
+  }
+
+  // Get treasury balance
+  let treasuryBalance = 0;
+  try {
+    const accountInfo = await xrplService.getAccountInfo(treasuryConfig.address);
+    if (accountInfo?.result?.account_data) {
+      treasuryBalance = parseInt(accountInfo.result.account_data.Balance);
+    }
+  } catch (error) {
+    throw new ApiError(500, `Failed to get treasury balance: ${error.message}`);
+  }
+
+  // Reserve 20 XRP for account reserve + fees
+  const reserveDrops = 20 * 1000000;
+  const availableBalance = treasuryBalance - reserveDrops;
+
+  if (availableBalance <= 0) {
+    throw new ApiError(400, `Insufficient treasury balance. Available: ${(treasuryBalance / 1000000).toFixed(6)} XRP, Reserve: 20 XRP`);
+  }
+
+  // Check all categories are finalized
+  const rankings = await MonthlyRanking.findAll({
+    where: {
+      periodMonth: month,
+      periodYear: year
+    }
+  });
+
+  const categories = ['trader', 'creator', 'influencer'];
+
+  for (const cat of categories) {
+    const ranking = rankings.find(r => r.category === cat);
+    if (!ranking) {
+      throw new ApiError(400, `${cat} rankings not set for ${month}/${year}`);
+    }
+    if (ranking.status === 'distributed') {
+      throw new ApiError(400, `${cat} rewards already distributed for ${month}/${year}`);
+    }
+    if (ranking.status !== 'finalized') {
+      throw new ApiError(400, `${cat} rankings not finalized for ${month}/${year}`);
+    }
+  }
+
+  const adminWallet = getAdminWallet(req);
+  const batchId = require('crypto').randomUUID();
+
+  // Calculate distribution amounts
+  const perCategoryDrops = Math.floor(availableBalance * (REWARD_DISTRIBUTION.categoryPercentage / 100));
+
+  const distributions = [];
+  const results = {
+    successful: [],
+    failed: [],
+    totalAmount: BigInt(0),
+    batchId
+  };
+
+  // Prepare all distributions
+  for (const ranking of rankings) {
+    for (const entry of ranking.rankings) {
+      const percentage = REWARD_DISTRIBUTION.rankPercentages[entry.rank];
+      const amountDrops = Math.floor(perCategoryDrops * (percentage / 100));
+
+      distributions.push({
+        category: ranking.category,
+        rank: entry.rank,
+        walletAddress: entry.walletAddress,
+        username: entry.username,
+        amountDrops: amountDrops.toString(),
+        amountXrp: (amountDrops / 1000000).toFixed(6),
+        percentage
+      });
+    }
+  }
+
+  if (dryRun) {
+    // Just return preview without sending
+    return res.status(200).json(new ApiResponse(200, {
+      dryRun: true,
+      period: { month, year },
+      treasury: {
+        address: treasuryConfig.address,
+        currentBalance: (treasuryBalance / 1000000).toFixed(6) + ' XRP',
+        availableForDistribution: (availableBalance / 1000000).toFixed(6) + ' XRP',
+        reserveHeld: '20 XRP'
+      },
+      distributions: distributions.map(d => ({
+        ...d,
+        transactionStatus: 'preview'
+      })),
+      summary: {
+        totalRecipients: distributions.length,
+        perCategory: categories.map(cat => ({
+          category: cat,
+          allocation: (perCategoryDrops / 1000000).toFixed(6) + ' XRP',
+          recipients: 10
+        })),
+        totalToDistribute: ((perCategoryDrops * 3) / 1000000).toFixed(6) + ' XRP'
+      }
+    }, 'Distribution preview generated'));
+  }
+
+  // Execute actual distribution
+  const treasuryWallet = xrplConfig.getTreasuryWallet();
+
+  for (const dist of distributions) {
+    // Create reward record
+    const rewardRecord = await RewardDistribution.create({
+      periodMonth: month,
+      periodYear: year,
+      category: dist.category,
+      rank: dist.rank,
+      recipientWalletAddress: dist.walletAddress,
+      rewardAmount: dist.amountDrops,
+      metricType: `${dist.category}_rank`,
+      metricValue: dist.rank.toString(),
+      transactionStatus: 'processing',
+      initiatedBy: adminWallet,
+      metadata: {
+        batchId,
+        percentage: dist.percentage,
+        username: dist.username
+      }
+    });
+
+    try {
+      // Send XRP payment from treasury wallet
+      const paymentResult = await xrplService.sendPaymentFromWallet(
+        treasuryWallet,
+        dist.walletAddress,
+        dist.amountDrops
+      );
+
+      await rewardRecord.update({
+        transactionHash: paymentResult.hash,
+        transactionStatus: 'completed',
+        paidAt: new Date()
+      });
+
+      results.successful.push({
+        ...dist,
+        transactionHash: paymentResult.hash,
+        rewardId: rewardRecord.id
+      });
+      results.totalAmount += BigInt(dist.amountDrops);
+
+    } catch (error) {
+      await rewardRecord.update({
+        transactionStatus: 'failed',
+        transactionError: error.message
+      });
+
+      results.failed.push({
+        ...dist,
+        error: error.message,
+        rewardId: rewardRecord.id
+      });
+    }
+  }
+
+  // Update rankings to distributed status
+  for (const ranking of rankings) {
+    await ranking.update({
+      status: 'distributed',
+      distributionBatchId: batchId,
+      distributedAt: new Date()
+    });
+  }
+
+  // Log activity
+  await logActivity(
+    adminWallet,
+    'rewards_distribute',
+    'distribution',
+    batchId,
+    `${month}/${year} distribution`,
+    {
+      newValue: {
+        batchId,
+        successCount: results.successful.length,
+        failedCount: results.failed.length,
+        totalAmount: (Number(results.totalAmount) / 1000000).toFixed(6) + ' XRP'
+      }
+    }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    batchId,
+    period: { month, year },
+    treasury: {
+      address: treasuryConfig.address,
+      previousBalance: (treasuryBalance / 1000000).toFixed(6) + ' XRP'
+    },
+    results: {
+      successful: results.successful,
+      failed: results.failed,
+      totalDistributed: (Number(results.totalAmount) / 1000000).toFixed(6) + ' XRP',
+      totalTransactions: results.successful.length + results.failed.length,
+      successRate: `${((results.successful.length / (results.successful.length + results.failed.length)) * 100).toFixed(1)}%`
+    }
+  }, results.failed.length > 0
+    ? `Distribution completed with ${results.failed.length} failures`
+    : 'Distribution completed successfully'));
+};
+
+/**
+ * Get distribution batch details
+ */
+const getDistributionBatch = async (req, res) => {
+  const { batchId } = req.params;
+
+  const distributions = await RewardDistribution.findAll({
+    where: {
+      metadata: {
+        batchId
+      }
+    },
+    include: [{
+      model: User,
+      as: 'recipient',
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    }],
+    order: [['category', 'ASC'], ['rank', 'ASC']]
+  });
+
+  if (distributions.length === 0) {
+    throw new ApiError(404, 'Distribution batch not found');
+  }
+
+  // Calculate summary
+  const summary = {
+    totalRecipients: distributions.length,
+    successful: distributions.filter(d => d.transactionStatus === 'completed').length,
+    failed: distributions.filter(d => d.transactionStatus === 'failed').length,
+    pending: distributions.filter(d => d.transactionStatus === 'pending' || d.transactionStatus === 'processing').length,
+    totalAmount: BigInt(0),
+    byCategory: {}
+  };
+
+  for (const dist of distributions) {
+    if (dist.transactionStatus === 'completed') {
+      summary.totalAmount += BigInt(dist.rewardAmount);
+    }
+
+    if (!summary.byCategory[dist.category]) {
+      summary.byCategory[dist.category] = {
+        count: 0,
+        amount: BigInt(0)
+      };
+    }
+    summary.byCategory[dist.category].count++;
+    if (dist.transactionStatus === 'completed') {
+      summary.byCategory[dist.category].amount += BigInt(dist.rewardAmount);
+    }
+  }
+
+  // Convert amounts to XRP
+  summary.totalAmountXrp = (Number(summary.totalAmount) / 1000000).toFixed(6);
+  for (const cat of Object.keys(summary.byCategory)) {
+    summary.byCategory[cat].amountXrp = (Number(summary.byCategory[cat].amount) / 1000000).toFixed(6);
+    summary.byCategory[cat].amount = summary.byCategory[cat].amount.toString();
+  }
+  summary.totalAmount = summary.totalAmount.toString();
+
+  res.status(200).json(new ApiResponse(200, {
+    batchId,
+    period: {
+      month: distributions[0].periodMonth,
+      year: distributions[0].periodYear
+    },
+    initiatedBy: distributions[0].initiatedBy,
+    createdAt: distributions[0].createdAt,
+    distributions: distributions.map(d => ({
+      id: d.id,
+      category: d.category,
+      rank: d.rank,
+      recipientWallet: d.recipientWalletAddress,
+      recipient: d.recipient,
+      amount: d.rewardAmount,
+      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+      transactionHash: d.transactionHash,
+      transactionStatus: d.transactionStatus,
+      transactionError: d.transactionError,
+      paidAt: d.paidAt
+    })),
+    summary
+  }, 'Distribution batch retrieved successfully'));
+};
+
+/**
+ * Retry failed distributions in a batch
+ */
+const retryFailedDistributions = async (req, res) => {
+  const { batchId } = req.body;
+
+  if (!batchId) {
+    throw new ApiError(400, 'Batch ID is required');
+  }
+
+  // Check treasury wallet
+  const treasuryConfig = xrplConfig.getTreasuryWalletConfig();
+  if (!treasuryConfig.configured) {
+    throw new ApiError(400, 'Treasury wallet not configured');
+  }
+
+  const failedDistributions = await RewardDistribution.findAll({
+    where: {
+      transactionStatus: 'failed',
+      metadata: { batchId }
+    }
+  });
+
+  if (failedDistributions.length === 0) {
+    return res.status(200).json(new ApiResponse(200, {
+      message: 'No failed distributions to retry',
+      retried: 0
+    }, 'No failed distributions found'));
+  }
+
+  const treasuryWallet = xrplConfig.getTreasuryWallet();
+  const adminWallet = getAdminWallet(req);
+
+  const results = {
+    successful: [],
+    stillFailed: []
+  };
+
+  for (const dist of failedDistributions) {
+    try {
+      const paymentResult = await xrplService.sendPaymentFromWallet(
+        treasuryWallet,
+        dist.recipientWalletAddress,
+        dist.rewardAmount
+      );
+
+      await dist.update({
+        transactionHash: paymentResult.hash,
+        transactionStatus: 'completed',
+        transactionError: null,
+        paidAt: new Date()
+      });
+
+      results.successful.push({
+        id: dist.id,
+        category: dist.category,
+        rank: dist.rank,
+        walletAddress: dist.recipientWalletAddress,
+        transactionHash: paymentResult.hash
+      });
+
+    } catch (error) {
+      await dist.update({
+        transactionError: error.message
+      });
+
+      results.stillFailed.push({
+        id: dist.id,
+        category: dist.category,
+        rank: dist.rank,
+        walletAddress: dist.recipientWalletAddress,
+        error: error.message
+      });
+    }
+  }
+
+  await logActivity(
+    adminWallet,
+    'rewards_retry',
+    'distribution',
+    batchId,
+    `Retry batch ${batchId}`,
+    {
+      newValue: {
+        retried: failedDistributions.length,
+        successful: results.successful.length,
+        stillFailed: results.stillFailed.length
+      }
+    }
+  );
+
+  res.status(200).json(new ApiResponse(200, {
+    batchId,
+    totalRetried: failedDistributions.length,
+    results
+  }, `Retry completed: ${results.successful.length} successful, ${results.stillFailed.length} still failed`));
+};
+
 module.exports = {
   getTopTraders,
   getTopCreators,
@@ -995,5 +2402,24 @@ module.exports = {
   updatePlatformFeesWallet,
   getAllAdminWallets,
   upsertAdminWallet,
-  deleteAdminWallet
+  deleteAdminWallet,
+  // Treasury wallet management
+  getTreasuryWallet,
+  getTreasuryWalletStatistics,
+  updateTreasuryWallet,
+  getTreasuryDistributionHistory,
+  debugTreasuryWallet,
+  // Monthly ranking management
+  getDistributionFormula,
+  setMonthlyRanking,
+  getMonthlyRankings,
+  getCategoryRanking,
+  finalizeRanking,
+  unfinalizeRanking,
+  deleteMonthlyRanking,
+  // Distribution execution
+  getDistributionStatus,
+  executeDistribution,
+  getDistributionBatch,
+  retryFailedDistributions
 };

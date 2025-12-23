@@ -1009,6 +1009,58 @@ class XRPLService {
       throw error;
     }
   }
+
+  /**
+   * Send XRP payment from a specific wallet
+   * Used for reward distribution from treasury wallet
+   */
+  async sendPaymentFromWallet(wallet, destinationAddress, amountDrops) {
+    try {
+      const client = xrplConfig.getClient();
+
+      const paymentTx = {
+        TransactionType: 'Payment',
+        Account: wallet.address,
+        Destination: destinationAddress,
+        Amount: amountDrops.toString()
+      };
+
+      const prepared = await client.autofill(paymentTx);
+      const signed = wallet.sign(prepared);
+      const result = await client.submitAndWait(signed.tx_blob);
+
+      if (result.result.meta.TransactionResult === 'tesSUCCESS') {
+        logger.info(`Payment sent: ${amountDrops} drops to ${destinationAddress}, hash: ${result.result.hash}`);
+        return {
+          success: true,
+          hash: result.result.hash,
+          from: wallet.address,
+          to: destinationAddress,
+          amount: amountDrops.toString(),
+          amountXrp: (parseInt(amountDrops) / 1000000).toFixed(6)
+        };
+      } else {
+        throw new Error(`Payment failed: ${result.result.meta.TransactionResult}`);
+      }
+    } catch (error) {
+      logger.error('Error sending payment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send XRP payment using admin wallet
+   * Used for fee collection and platform operations
+   */
+  async sendPayment(destinationAddress, amountDrops) {
+    try {
+      const wallet = xrplConfig.getAdminWallet();
+      return await this.sendPaymentFromWallet(wallet, destinationAddress, amountDrops);
+    } catch (error) {
+      logger.error('Error sending payment from admin wallet:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new XRPLService();
