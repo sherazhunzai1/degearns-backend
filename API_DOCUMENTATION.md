@@ -1180,61 +1180,186 @@ Sync collection statistics from XRPL blockchain. Updates total supply, floor pri
 
 ---
 
-### Get Collection Statistics
+### Get Collection Statistics & Top Rankings
 
 **GET** `/collections/stats`
 
-Get comprehensive statistics for all collections including volume, sales, owners, and more.
+Get comprehensive statistics including top 10 traders, creators, influencers and collection data.
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| month | number | No | Month (1-12), defaults to current month |
+| year | number | No | Year, defaults to current year |
 
 **Response (200):**
 ```json
 {
   "statusCode": 200,
   "success": true,
-  "message": "Collection statistics retrieved successfully",
-  "data": [
-    {
-      "id": "uuid",
-      "taxon": 1234,
-      "name": "Popular Collection",
-      "slug": "popular-collection",
-      "image": "https://example.com/collection.jpg",
-      "description": "A very popular collection",
-      "creator": {
-        "walletAddress": "rCreatorAddress",
-        "username": "creator_name",
-        "profileImage": "https://example.com/avatar.jpg",
-        "isVerified": true
+  "message": "Collection statistics and rankings retrieved successfully",
+  "data": {
+    "network": {
+      "name": "testnet",
+      "isTestnet": true,
+      "explorerUrl": "https://testnet.xrpl.org"
+    },
+    "period": {
+      "month": 12,
+      "year": 2025,
+      "monthName": "December"
+    },
+    "rankings": {
+      "traders": {
+        "title": "Top Traders",
+        "description": "Users who spent the most on minting NFTs this period",
+        "totalSpent": "15000000000",
+        "totalSpentXrp": "15000.000000",
+        "list": [
+          {
+            "rank": 1,
+            "walletAddress": "rTrader1Address...",
+            "walletUrl": "https://testnet.xrpl.org/accounts/rTrader1Address...",
+            "totalSpent": "5000000000",
+            "totalSpentXrp": "5000.000000",
+            "mintCount": 25,
+            "user": {
+              "username": "TopTrader",
+              "profileImage": "https://example.com/avatar1.jpg",
+              "isVerified": true,
+              "bio": "NFT enthusiast"
+            }
+          },
+          {
+            "rank": 2,
+            "walletAddress": "rTrader2Address...",
+            "walletUrl": "https://testnet.xrpl.org/accounts/rTrader2Address...",
+            "totalSpent": "3500000000",
+            "totalSpentXrp": "3500.000000",
+            "mintCount": 18,
+            "user": {
+              "username": "NFTCollector",
+              "profileImage": "https://example.com/avatar2.jpg",
+              "isVerified": false,
+              "bio": null
+            }
+          }
+        ]
       },
-      "isVerified": true,
-      "stats": {
-        "totalSupply": 1000,
-        "volume": "50000000",
-        "volumeChange": 25.50,
-        "floorPrice": "500000",
-        "totalSales": 450,
-        "owners": 234,
-        "listed": 120
+      "creators": {
+        "title": "Top Creators",
+        "description": "Creators with highest revenue from their drops this period",
+        "totalRevenue": "25000000000",
+        "totalRevenueXrp": "25000.000000",
+        "list": [
+          {
+            "rank": 1,
+            "walletAddress": "rCreator1Address...",
+            "walletUrl": "https://testnet.xrpl.org/accounts/rCreator1Address...",
+            "totalRevenue": "10000000000",
+            "totalRevenueXrp": "10000.000000",
+            "totalMints": 150,
+            "totalDrops": 5,
+            "user": {
+              "username": "TopArtist",
+              "profileImage": "https://example.com/creator1.jpg",
+              "isVerified": true,
+              "bio": "Digital artist creating unique NFTs"
+            }
+          },
+          {
+            "rank": 2,
+            "walletAddress": "rCreator2Address...",
+            "walletUrl": "https://testnet.xrpl.org/accounts/rCreator2Address...",
+            "totalRevenue": "7500000000",
+            "totalRevenueXrp": "7500.000000",
+            "totalMints": 100,
+            "totalDrops": 3,
+            "user": {
+              "username": "PixelMaster",
+              "profileImage": "https://example.com/creator2.jpg",
+              "isVerified": true,
+              "bio": "Pixel art specialist"
+            }
+          }
+        ]
+      },
+      "influencers": {
+        "title": "Top Influencers",
+        "description": "Users with most new followers and engagement this period",
+        "totalNewFollowers": 450,
+        "list": [
+          {
+            "rank": 1,
+            "walletAddress": "rInfluencer1Address...",
+            "walletUrl": "https://testnet.xrpl.org/accounts/rInfluencer1Address...",
+            "newFollowers": 150,
+            "totalFollowers": 1250,
+            "engagementScore": 150,
+            "user": {
+              "username": "CryptoInfluencer",
+              "profileImage": "https://example.com/influencer1.jpg",
+              "isVerified": true,
+              "bio": "Web3 & NFT educator"
+            }
+          },
+          {
+            "rank": 2,
+            "walletAddress": "rInfluencer2Address...",
+            "walletUrl": "https://testnet.xrpl.org/accounts/rInfluencer2Address...",
+            "newFollowers": 120,
+            "totalFollowers": 980,
+            "engagementScore": 120,
+            "user": {
+              "username": "NFTNews",
+              "profileImage": "https://example.com/influencer2.jpg",
+              "isVerified": false,
+              "bio": "Covering the latest in NFTs"
+            }
+          }
+        ]
       }
-    }
-  ]
+    },
+    "topCollections": [
+      {
+        "id": "uuid",
+        "taxon": 1234,
+        "name": "Popular Collection",
+        "slug": "popular-collection",
+        "image": "https://example.com/collection.jpg",
+        "creator": {
+          "walletAddress": "rCreatorAddress",
+          "username": "creator_name",
+          "profileImage": "https://example.com/avatar.jpg",
+          "isVerified": true
+        },
+        "isVerified": true,
+        "stats": {
+          "totalSupply": 100,
+          "floorPrice": "500000",
+          "floorPriceXrp": "0.500000",
+          "listed": 25
+        }
+      }
+    ]
+  }
 }
 ```
 
-**Statistics Explained:**
-- `totalSupply`: Total number of NFTs in collection
-- `volume`: Total trading volume in drops (all-time)
-- `volumeChange`: Percentage change in volume (last 30 days vs previous 30 days)
-- `floorPrice`: Lowest listed price in drops
-- `totalSales`: Number of completed sales
-- `owners`: Number of unique NFT owners
-- `listed`: Number of NFTs currently listed for sale
+**Rankings Categories:**
+
+| Category | Metric | Description |
+|----------|--------|-------------|
+| Traders | totalSpent | XRP spent on minting NFTs |
+| Creators | totalRevenue | XRP earned from drop sales |
+| Influencers | newFollowers | New followers gained this period |
 
 **Notes:**
-- Collections sorted by volume (highest first)
-- Volume change compares last 30 days to previous 30 days
-- Stats calculated from XRPL blockchain in real-time
-- May take time to process for large number of collections
+- Each category shows top 10 ranked users
+- Rankings are for the specified month/year period
+- Includes network info (testnet/mainnet) and explorer URLs
+- `walletUrl` links directly to XRPL explorer
+- Collections stats fetched from XRPL blockchain in real-time
 
 ---
 

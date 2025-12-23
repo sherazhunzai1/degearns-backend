@@ -1,4 +1,4 @@
-const { Collection, User } = require('../models');
+const { Collection, User, DropMint, Drop, Follow, sequelize } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
@@ -812,35 +812,169 @@ const getUserCollections = async (req, res, next) => {
 };
 
 /**
- * Get statistics for all collections
- * Fetches collections from database and calculates stats from XRPL
+ * Get statistics for all collections including top performers
+ * Fetches collections from database, calculates stats from XRPL,
+ * and includes top 10 traders, creators, and influencers
  */
 const getCollectionStats = async (req, res, next) => {
   try {
-    logger.info('Fetching statistics for all collections');
+    const { month, year } = req.query;
+    const targetMonth = parseInt(month) || new Date().getMonth() + 1;
+    const targetYear = parseInt(year) || new Date().getFullYear();
 
-    // Fetch all collections from database
-    const collections = await Collection.findAll({
-      include: [
-        {
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
+    logger.info('Fetching statistics for all collections and top performers');
 
-    if (!collections || collections.length === 0) {
-      return res.status(200).json(
-        new ApiResponse(200, [], 'No collections found')
-      );
-    }
+    // Get network info
+    const networkInfo = xrplConfig.getNetworkInfo();
 
-    logger.info(`Processing stats for ${collections.length} collections`);
+    // Date range for the period
+    const startDate = new Date(targetYear, targetMonth - 1, 1);
+    const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
 
-    // Process each collection to get stats from XRPL
+    // Fetch top 10 traders, creators, and influencers in parallel
+    const [topTraders, topCreators, topInfluencers, collections] = await Promise.all([
+      // Top 10 Traders - users who spent the most on minting
+      (async () => {
+        const traders = await DropMint.findAll({
+          attributes: [
+            'minterWalletAddress',
+            [sequelize.fn('SUM', sequelize.cast(sequelize.col('mintPrice'), 'UNSIGNED')), 'totalSpent'],
+            [sequelize.fn('COUNT', sequelize.col('DropMint.id')), 'mintCount']
+          ],
+          where: { createdAt: { [Op.between]: [startDate, endDate] } },
+          group: ['minterWalletAddress'],
+          order: [[sequelize.literal('totalSpent'), 'DESC']],
+          limit: 10,
+          raw: true
+        });
+
+        return Promise.all(traders.map(async (trader, index) => {
+          const user = await User.findOne({
+            where: { walletAddress: trader.minterWalletAddress },
+            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
+          });
+          return {
+            rank: index + 1,
+            walletAddress: trader.minterWalletAddress,
+            walletUrl: xrplConfig.getAccountUrl(trader.minterWalletAddress),
+            totalSpent: trader.totalSpent || '0',
+            totalSpentXrp: ((parseFloat(trader.totalSpent) || 0) / 1000000).toFixed(6),
+            mintCount: parseInt(trader.mintCount) || 0,
+            user: user ? {
+              username: user.username,
+              profileImage: user.profileImage,
+              isVerified: user.isVerified,
+              bio: user.bio
+            } : null
+          };
+        }));
+      })(),
+
+      // Top 10 Creators - users with highest revenue from drops
+      (async () => {
+        const creators = await DropMint.findAll({
+          attributes: [
+            [sequelize.col('drop.creatorWalletAddress'), 'creatorWalletAddress'],
+            [sequelize.fn('SUM', sequelize.cast(sequelize.col('mintPrice'), 'UNSIGNED')), 'totalRevenue'],
+            [sequelize.fn('COUNT', sequelize.col('DropMint.id')), 'totalMints']
+          ],
+          include: [{ model: Drop, as: 'drop', attributes: [], required: true }],
+          where: { createdAt: { [Op.between]: [startDate, endDate] } },
+          group: ['drop.creatorWalletAddress'],
+          order: [[sequelize.literal('totalRevenue'), 'DESC']],
+          limit: 10,
+          raw: true
+        });
+
+        return Promise.all(creators.map(async (creator, index) => {
+          const user = await User.findOne({
+            where: { walletAddress: creator.creatorWalletAddress },
+            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
+          });
+
+          // Get creator's drop count
+          const dropCount = await Drop.count({
+            where: { creatorWalletAddress: creator.creatorWalletAddress }
+          });
+
+          return {
+            rank: index + 1,
+            walletAddress: creator.creatorWalletAddress,
+            walletUrl: xrplConfig.getAccountUrl(creator.creatorWalletAddress),
+            totalRevenue: creator.totalRevenue || '0',
+            totalRevenueXrp: ((parseFloat(creator.totalRevenue) || 0) / 1000000).toFixed(6),
+            totalMints: parseInt(creator.totalMints) || 0,
+            totalDrops: dropCount,
+            user: user ? {
+              username: user.username,
+              profileImage: user.profileImage,
+              isVerified: user.isVerified,
+              bio: user.bio
+            } : null
+          };
+        }));
+      })(),
+
+      // Top 10 Influencers - users with most followers and engagement
+      (async () => {
+        const influencerStats = await Follow.findAll({
+          attributes: [
+            'followingWalletAddress',
+            [sequelize.fn('COUNT', sequelize.col('id')), 'newFollowers']
+          ],
+          where: { createdAt: { [Op.between]: [startDate, endDate] } },
+          group: ['followingWalletAddress'],
+          order: [[sequelize.literal('newFollowers'), 'DESC']],
+          limit: 20,
+          raw: true
+        });
+
+        const influencersWithEngagement = await Promise.all(influencerStats.map(async (influencer) => {
+          const [totalFollowers, user] = await Promise.all([
+            Follow.count({ where: { followingWalletAddress: influencer.followingWalletAddress } }),
+            User.findOne({
+              where: { walletAddress: influencer.followingWalletAddress },
+              attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
+            })
+          ]);
+
+          return {
+            walletAddress: influencer.followingWalletAddress,
+            walletUrl: xrplConfig.getAccountUrl(influencer.followingWalletAddress),
+            newFollowers: parseInt(influencer.newFollowers) || 0,
+            totalFollowers,
+            engagementScore: parseInt(influencer.newFollowers) || 0,
+            user: user ? {
+              username: user.username,
+              profileImage: user.profileImage,
+              isVerified: user.isVerified,
+              bio: user.bio
+            } : null
+          };
+        }));
+
+        return influencersWithEngagement
+          .sort((a, b) => b.engagementScore - a.engagementScore)
+          .slice(0, 10)
+          .map((inf, index) => ({ rank: index + 1, ...inf }));
+      })(),
+
+      // Fetch collections
+      Collection.findAll({
+        include: [
+          {
+            association: 'creator',
+            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+          }
+        ],
+        order: [['createdAt', 'DESC']],
+        limit: 20
+      })
+    ]);
+
+    // Process collections for stats (simplified - avoid too many XRPL calls)
     const collectionsWithStats = await Promise.all(
-      collections.map(async (collection) => {
+      collections.slice(0, 10).map(async (collection) => {
         try {
           const taxon = collection.taxon;
           const creatorWallet = collection.creatorWalletAddress;
@@ -853,148 +987,60 @@ const getCollectionStats = async (req, res, next) => {
           });
 
           const totalSupply = collectionNFTs.length;
-
-          // Get NFTs with sell offers and calculate stats
           let listedCount = 0;
           let floorPrice = null;
           const prices = [];
-          const owners = new Set();
 
-          for (const nft of collectionNFTs) {
+          // Check first 5 NFTs for sell offers to calculate floor price
+          for (const nft of collectionNFTs.slice(0, 5)) {
             try {
               const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
-
               if (sellOffers && sellOffers.length > 0) {
                 listedCount++;
-                const owner = sellOffers[0].owner;
-                owners.add(owner);
-
-                // Collect prices for floor price calculation
                 sellOffers.forEach(offer => {
                   const amount = parseInt(offer.amount);
                   if (!isNaN(amount) && amount > 0) {
                     prices.push(amount);
                   }
                 });
-              } else {
-                // NFT not listed, but still has an owner (the issuer or current holder)
-                owners.add(nft.Issuer);
               }
             } catch (err) {
-              // If we can't get offers, assume NFT is held by issuer
-              owners.add(nft.Issuer);
+              // Continue
             }
           }
 
-          // Calculate floor price
           if (prices.length > 0) {
             floorPrice = Math.min(...prices).toString();
           }
 
-          // Get transaction history for volume and sales count
-          let totalVolume = '0';
-          let totalSales = 0;
-          let volumeChange = 0;
-
-          try {
-            // Get transaction history for the creator wallet
-            const history = await xrplService.getNFTTransactionHistory(
-              creatorWallet,
-              null,
-              100
-            );
-
-            // Filter transactions for this collection's NFTs
-            const collectionNFTIds = new Set(collectionNFTs.map(nft => nft.NFTokenID));
-            const collectionTransactions = history.filter(tx =>
-              tx.type === 'NFTokenSale' && collectionNFTIds.has(tx.nftTokenId)
-            );
-
-            totalSales = collectionTransactions.length;
-
-            // Calculate total volume
-            const volume = collectionTransactions.reduce((sum, tx) => {
-              const amount = typeof tx.amount === 'string'
-                ? parseInt(tx.amount)
-                : tx.amount;
-              return sum + (amount || 0);
-            }, 0);
-
-            totalVolume = volume.toString();
-
-            // Calculate volume change (last 30 days vs previous 30 days)
-            const now = Date.now();
-            const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
-            const sixtyDaysAgo = now - (60 * 24 * 60 * 60 * 1000);
-
-            const recentVolume = collectionTransactions
-              .filter(tx => new Date(tx.date).getTime() > thirtyDaysAgo)
-              .reduce((sum, tx) => {
-                const amount = typeof tx.amount === 'string' ? parseInt(tx.amount) : tx.amount;
-                return sum + (amount || 0);
-              }, 0);
-
-            const previousVolume = collectionTransactions
-              .filter(tx => {
-                const txTime = new Date(tx.date).getTime();
-                return txTime > sixtyDaysAgo && txTime <= thirtyDaysAgo;
-              })
-              .reduce((sum, tx) => {
-                const amount = typeof tx.amount === 'string' ? parseInt(tx.amount) : tx.amount;
-                return sum + (amount || 0);
-              }, 0);
-
-            // Calculate percentage change
-            if (previousVolume > 0) {
-              volumeChange = ((recentVolume - previousVolume) / previousVolume) * 100;
-            } else if (recentVolume > 0) {
-              volumeChange = 100; // 100% increase if previous was 0
-            }
-
-          } catch (err) {
-            logger.warn(`Could not fetch transaction history for collection ${collection.name}:`, err.message);
-          }
-
           return {
             id: collection.id,
             taxon: collection.taxon,
             name: collection.name,
             slug: collection.slug,
             image: collection.image,
-            description: collection.description,
             creator: collection.creator,
             isVerified: collection.isVerified,
             stats: {
-              totalSupply: totalSupply,
-              volume: totalVolume,
-              volumeChange: parseFloat(volumeChange.toFixed(2)),
-              floorPrice: floorPrice,
-              totalSales: totalSales,
-              owners: owners.size,
+              totalSupply,
+              floorPrice,
+              floorPriceXrp: floorPrice ? (parseInt(floorPrice) / 1000000).toFixed(6) : null,
               listed: listedCount
             }
           };
-
         } catch (error) {
-          logger.error(`Error processing collection ${collection.name}:`, error.message);
-
-          // Return collection with basic info if stats fail
           return {
             id: collection.id,
             taxon: collection.taxon,
             name: collection.name,
             slug: collection.slug,
             image: collection.image,
-            description: collection.description,
             creator: collection.creator,
             isVerified: collection.isVerified,
             stats: {
               totalSupply: 0,
-              volume: '0',
-              volumeChange: 0,
               floorPrice: null,
-              totalSales: 0,
-              owners: 0,
+              floorPriceXrp: null,
               listed: 0
             }
           };
@@ -1002,17 +1048,49 @@ const getCollectionStats = async (req, res, next) => {
       })
     );
 
-    // Sort by volume (highest first)
-    collectionsWithStats.sort((a, b) => {
-      const volumeA = parseInt(a.stats.volume) || 0;
-      const volumeB = parseInt(b.stats.volume) || 0;
-      return volumeB - volumeA;
-    });
+    // Calculate summary stats
+    const totalTraderSpent = topTraders.reduce((sum, t) => sum + (parseFloat(t.totalSpent) || 0), 0);
+    const totalCreatorRevenue = topCreators.reduce((sum, c) => sum + (parseFloat(c.totalRevenue) || 0), 0);
+    const totalNewFollowers = topInfluencers.reduce((sum, i) => sum + (i.newFollowers || 0), 0);
 
-    logger.info(`Successfully processed stats for ${collectionsWithStats.length} collections`);
+    logger.info(`Successfully processed stats for collections and top performers`);
 
     res.status(200).json(
-      new ApiResponse(200, collectionsWithStats, 'Collection statistics retrieved successfully')
+      new ApiResponse(200, {
+        network: {
+          name: networkInfo.network,
+          isTestnet: networkInfo.isTestnet,
+          explorerUrl: networkInfo.explorerUrl
+        },
+        period: {
+          month: targetMonth,
+          year: targetYear,
+          monthName: new Date(targetYear, targetMonth - 1, 1).toLocaleString('default', { month: 'long' })
+        },
+        rankings: {
+          traders: {
+            title: 'Top Traders',
+            description: 'Users who spent the most on minting NFTs this period',
+            totalSpent: totalTraderSpent.toString(),
+            totalSpentXrp: (totalTraderSpent / 1000000).toFixed(6),
+            list: topTraders
+          },
+          creators: {
+            title: 'Top Creators',
+            description: 'Creators with highest revenue from their drops this period',
+            totalRevenue: totalCreatorRevenue.toString(),
+            totalRevenueXrp: (totalCreatorRevenue / 1000000).toFixed(6),
+            list: topCreators
+          },
+          influencers: {
+            title: 'Top Influencers',
+            description: 'Users with most new followers and engagement this period',
+            totalNewFollowers,
+            list: topInfluencers
+          }
+        },
+        topCollections: collectionsWithStats
+      }, 'Collection statistics and rankings retrieved successfully')
     );
 
   } catch (error) {
