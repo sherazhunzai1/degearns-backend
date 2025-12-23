@@ -1082,9 +1082,19 @@ const getTreasuryWallet = async (req, res) => {
     raw: true
   });
 
+  // Get network info
+  const networkInfo = xrplConfig.getNetworkInfo();
+
   res.status(200).json(new ApiResponse(200, {
+    network: {
+      name: networkInfo.network,
+      isTestnet: networkInfo.isTestnet,
+      explorerUrl: networkInfo.explorerUrl,
+      faucetUrl: networkInfo.faucetUrl
+    },
     wallet: {
       address: walletAddress,
+      addressUrl: xrplConfig.getAccountUrl(walletAddress),
       type: 'treasury',
       label: dbWallet?.label || 'Treasury Wallet',
       description: dbWallet?.description || 'Main wallet for reward distribution',
@@ -2498,7 +2508,15 @@ const getRewardStats = async (req, res) => {
     };
   }
 
+  // Get network info
+  const networkInfo = xrplConfig.getNetworkInfo();
+
   res.status(200).json(new ApiResponse(200, {
+    network: {
+      name: networkInfo.network,
+      isTestnet: networkInfo.isTestnet,
+      explorerUrl: networkInfo.explorerUrl
+    },
     allTime: {
       totalRewardsDrops: allTimeStats?.totalAmount || '0',
       totalRewardsXrp: ((parseFloat(allTimeStats?.totalAmount) || 0) / 1000000).toFixed(6),
@@ -2582,7 +2600,15 @@ const getRewardTransactionHistory = async (req, res) => {
     raw: true
   });
 
+  // Get network info for explorer URLs
+  const networkInfo = xrplConfig.getNetworkInfo();
+
   res.status(200).json(new ApiResponse(200, {
+    network: {
+      name: networkInfo.network,
+      isTestnet: networkInfo.isTestnet,
+      explorerUrl: networkInfo.explorerUrl
+    },
     transactions: transactions.map(t => ({
       id: t.id,
       periodMonth: t.periodMonth,
@@ -2590,12 +2616,14 @@ const getRewardTransactionHistory = async (req, res) => {
       category: t.category,
       rank: t.rank,
       recipientWallet: t.recipientWalletAddress,
+      recipientWalletUrl: xrplConfig.getAccountUrl(t.recipientWalletAddress),
       recipient: t.recipient,
       rewardAmount: t.rewardAmount,
       rewardAmountXrp: (parseInt(t.rewardAmount) / 1000000).toFixed(6),
       metricType: t.metricType,
       metricValue: t.metricValue,
       transactionHash: t.transactionHash,
+      transactionUrl: t.transactionHash ? xrplConfig.getTransactionUrl(t.transactionHash) : null,
       transactionStatus: t.transactionStatus,
       transactionError: t.transactionError,
       paidAt: t.paidAt,
