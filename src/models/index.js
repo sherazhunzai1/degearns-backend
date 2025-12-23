@@ -21,6 +21,7 @@ const PlatformSettings = require('./PlatformSettings')(sequelize, DataTypes);
 const AdminActivity = require('./AdminActivity')(sequelize, DataTypes);
 const RewardDistribution = require('./RewardDistribution')(sequelize, DataTypes);
 const Banner = require('./Banner')(sequelize, DataTypes);
+const MonthlyRanking = require('./MonthlyRanking')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -325,5 +326,6 @@ module.exports = {
   PlatformSettings,
   AdminActivity,
   RewardDistribution,
-  Banner
+  Banner,
+  MonthlyRanking
 };
