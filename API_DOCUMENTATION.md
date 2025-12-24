@@ -2243,6 +2243,48 @@ const unreadCount = await fetch(`/api/v1/chat/unread/${walletAddress}`);
 
 ---
 
+## Group Chat Endpoints
+
+The Group Chat API enables WhatsApp-like group messaging functionality. Users can create groups, add/remove members, manage admin roles, and exchange messages within groups.
+
+**Base URL:** `/api/v1/group-chat`
+
+> **Full Documentation:** See [Group Chat API Documentation](./docs/GROUP_CHAT_API_DOCUMENTATION.md) for complete endpoint details.
+
+### Quick Reference
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| **Group Management** | | |
+| POST | `/group-chat` | Create a new group |
+| GET | `/group-chat/groups/:walletAddress` | Get user's groups |
+| GET | `/group-chat/:groupId/details/:walletAddress` | Get group details |
+| PUT | `/group-chat/:groupId` | Update group (admin only) |
+| DELETE | `/group-chat/:groupId` | Delete group (creator only) |
+| **Member Management** | | |
+| POST | `/group-chat/:groupId/members` | Add members (admin only) |
+| DELETE | `/group-chat/:groupId/members` | Remove member (admin only) |
+| POST | `/group-chat/:groupId/leave` | Leave group |
+| GET | `/group-chat/:groupId/members/:walletAddress` | Get group members |
+| **Admin Management** | | |
+| POST | `/group-chat/:groupId/make-admin` | Promote to admin |
+| POST | `/group-chat/:groupId/remove-admin` | Demote from admin (creator only) |
+| **Messaging** | | |
+| POST | `/group-chat/:groupId/messages` | Send message |
+| GET | `/group-chat/:groupId/messages/:walletAddress` | Get messages |
+| PUT | `/group-chat/:groupId/read` | Mark as read |
+| GET | `/group-chat/unread/:walletAddress` | Get unread count (detailed) |
+| GET | `/group-chat/unread-count/:walletAddress` | Get unread count (badge) |
+
+### Key Features
+
+- **Roles:** Creator (owner), Admin, Member
+- **Message Types:** text, image, nft_share, system
+- **Reply Support:** Messages can reference other messages
+- **Unread Tracking:** Per-member last read timestamps
+
+---
+
 ## Follow Endpoints
 
 The Follow API enables users to follow/unfollow other users and get personalized feeds based on who they follow.
