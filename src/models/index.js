@@ -22,6 +22,9 @@ const AdminActivity = require('./AdminActivity')(sequelize, DataTypes);
 const RewardDistribution = require('./RewardDistribution')(sequelize, DataTypes);
 const Banner = require('./Banner')(sequelize, DataTypes);
 const MonthlyRanking = require('./MonthlyRanking')(sequelize, DataTypes);
+const Group = require('./Group')(sequelize, DataTypes);
+const GroupMember = require('./GroupMember')(sequelize, DataTypes);
+const GroupMessage = require('./GroupMessage')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -302,6 +305,72 @@ RewardDistribution.belongsTo(User, {
   as: 'recipient'
 });
 
+// User and Group associations (creator)
+User.hasMany(Group, {
+  foreignKey: 'creatorWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'createdGroups'
+});
+Group.belongsTo(User, {
+  foreignKey: 'creatorWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'creator'
+});
+
+// Group and GroupMember associations
+Group.hasMany(GroupMember, {
+  foreignKey: 'groupId',
+  as: 'members'
+});
+GroupMember.belongsTo(Group, {
+  foreignKey: 'groupId',
+  as: 'group'
+});
+
+// User and GroupMember associations
+User.hasMany(GroupMember, {
+  foreignKey: 'walletAddress',
+  sourceKey: 'walletAddress',
+  as: 'groupMemberships'
+});
+GroupMember.belongsTo(User, {
+  foreignKey: 'walletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// Group and GroupMessage associations
+Group.hasMany(GroupMessage, {
+  foreignKey: 'groupId',
+  as: 'messages'
+});
+GroupMessage.belongsTo(Group, {
+  foreignKey: 'groupId',
+  as: 'group'
+});
+
+// User and GroupMessage associations
+User.hasMany(GroupMessage, {
+  foreignKey: 'senderWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'groupMessages'
+});
+GroupMessage.belongsTo(User, {
+  foreignKey: 'senderWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'sender'
+});
+
+// GroupMessage self-referencing for replies
+GroupMessage.hasMany(GroupMessage, {
+  foreignKey: 'replyToMessageId',
+  as: 'replies'
+});
+GroupMessage.belongsTo(GroupMessage, {
+  foreignKey: 'replyToMessageId',
+  as: 'replyToMessage'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -327,5 +396,8 @@ module.exports = {
   AdminActivity,
   RewardDistribution,
   Banner,
-  MonthlyRanking
+  MonthlyRanking,
+  Group,
+  GroupMember,
+  GroupMessage
 };
