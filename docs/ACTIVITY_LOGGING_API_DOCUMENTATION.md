@@ -1108,12 +1108,14 @@ GET /api/v1/activities/user/rXXXXXXXXXXXXXXXXXXXX/summary?month=12&year=2025
 | User sells an NFT | `POST /nft-sell` | After `NFTokenAcceptOffer` (sell) transaction succeeds |
 | User lists an NFT | `POST /nft-list` | After `NFTokenCreateOffer` (sell) transaction succeeds |
 | User delists an NFT | `POST /nft-delist` | After `NFTokenCancelOffer` transaction succeeds |
-| User creates a post | `POST /post-create` | After post is saved to database |
-| User likes a post | `POST /like-give` (for liker) + `POST /like-receive` (for author) | After like is saved |
-| User comments on a post | `POST /comment-create` (for commenter) + `POST /comment-receive` (for author) | After comment is saved |
-| User follows someone | `POST /follow-give` (for follower) + `POST /follow-receive` (for followed) | After follow is saved |
+| User likes a post | ✅ **Automatic** (via POST /posts/:postId/like) | No manual logging needed |
+| User comments on a post | ✅ **Automatic** (via POST /posts/:postId/comments) | No manual logging needed |
+| User follows someone | ✅ **Automatic** (via POST /follow) | No manual logging needed |
+| User creates a post | ✅ **Automatic** (via POST /posts) | No manual logging needed |
 
-> **Note:** For engagement actions (likes, comments, follows), you should call BOTH endpoints - one for the user performing the action and one for the user receiving the action. This allows proper scoring for both parties.
+> **Note:** Engagement activities (likes, comments, follows, posts) are now **automatically logged** by the backend when using the standard APIs. You do NOT need to call the activity logging endpoints manually for these actions. The backend logs both the "give" and "receive" activities automatically.
+>
+> The manual activity logging endpoints (`/like-give`, `/like-receive`, `/comment-create`, `/comment-receive`, `/follow-give`, `/follow-receive`, `/post-create`) are still available for edge cases or if you need to log activities outside of the standard API flow.
 
 ### Example: Logging Collection Creation
 
