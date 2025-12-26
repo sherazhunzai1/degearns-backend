@@ -43,8 +43,8 @@ module.exports = {
 
   // Scoring periods
   periods: {
-    // Rolling window in days for activity consideration
-    rollingWindowDays: 30,
+    // Monthly-based scoring (activities within calendar month)
+    useMonthlyPeriod: true,
 
     // How often to recalculate scores (in milliseconds)
     recalculationIntervalMs: 60 * 60 * 1000, // 1 hour
@@ -82,6 +82,23 @@ module.exports = {
 
   // Algorithm versioning
   algorithmVersion: 1,
+
+  // Get date range for a specific month
+  getMonthDateRange: function(month, year) {
+    // month is 1-12, year is full year (e.g., 2025)
+    const startDate = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+    return { startDate, endDate };
+  },
+
+  // Get current month and year
+  getCurrentPeriod: function() {
+    const now = new Date();
+    return {
+      month: now.getMonth() + 1, // 1-12
+      year: now.getFullYear()
+    };
+  },
 
   // Validate that weights sum to 1.0
   validateWeights: function() {
