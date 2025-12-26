@@ -4,9 +4,12 @@
  * Handles logging of user activities for the scoring system.
  * These endpoints are called from the frontend after blockchain transactions complete.
  * All endpoints are open (no authentication required).
+ *
+ * NOTE: These APIs are independent of database records. Collections and NFTs
+ * are minted on XRPL from the frontend and may not exist in the database.
  */
 
-const { ActivityLog, Collection, User } = require('../models');
+const { ActivityLog } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -17,42 +20,50 @@ const logger = require('../utils/logger');
  */
 exports.logCollectionCreate = async (req, res) => {
   try {
-    const { walletAddress, collectionId, transactionHash, metadata } = req.body;
+    const {
+      walletAddress,
+      taxon,
+      collectionName,
+      transactionHash,
+      metadata
+    } = req.body;
 
     // Validate required fields
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
 
-    if (!collectionId) {
-      throw new ApiError(400, 'Collection ID is required');
+    if (!taxon && taxon !== 0) {
+      throw new ApiError(400, 'Taxon is required');
     }
 
-    // Verify collection exists and belongs to the user
-    const collection = await Collection.findOne({
-      where: {
-        id: collectionId,
-        creatorWalletAddress: walletAddress
-      }
-    });
-
-    if (!collection) {
-      throw new ApiError(404, 'Collection not found or does not belong to this wallet');
-    }
-
-    // Check if activity already logged for this collection
+    // Check if activity already logged for this collection (by wallet + taxon)
     const existingActivity = await ActivityLog.findOne({
       where: {
         userWalletAddress: walletAddress,
         activityType: 'collection_create',
-        relatedId: collectionId
+        metadata: {
+          taxon: taxon
+        }
       }
     });
 
-    if (existingActivity) {
+    // Alternative check using transactionHash if provided
+    let existingByTxHash = null;
+    if (transactionHash) {
+      existingByTxHash = await ActivityLog.findOne({
+        where: {
+          userWalletAddress: walletAddress,
+          activityType: 'collection_create',
+          transactionHash: transactionHash
+        }
+      });
+    }
+
+    if (existingActivity || existingByTxHash) {
       return res.status(200).json(
         new ApiResponse(200, {
-          activity: existingActivity,
+          activity: existingActivity || existingByTxHash,
           alreadyLogged: true
         }, 'Activity already logged for this collection')
       );
@@ -62,18 +73,18 @@ exports.logCollectionCreate = async (req, res) => {
     const activity = await ActivityLog.logActivity({
       userWalletAddress: walletAddress,
       activityType: 'collection_create',
-      relatedId: collectionId,
+      relatedId: null,
       relatedType: 'collection',
       transactionHash: transactionHash || null,
       metadata: {
-        collectionName: collection.name,
-        collectionSlug: collection.slug,
-        taxon: collection.taxon,
+        taxon: taxon,
+        collectionName: collectionName || null,
+        issuerAddress: walletAddress,
         ...metadata
       }
     });
 
-    logger.info(`Collection create activity logged: ${walletAddress} created collection ${collection.name}`);
+    logger.info(`Collection create activity logged: ${walletAddress} created collection with taxon ${taxon}`);
 
     res.status(201).json(
       new ApiResponse(201, { activity }, 'Collection creation activity logged successfully')
@@ -101,24 +112,33 @@ exports.logCollectionCreate = async (req, res) => {
  */
 exports.logDropCreate = async (req, res) => {
   try {
-    const { walletAddress, dropId, collectionId, transactionHash, metadata } = req.body;
+    const {
+      walletAddress,
+      taxon,
+      dropName,
+      transactionHash,
+      metadata
+    } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
 
-    if (!dropId) {
-      throw new ApiError(400, 'Drop ID is required');
+    if (!taxon && taxon !== 0) {
+      throw new ApiError(400, 'Taxon is required');
     }
 
-    // Check if activity already logged
-    const existingActivity = await ActivityLog.findOne({
-      where: {
-        userWalletAddress: walletAddress,
-        activityType: 'drop_create',
-        relatedId: dropId
-      }
-    });
+    // Check for duplicate by transactionHash
+    let existingActivity = null;
+    if (transactionHash) {
+      existingActivity = await ActivityLog.findOne({
+        where: {
+          userWalletAddress: walletAddress,
+          activityType: 'drop_create',
+          transactionHash: transactionHash
+        }
+      });
+    }
 
     if (existingActivity) {
       return res.status(200).json(
@@ -132,14 +152,18 @@ exports.logDropCreate = async (req, res) => {
     const activity = await ActivityLog.logActivity({
       userWalletAddress: walletAddress,
       activityType: 'drop_create',
-      relatedId: dropId,
+      relatedId: null,
       relatedType: 'drop',
-      collectionId: collectionId || null,
       transactionHash: transactionHash || null,
-      metadata: metadata || {}
+      metadata: {
+        taxon: taxon,
+        dropName: dropName || null,
+        issuerAddress: walletAddress,
+        ...metadata
+      }
     });
 
-    logger.info(`Drop create activity logged: ${walletAddress} created drop ${dropId}`);
+    logger.info(`Drop create activity logged: ${walletAddress} created drop with taxon ${taxon}`);
 
     res.status(201).json(
       new ApiResponse(201, { activity }, 'Drop creation activity logged successfully')
@@ -170,8 +194,8 @@ exports.logNftMint = async (req, res) => {
     const {
       walletAddress,
       nftTokenId,
-      collectionId,
-      dropId,
+      taxon,
+      issuerAddress,
       transactionHash,
       xrpAmount,
       metadata
@@ -206,13 +230,14 @@ exports.logNftMint = async (req, res) => {
     const activity = await ActivityLog.logActivity({
       userWalletAddress: walletAddress,
       activityType: 'nft_mint',
-      relatedId: dropId || null,
-      relatedType: dropId ? 'drop' : 'nft',
-      collectionId: collectionId || null,
+      relatedId: null,
+      relatedType: 'nft',
       transactionHash: transactionHash,
       xrpAmount: xrpAmount || 0,
       metadata: {
-        nftTokenId: nftTokenId,
+        nftTokenId: nftTokenId || null,
+        taxon: taxon || null,
+        issuerAddress: issuerAddress || null,
         ...metadata
       }
     });
@@ -248,7 +273,8 @@ exports.logNftBuy = async (req, res) => {
     const {
       walletAddress,
       nftTokenId,
-      collectionId,
+      taxon,
+      issuerAddress,
       transactionHash,
       xrpAmount,
       sellerWalletAddress,
@@ -290,12 +316,13 @@ exports.logNftBuy = async (req, res) => {
       activityType: 'nft_buy',
       relatedId: null,
       relatedType: 'nft',
-      collectionId: collectionId || null,
       transactionHash: transactionHash,
       xrpAmount: xrpAmount,
       counterpartyWalletAddress: sellerWalletAddress || null,
       metadata: {
-        nftTokenId: nftTokenId,
+        nftTokenId: nftTokenId || null,
+        taxon: taxon || null,
+        issuerAddress: issuerAddress || null,
         ...metadata
       }
     });
@@ -331,7 +358,8 @@ exports.logNftSell = async (req, res) => {
     const {
       walletAddress,
       nftTokenId,
-      collectionId,
+      taxon,
+      issuerAddress,
       transactionHash,
       xrpAmount,
       buyerWalletAddress,
@@ -373,12 +401,13 @@ exports.logNftSell = async (req, res) => {
       activityType: 'nft_sell',
       relatedId: null,
       relatedType: 'nft',
-      collectionId: collectionId || null,
       transactionHash: transactionHash,
       xrpAmount: xrpAmount,
       counterpartyWalletAddress: buyerWalletAddress || null,
       metadata: {
-        nftTokenId: nftTokenId,
+        nftTokenId: nftTokenId || null,
+        taxon: taxon || null,
+        issuerAddress: issuerAddress || null,
         ...metadata
       }
     });
@@ -414,7 +443,8 @@ exports.logNftList = async (req, res) => {
     const {
       walletAddress,
       nftTokenId,
-      collectionId,
+      taxon,
+      issuerAddress,
       transactionHash,
       xrpAmount,
       offerId,
@@ -452,12 +482,13 @@ exports.logNftList = async (req, res) => {
       activityType: 'nft_list',
       relatedId: null,
       relatedType: 'nft',
-      collectionId: collectionId || null,
       transactionHash: transactionHash,
       xrpAmount: xrpAmount || 0,
       metadata: {
-        nftTokenId: nftTokenId,
-        offerId: offerId,
+        nftTokenId: nftTokenId || null,
+        taxon: taxon || null,
+        issuerAddress: issuerAddress || null,
+        offerId: offerId || null,
         listPrice: xrpAmount,
         ...metadata
       }
@@ -494,7 +525,8 @@ exports.logNftDelist = async (req, res) => {
     const {
       walletAddress,
       nftTokenId,
-      collectionId,
+      taxon,
+      issuerAddress,
       transactionHash,
       offerId,
       metadata
@@ -531,11 +563,12 @@ exports.logNftDelist = async (req, res) => {
       activityType: 'nft_delist',
       relatedId: null,
       relatedType: 'nft',
-      collectionId: collectionId || null,
       transactionHash: transactionHash,
       metadata: {
-        nftTokenId: nftTokenId,
-        offerId: offerId,
+        nftTokenId: nftTokenId || null,
+        taxon: taxon || null,
+        issuerAddress: issuerAddress || null,
+        offerId: offerId || null,
         ...metadata
       }
     });
