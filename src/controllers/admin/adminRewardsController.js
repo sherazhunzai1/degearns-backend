@@ -12,12 +12,15 @@ const {
   RewardDistribution,
   AdminActivity,
   MonthlyRanking,
+  UserStats,
+  Subscription,
   sequelize
 } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
 const xrplService = require('../../services/xrplService');
 const xrplConfig = require('../../config/xrpl');
+const { initBoostEngine } = require('../../services/boostEngine');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -306,7 +309,7 @@ const getAllTopPerformers = async (req, res) => {
   const targetMonth = parseInt(month) || new Date().getMonth() + 1;
   const targetYear = parseInt(year) || new Date().getFullYear();
 
-  // Fetch all categories in parallel
+  // Fetch all categories in parallel using scoring system
   const [tradersRes, creatorsRes, influencersRes] = await Promise.all([
     getTopTradersData(targetMonth, targetYear, limit),
     getTopCreatorsData(targetMonth, targetYear, limit),
@@ -320,116 +323,161 @@ const getAllTopPerformers = async (req, res) => {
     },
     traders: tradersRes,
     creators: creatorsRes,
-    influencers: influencersRes
+    influencers: influencersRes,
+    note: 'Rankings based on boosted scores (subscription tier applied)'
   }, 'All top performers retrieved successfully'));
 };
 
-// Helper functions to get data without response
+// Helper functions to get data using UserStats with boosted scores
 const getTopTradersData = async (month, year, limit) => {
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0, 23, 59, 59, 999);
-
-  const topTraders = await DropMint.findAll({
-    attributes: [
-      'minterWalletAddress',
-      [sequelize.fn('SUM', sequelize.cast(sequelize.col('mintPrice'), 'UNSIGNED')), 'totalSpent'],
-      [sequelize.fn('COUNT', sequelize.col('DropMint.id')), 'mintCount']
-    ],
-    where: { createdAt: { [Op.between]: [startDate, endDate] } },
-    group: ['minterWalletAddress'],
-    order: [[sequelize.literal('totalSpent'), 'DESC']],
+  // Get top traders based on boosted trader score from UserStats
+  const topTraders = await UserStats.findAll({
+    where: {
+      scoringPeriodMonth: month,
+      scoringPeriodYear: year,
+      boostedTraderScore: { [Op.gt]: 0 }
+    },
+    order: [['boostedTraderScore', 'DESC']],
     limit: parseInt(limit),
     raw: true
   });
 
-  return Promise.all(topTraders.map(async (trader, index) => {
-    const user = await User.findOne({
-      where: { walletAddress: trader.minterWalletAddress },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-    });
+  const db = require('../../models');
+  const boostEngine = initBoostEngine(db);
+
+  return Promise.all(topTraders.map(async (stats, index) => {
+    const [user, subscription] = await Promise.all([
+      User.findOne({
+        where: { walletAddress: stats.userWalletAddress },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      boostEngine.getUserSubscription(stats.userWalletAddress)
+    ]);
+
     return {
       rank: index + 1,
-      walletAddress: trader.minterWalletAddress,
-      totalSpent: trader.totalSpent || '0',
-      totalSpentXrp: ((parseFloat(trader.totalSpent) || 0) / 1000000).toFixed(6),
-      mintCount: parseInt(trader.mintCount),
+      walletAddress: stats.userWalletAddress,
+      // Scoring metrics
+      traderScore: parseFloat(stats.traderScore) || 0,
+      boostedTraderScore: parseFloat(stats.boostedTraderScore) || 0,
+      boostMultiplier: parseFloat(stats.currentBoostMultiplier) || 1.0,
+      // Raw metrics
+      metrics: {
+        totalVolumeBought: stats.totalVolumeBought || '0',
+        totalVolumeSold: stats.totalVolumeSold || '0',
+        numberOfTrades: parseInt(stats.numberOfTrades) || 0,
+        uniqueCollectionsTraded: parseInt(stats.uniqueCollectionsTraded) || 0,
+        profitMargin: parseFloat(stats.profitMargin) || 0
+      },
+      subscription: {
+        planType: subscription.planType,
+        boostPercentage: `+${((subscription.multiplier - 1) * 100).toFixed(0)}%`
+      },
       user: user ? user.toJSON() : null
     };
   }));
 };
 
 const getTopCreatorsData = async (month, year, limit) => {
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0, 23, 59, 59, 999);
-
-  const topCreators = await DropMint.findAll({
-    attributes: [
-      [sequelize.col('drop.creatorWalletAddress'), 'creatorWalletAddress'],
-      [sequelize.fn('SUM', sequelize.cast(sequelize.col('mintPrice'), 'UNSIGNED')), 'totalRevenue'],
-      [sequelize.fn('COUNT', sequelize.col('DropMint.id')), 'totalMints']
-    ],
-    include: [{ model: Drop, as: 'drop', attributes: [], required: true }],
-    where: { createdAt: { [Op.between]: [startDate, endDate] } },
-    group: ['drop.creatorWalletAddress'],
-    order: [[sequelize.literal('totalRevenue'), 'DESC']],
+  // Get top creators based on boosted creator score from UserStats
+  const topCreators = await UserStats.findAll({
+    where: {
+      scoringPeriodMonth: month,
+      scoringPeriodYear: year,
+      boostedCreatorScore: { [Op.gt]: 0 }
+    },
+    order: [['boostedCreatorScore', 'DESC']],
     limit: parseInt(limit),
     raw: true
   });
 
-  return Promise.all(topCreators.map(async (creator, index) => {
-    const user = await User.findOne({
-      where: { walletAddress: creator.creatorWalletAddress },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-    });
+  const db = require('../../models');
+  const boostEngine = initBoostEngine(db);
+
+  return Promise.all(topCreators.map(async (stats, index) => {
+    const [user, subscription] = await Promise.all([
+      User.findOne({
+        where: { walletAddress: stats.userWalletAddress },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      boostEngine.getUserSubscription(stats.userWalletAddress)
+    ]);
+
     return {
       rank: index + 1,
-      walletAddress: creator.creatorWalletAddress,
-      totalRevenue: creator.totalRevenue || '0',
-      totalRevenueXrp: ((parseFloat(creator.totalRevenue) || 0) / 1000000).toFixed(6),
-      totalMints: parseInt(creator.totalMints),
+      walletAddress: stats.userWalletAddress,
+      // Scoring metrics
+      creatorScore: parseFloat(stats.creatorScore) || 0,
+      boostedCreatorScore: parseFloat(stats.boostedCreatorScore) || 0,
+      boostMultiplier: parseFloat(stats.currentBoostMultiplier) || 1.0,
+      // Raw metrics
+      metrics: {
+        totalSalesVolume: stats.totalSalesVolume || '0',
+        nftsSold: parseInt(stats.nftsSold) || 0,
+        collectionsCreated: parseInt(stats.collectionsCreated) || 0,
+        averageNftPrice: stats.averageNftPrice || '0',
+        uniqueBuyers: parseInt(stats.uniqueBuyers) || 0
+      },
+      subscription: {
+        planType: subscription.planType,
+        boostPercentage: `+${((subscription.multiplier - 1) * 100).toFixed(0)}%`
+      },
       user: user ? user.toJSON() : null
     };
   }));
 };
 
 const getTopInfluencersData = async (month, year, limit) => {
-  const startDate = new Date(year, month - 1, 1);
-  const endDate = new Date(year, month, 0, 23, 59, 59, 999);
-
-  const influencerStats = await Follow.findAll({
-    attributes: [
-      'followingWalletAddress',
-      [sequelize.fn('COUNT', sequelize.col('id')), 'newFollowers']
-    ],
-    where: { createdAt: { [Op.between]: [startDate, endDate] } },
-    group: ['followingWalletAddress'],
-    order: [[sequelize.literal('newFollowers'), 'DESC']],
-    limit: parseInt(limit) * 2,
+  // Get top influencers based on boosted influencer score from UserStats
+  const topInfluencers = await UserStats.findAll({
+    where: {
+      scoringPeriodMonth: month,
+      scoringPeriodYear: year,
+      boostedInfluencerScore: { [Op.gt]: 0 }
+    },
+    order: [['boostedInfluencerScore', 'DESC']],
+    limit: parseInt(limit),
     raw: true
   });
 
-  const influencersWithEngagement = await Promise.all(influencerStats.map(async (influencer) => {
-    const [totalFollowers, user] = await Promise.all([
-      Follow.count({ where: { followingWalletAddress: influencer.followingWalletAddress } }),
+  const db = require('../../models');
+  const boostEngine = initBoostEngine(db);
+
+  return Promise.all(topInfluencers.map(async (stats, index) => {
+    const [user, subscription] = await Promise.all([
       User.findOne({
-        where: { walletAddress: influencer.followingWalletAddress },
+        where: { walletAddress: stats.userWalletAddress },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-      })
+      }),
+      boostEngine.getUserSubscription(stats.userWalletAddress)
     ]);
 
     return {
-      walletAddress: influencer.followingWalletAddress,
-      newFollowers: parseInt(influencer.newFollowers),
-      totalFollowers,
-      engagementScore: parseInt(influencer.newFollowers),
+      rank: index + 1,
+      walletAddress: stats.userWalletAddress,
+      // Scoring metrics
+      influencerScore: parseFloat(stats.influencerScore) || 0,
+      boostedInfluencerScore: parseFloat(stats.boostedInfluencerScore) || 0,
+      boostMultiplier: parseFloat(stats.currentBoostMultiplier) || 1.0,
+      // Raw metrics
+      metrics: {
+        followersCount: parseInt(stats.followersCount) || 0,
+        totalLikesReceived: parseInt(stats.totalLikesReceived) || 0,
+        totalCommentsReceived: parseInt(stats.totalCommentsReceived) || 0,
+        postsCreated: parseInt(stats.postsCreated) || 0,
+        engagementRate: parseFloat(stats.engagementRate) || 0,
+        // Engagement metrics (giving)
+        totalLikesGiven: parseInt(stats.totalLikesGiven) || 0,
+        totalCommentsGiven: parseInt(stats.totalCommentsGiven) || 0,
+        totalFollowsGiven: parseInt(stats.totalFollowsGiven) || 0
+      },
+      subscription: {
+        planType: subscription.planType,
+        boostPercentage: `+${((subscription.multiplier - 1) * 100).toFixed(0)}%`
+      },
       user: user ? user.toJSON() : null
     };
   }));
-
-  return influencersWithEngagement
-    .sort((a, b) => b.engagementScore - a.engagementScore)
-    .slice(0, parseInt(limit))
-    .map((inf, index) => ({ rank: index + 1, ...inf }));
 };
 
 /**
