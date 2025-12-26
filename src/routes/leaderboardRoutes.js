@@ -7,7 +7,7 @@
 const express = require('express');
 const router = express.Router();
 const leaderboardController = require('../controllers/leaderboardController');
-const { optionalAuth, requireAuth } = require('../middleware/auth');
+const { optionalAuth, authenticate } = require('../middleware/auth');
 
 // ===== PUBLIC ROUTES =====
 
@@ -54,12 +54,12 @@ router.get('/compare/:walletAddress1/:walletAddress2', leaderboardController.com
  * GET /leaderboard/subscription
  * Get authenticated user's active subscription
  */
-router.get('/subscription', requireAuth, leaderboardController.getMySubscription);
+router.get('/subscription', authenticate, leaderboardController.getMySubscription);
 
 /**
  * POST /leaderboard/recalculate
  * Trigger score recalculation for authenticated user
  */
-router.post('/recalculate', requireAuth, leaderboardController.recalculateMyScores);
+router.post('/recalculate', authenticate, leaderboardController.recalculateMyScores);
 
 module.exports = router;
