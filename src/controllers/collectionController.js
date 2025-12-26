@@ -1,4 +1,4 @@
-const { Collection, User, DropMint, Drop, Follow, sequelize } = require('../models');
+const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
@@ -6,6 +6,7 @@ const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const crypto = require('crypto');
+const { initBoostEngine } = require('../services/boostEngine');
 
 /**
  * List/Register a collection on the marketplace
@@ -218,10 +219,27 @@ const getCollections = async (req, res, next) => {
     }
 
     // Format response with accurate stats from XRPL
-    const collectionsWithStats = validCollections.map(item => ({
+    let collectionsWithStats = validCollections.map(item => ({
       ...item.collection.toJSON(),
       stats: item.stats
     }));
+
+    // Apply boost sorting if requested
+    if (sortBy === 'boost' && collectionsWithStats.length > 0) {
+      const db = require('../models');
+      const boostEngine = initBoostEngine(db);
+      const boostedCollections = await boostEngine.boostCollections(
+        collectionsWithStats.map(c => ({
+          ...c,
+          creatorWalletAddress: c.creatorWalletAddress
+        }))
+      );
+
+      // Sort by boost score (descending)
+      boostedCollections.sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0));
+
+      collectionsWithStats = boostedCollections;
+    }
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -231,7 +249,8 @@ const getCollections = async (req, res, next) => {
           limit: parseInt(limit),
           total: validCollections.length, // Use valid collections count
           pages: Math.ceil(validCollections.length / limit)
-        }
+        },
+        sortBy
       }, 'Collections retrieved successfully')
     );
   } catch (error) {
@@ -1254,13 +1273,14 @@ const searchCollectionsAndNFTs = async (req, res, next) => {
 
 /**
  * Get newest NFTs across all collections
- * Fetches collections from database and NFTs from XRPL, sorted by listing date
+ * Fetches collections from database and NFTs from XRPL
+ * Supports sorting by: 'boost' (default), 'recent', 'price_low', 'price_high'
  */
 const getNewNFTs = async (req, res, next) => {
   try {
-    const { limit = 20 } = req.query;
+    const { limit = 20, sortBy = 'boost' } = req.query;
 
-    logger.info('Fetching newest NFTs across all collections');
+    logger.info(`Fetching NFTs across all collections, sortBy: ${sortBy}`);
 
     // Fetch all collections from database
     const collections = await Collection.findAll({
@@ -1351,11 +1371,50 @@ const getNewNFTs = async (req, res, next) => {
       }
     }
 
-    // Sort by listed date (most recent first)
-    allNFTs.sort((a, b) => new Date(b.listedDate) - new Date(a.listedDate));
+    // Apply sorting based on sortBy parameter
+    let sortedNFTs = allNFTs;
+
+    if (sortBy === 'boost') {
+      // Apply boost scoring based on collection creator's subscription
+      const db = require('../models');
+      const boostEngine = initBoostEngine(db);
+
+      // Calculate boost for each NFT based on collection creator
+      sortedNFTs = await Promise.all(
+        allNFTs.map(async (nft) => {
+          const creatorWallet = nft.collection.creator?.walletAddress;
+          if (creatorWallet) {
+            const boost = await boostEngine.calculateBoostScore({
+              walletAddress: creatorWallet,
+              createdAt: nft.listedDate,
+              likesCount: 0,
+              commentsCount: 0
+            });
+            return {
+              ...nft,
+              boostScore: boost.score,
+              boostDetails: boost.components
+            };
+          }
+          return { ...nft, boostScore: 1.0 };
+        })
+      );
+
+      // Sort by boost score
+      sortedNFTs.sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0));
+    } else if (sortBy === 'recent') {
+      sortedNFTs.sort((a, b) => new Date(b.listedDate) - new Date(a.listedDate));
+    } else if (sortBy === 'price_low') {
+      sortedNFTs.sort((a, b) => parseInt(a.price) - parseInt(b.price));
+    } else if (sortBy === 'price_high') {
+      sortedNFTs.sort((a, b) => parseInt(b.price) - parseInt(a.price));
+    } else {
+      // Default: sort by listed date
+      sortedNFTs.sort((a, b) => new Date(b.listedDate) - new Date(a.listedDate));
+    }
 
     // Limit results
-    const limitedNFTs = allNFTs.slice(0, parseInt(limit));
+    const limitedNFTs = sortedNFTs.slice(0, parseInt(limit));
 
     logger.info(`Found ${allNFTs.length} listed NFTs, returning ${limitedNFTs.length}`);
 
@@ -1363,8 +1422,9 @@ const getNewNFTs = async (req, res, next) => {
       new ApiResponse(200, {
         nfts: limitedNFTs,
         total: allNFTs.length,
-        limit: parseInt(limit)
-      }, 'Newest NFTs retrieved successfully')
+        limit: parseInt(limit),
+        sortBy
+      }, 'NFTs retrieved successfully')
     );
 
   } catch (error) {
