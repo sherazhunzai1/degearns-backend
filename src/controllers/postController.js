@@ -1,9 +1,10 @@
-const { User, Post, PostMedia, PostLike, PostComment, Follow, ActivityLog } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment, Follow, ActivityLog, Subscription } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
+const { initBoostEngine } = require('../services/boostEngine');
 
 /**
  * Helper function to log activity (async, non-blocking)
@@ -334,7 +335,13 @@ const getUserPosts = async (req, res, next) => {
  */
 const getAllPosts = async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, postType, viewerWalletAddress } = req.query;
+    const {
+      page = 1,
+      limit = 20,
+      postType,
+      viewerWalletAddress,
+      sortBy = 'boost' // 'boost' (default), 'recent', 'popular'
+    } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -349,12 +356,19 @@ const getAllPosts = async (req, res, next) => {
       whereClause.postType = postType;
     }
 
-    // Get posts with pagination
+    // For boost sorting, we need to fetch more posts and sort in memory
+    // This is because boost score depends on subscription status
+    const fetchLimit = sortBy === 'boost' ? parseInt(limit) * 3 : parseInt(limit);
+    const fetchOffset = sortBy === 'boost' ? 0 : offset;
+
+    // Get posts
     const { count, rows: posts } = await Post.findAndCountAll({
       where: whereClause,
-      order: [['createdAt', 'DESC']],
-      limit: parseInt(limit),
-      offset,
+      order: sortBy === 'popular'
+        ? [['likesCount', 'DESC'], ['createdAt', 'DESC']]
+        : [['createdAt', 'DESC']],
+      limit: fetchLimit,
+      offset: fetchOffset,
       include: [
         {
           model: PostMedia,
@@ -383,15 +397,41 @@ const getAllPosts = async (req, res, next) => {
       authorMap[author.walletAddress] = author;
     });
 
+    // Apply boost scoring if sortBy is 'boost'
+    let processedPosts = posts;
+    if (sortBy === 'boost' && posts.length > 0) {
+      const db = require('../models');
+      const boostEngine = initBoostEngine(db);
+      const boostedPosts = await boostEngine.boostPosts(posts);
+
+      // Sort by boost score
+      boostedPosts.sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0));
+
+      // Apply pagination after boost sorting
+      processedPosts = boostedPosts.slice(offset, offset + parseInt(limit));
+    }
+
     // Format posts with engagement data
     const formattedPosts = await Promise.all(
-      posts.map(post => {
+      processedPosts.map(async (post) => {
         const author = authorMap[post.authorWalletAddress];
-        return formatPostWithEngagement(post, author, viewerWalletAddress);
+        const formatted = await formatPostWithEngagement(
+          post.toJSON ? post : { ...post, toJSON: () => post },
+          author,
+          viewerWalletAddress
+        );
+
+        // Include boost info if available
+        if (post.boostScore !== undefined) {
+          formatted.boostScore = post.boostScore;
+          formatted.boostDetails = post.boostDetails;
+        }
+
+        return formatted;
       })
     );
 
-    logger.info(`All posts fetched, page: ${page}`);
+    logger.info(`All posts fetched, page: ${page}, sortBy: ${sortBy}`);
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -401,7 +441,8 @@ const getAllPosts = async (req, res, next) => {
           limit: parseInt(limit),
           total: count,
           totalPages: Math.ceil(count / parseInt(limit))
-        }
+        },
+        sortBy
       }, 'Posts retrieved successfully')
     );
   } catch (error) {
