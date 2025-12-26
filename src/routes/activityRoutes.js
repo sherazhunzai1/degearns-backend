@@ -3,6 +3,10 @@
  *
  * Routes for logging user activities for the scoring system.
  * All routes are open (no authentication required).
+ *
+ * NOTE: These APIs are independent of database records. Collections and NFTs
+ * are minted on XRPL from the frontend and may not exist in the database.
+ * Use taxon and issuerAddress to identify collections instead of collectionId.
  */
 
 const express = require('express');
@@ -14,7 +18,8 @@ const activityController = require('../controllers/activityController');
  * @desc Log collection creation activity
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} collectionId - The collection ID (required)
+ * @body {number} taxon - Collection taxon from XRPL (required)
+ * @body {string} collectionName - Collection name (optional)
  * @body {string} transactionHash - XRPL transaction hash (optional)
  * @body {object} metadata - Additional metadata (optional)
  */
@@ -25,8 +30,8 @@ router.post('/collection-create', activityController.logCollectionCreate);
  * @desc Log drop creation activity
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} dropId - The drop ID (required)
- * @body {string} collectionId - Related collection ID (optional)
+ * @body {number} taxon - Drop/Collection taxon from XRPL (required)
+ * @body {string} dropName - Drop name (optional)
  * @body {string} transactionHash - XRPL transaction hash (optional)
  * @body {object} metadata - Additional metadata (optional)
  */
@@ -37,11 +42,11 @@ router.post('/drop-create', activityController.logDropCreate);
  * @desc Log NFT mint activity (minting from a drop)
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} nftTokenId - The NFT token ID (optional)
- * @body {string} collectionId - Collection ID (optional)
- * @body {string} dropId - Drop ID if minted from drop (optional)
  * @body {string} transactionHash - XRPL transaction hash (required)
- * @body {number} xrpAmount - Amount in drops (optional)
+ * @body {string} nftTokenId - The NFT token ID on XRPL (optional)
+ * @body {number} taxon - Collection taxon (optional)
+ * @body {string} issuerAddress - NFT issuer address (optional)
+ * @body {number} xrpAmount - Amount paid in drops (optional)
  * @body {object} metadata - Additional metadata (optional)
  */
 router.post('/nft-mint', activityController.logNftMint);
@@ -51,10 +56,11 @@ router.post('/nft-mint', activityController.logNftMint);
  * @desc Log NFT purchase activity
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} nftTokenId - The NFT token ID (optional)
- * @body {string} collectionId - Collection ID (optional)
  * @body {string} transactionHash - XRPL transaction hash (required)
  * @body {number} xrpAmount - Purchase amount in drops (required)
+ * @body {string} nftTokenId - The NFT token ID (optional)
+ * @body {number} taxon - Collection taxon (optional)
+ * @body {string} issuerAddress - NFT issuer address (optional)
  * @body {string} sellerWalletAddress - Seller's wallet address (optional)
  * @body {object} metadata - Additional metadata (optional)
  */
@@ -65,10 +71,11 @@ router.post('/nft-buy', activityController.logNftBuy);
  * @desc Log NFT sale activity
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} nftTokenId - The NFT token ID (optional)
- * @body {string} collectionId - Collection ID (optional)
  * @body {string} transactionHash - XRPL transaction hash (required)
  * @body {number} xrpAmount - Sale amount in drops (required)
+ * @body {string} nftTokenId - The NFT token ID (optional)
+ * @body {number} taxon - Collection taxon (optional)
+ * @body {string} issuerAddress - NFT issuer address (optional)
  * @body {string} buyerWalletAddress - Buyer's wallet address (optional)
  * @body {object} metadata - Additional metadata (optional)
  */
@@ -79,9 +86,10 @@ router.post('/nft-sell', activityController.logNftSell);
  * @desc Log NFT listing activity (putting up for sale)
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} nftTokenId - The NFT token ID (optional)
- * @body {string} collectionId - Collection ID (optional)
  * @body {string} transactionHash - XRPL transaction hash (required)
+ * @body {string} nftTokenId - The NFT token ID (optional)
+ * @body {number} taxon - Collection taxon (optional)
+ * @body {string} issuerAddress - NFT issuer address (optional)
  * @body {number} xrpAmount - Listing price in drops (optional)
  * @body {string} offerId - XRPL offer ID (optional)
  * @body {object} metadata - Additional metadata (optional)
@@ -93,9 +101,10 @@ router.post('/nft-list', activityController.logNftList);
  * @desc Log NFT delisting activity (removing from sale)
  * @access Public
  * @body {string} walletAddress - User's wallet address (required)
- * @body {string} nftTokenId - The NFT token ID (optional)
- * @body {string} collectionId - Collection ID (optional)
  * @body {string} transactionHash - XRPL transaction hash (required)
+ * @body {string} nftTokenId - The NFT token ID (optional)
+ * @body {number} taxon - Collection taxon (optional)
+ * @body {string} issuerAddress - NFT issuer address (optional)
  * @body {string} offerId - XRPL offer ID being cancelled (optional)
  * @body {object} metadata - Additional metadata (optional)
  */
