@@ -25,6 +25,9 @@ const MonthlyRanking = require('./MonthlyRanking')(sequelize, DataTypes);
 const Group = require('./Group')(sequelize, DataTypes);
 const GroupMember = require('./GroupMember')(sequelize, DataTypes);
 const GroupMessage = require('./GroupMessage')(sequelize, DataTypes);
+const Subscription = require('./Subscription')(sequelize, DataTypes);
+const UserStats = require('./UserStats')(sequelize, DataTypes);
+const ActivityLog = require('./ActivityLog')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -371,6 +374,52 @@ GroupMessage.belongsTo(GroupMessage, {
   as: 'replyToMessage'
 });
 
+// User and Subscription associations
+User.hasMany(Subscription, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'subscriptions'
+});
+Subscription.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// User and UserStats associations
+User.hasOne(UserStats, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'stats'
+});
+UserStats.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// User and ActivityLog associations
+User.hasMany(ActivityLog, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'activities'
+});
+ActivityLog.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// ActivityLog and Collection associations
+Collection.hasMany(ActivityLog, {
+  foreignKey: 'collectionId',
+  as: 'activities'
+});
+ActivityLog.belongsTo(Collection, {
+  foreignKey: 'collectionId',
+  as: 'collection'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -399,5 +448,8 @@ module.exports = {
   MonthlyRanking,
   Group,
   GroupMember,
-  GroupMessage
+  GroupMessage,
+  Subscription,
+  UserStats,
+  ActivityLog
 };
