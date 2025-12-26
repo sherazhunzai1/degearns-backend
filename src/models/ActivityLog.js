@@ -101,6 +101,8 @@ module.exports = (sequelize, DataTypes) => {
   ActivityLog.TRADER_ACTIVITIES = ['nft_buy', 'nft_sell', 'nft_mint'];
   ActivityLog.CREATOR_ACTIVITIES = ['nft_sell', 'collection_create', 'drop_create'];
   ActivityLog.INFLUENCER_ACTIVITIES = ['post_create', 'like_receive', 'comment_receive', 'follow_receive'];
+  // Engagement activities - when users actively engage with others' content
+  ActivityLog.ENGAGEMENT_ACTIVITIES = ['like_give', 'comment_create', 'follow_give'];
 
   // Static method to log activity
   ActivityLog.logActivity = async function(data) {

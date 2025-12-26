@@ -33,12 +33,16 @@ module.exports = {
   },
 
   // Influencer scoring weights (must sum to 1.0)
+  // This includes both "receiving" (content popularity) and "giving" (community participation)
   influencerWeights: {
-    followers: 0.25,         // 25% - Follower count
-    likes: 0.20,             // 20% - Total likes received
-    comments: 0.20,          // 20% - Total comments received
-    posts: 0.15,             // 15% - Posts created
-    engagement: 0.20         // 20% - Engagement rate
+    followers: 0.15,         // 15% - New followers received this month
+    likesReceived: 0.12,     // 12% - Total likes received on posts
+    commentsReceived: 0.12,  // 12% - Total comments received on posts
+    posts: 0.12,             // 12% - Posts created
+    engagement: 0.14,        // 14% - Engagement rate (likes+comments / followers*posts)
+    likesGiven: 0.12,        // 12% - Likes given to others' posts
+    commentsGiven: 0.12,     // 12% - Comments made on others' posts
+    followsGiven: 0.11       // 11% - Users followed
   },
 
   // Scoring periods

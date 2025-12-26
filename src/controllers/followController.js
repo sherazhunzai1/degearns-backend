@@ -1,9 +1,21 @@
-const { User, Follow } = require('../models');
+const { User, Follow, ActivityLog } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
+
+/**
+ * Helper function to log activity (async, non-blocking)
+ */
+const logActivity = async (data) => {
+  try {
+    await ActivityLog.logActivity(data);
+  } catch (error) {
+    logger.error('Error logging activity:', error);
+    // Don't throw - activity logging should not block the main operation
+  }
+};
 
 /**
  * Follow a user
@@ -69,6 +81,26 @@ const followUser = async (req, res, next) => {
       followerWalletAddress: followerWalletAddress,
       followerUsername: follower.username
     }).catch(err => logger.error('Error creating follow notification:', err));
+
+    // Log follow_give activity for the follower (async, non-blocking)
+    logActivity({
+      userWalletAddress: followerWalletAddress,
+      activityType: 'follow_give',
+      relatedId: null,
+      relatedType: 'user',
+      counterpartyWalletAddress: followingWalletAddress,
+      metadata: {}
+    });
+
+    // Log follow_receive activity for the followed user (async, non-blocking)
+    logActivity({
+      userWalletAddress: followingWalletAddress,
+      activityType: 'follow_receive',
+      relatedId: null,
+      relatedType: 'user',
+      counterpartyWalletAddress: followerWalletAddress,
+      metadata: {}
+    });
 
     logger.info(`${followerWalletAddress} followed ${followingWalletAddress}`);
 

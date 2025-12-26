@@ -65,22 +65,28 @@ class ScoringEngine {
 
     // Update user stats
     await userStats.update({
-      // Raw metrics
+      // Raw metrics - Trader
       totalVolumeBought: rawMetrics.volumeBought,
       totalVolumeSold: rawMetrics.volumeSold,
       numberOfTrades: rawMetrics.trades,
       uniqueCollectionsTraded: rawMetrics.uniqueCollections,
       profitMargin: rawMetrics.profitMargin,
+      // Raw metrics - Creator
       totalSalesVolume: rawMetrics.salesVolume,
       nftsSold: rawMetrics.nftsSold,
       collectionsCreated: rawMetrics.collections,
       averageNftPrice: rawMetrics.avgPrice,
       uniqueBuyers: rawMetrics.uniqueBuyers,
+      // Raw metrics - Influencer (receiving)
       followersCount: rawMetrics.followers,
-      totalLikesReceived: rawMetrics.likes,
-      totalCommentsReceived: rawMetrics.comments,
+      totalLikesReceived: rawMetrics.likesReceived,
+      totalCommentsReceived: rawMetrics.commentsReceived,
       postsCreated: rawMetrics.posts,
       engagementRate: rawMetrics.engagement,
+      // Raw metrics - Engagement (giving)
+      totalLikesGiven: rawMetrics.likesGiven,
+      totalCommentsGiven: rawMetrics.commentsGiven,
+      totalFollowsGiven: rawMetrics.followsGiven,
 
       // Base scores
       traderScore,
@@ -173,16 +179,16 @@ class ScoringEngine {
     });
     const postIds = userPosts.map(p => p.id);
 
-    let likes = 0;
-    let comments = 0;
+    let likesReceived = 0;
+    let commentsReceived = 0;
     if (postIds.length > 0) {
-      likes = await PostLike.count({
+      likesReceived = await PostLike.count({
         where: {
           postId: { [Op.in]: postIds },
           createdAt: { [Op.between]: [startDate, endDate] }
         }
       });
-      comments = await PostComment.count({
+      commentsReceived = await PostComment.count({
         where: {
           postId: { [Op.in]: postIds },
           createdAt: { [Op.between]: [startDate, endDate] }
@@ -201,9 +207,14 @@ class ScoringEngine {
     // Calculate engagement rate for the month
     let engagement = 0;
     if (totalFollowers > 0 && posts > 0) {
-      const totalEngagements = likes + comments;
+      const totalEngagements = likesReceived + commentsReceived;
       engagement = (totalEngagements / (totalFollowers * posts)) * 100;
     }
+
+    // Engagement metrics (giving) - from ActivityLog
+    const likesGiven = activities.like_give?.count || 0;
+    const commentsGiven = activities.comment_create?.count || 0;
+    const followsGiven = activities.follow_give?.count || 0;
 
     return {
       // Trader
@@ -218,13 +229,17 @@ class ScoringEngine {
       collections,
       avgPrice,
       uniqueBuyers,
-      // Influencer
+      // Influencer (receiving)
       followers: newFollowers, // New followers this month
       totalFollowers,
-      likes,
-      comments,
+      likesReceived,
+      commentsReceived,
       posts,
-      engagement
+      engagement,
+      // Engagement (giving)
+      likesGiven,
+      commentsGiven,
+      followsGiven
     };
   }
 
@@ -249,10 +264,13 @@ class ScoringEngine {
         [sequelize.fn('MAX', sequelize.col('averageNftPrice')), 'maxAvgPrice'],
         [sequelize.fn('MAX', sequelize.col('uniqueBuyers')), 'maxUniqueBuyers'],
         [sequelize.fn('MAX', sequelize.col('followersCount')), 'maxFollowers'],
-        [sequelize.fn('MAX', sequelize.col('totalLikesReceived')), 'maxLikes'],
-        [sequelize.fn('MAX', sequelize.col('totalCommentsReceived')), 'maxComments'],
+        [sequelize.fn('MAX', sequelize.col('totalLikesReceived')), 'maxLikesReceived'],
+        [sequelize.fn('MAX', sequelize.col('totalCommentsReceived')), 'maxCommentsReceived'],
         [sequelize.fn('MAX', sequelize.col('postsCreated')), 'maxPosts'],
-        [sequelize.fn('MAX', sequelize.col('engagementRate')), 'maxEngagement']
+        [sequelize.fn('MAX', sequelize.col('engagementRate')), 'maxEngagement'],
+        [sequelize.fn('MAX', sequelize.col('totalLikesGiven')), 'maxLikesGiven'],
+        [sequelize.fn('MAX', sequelize.col('totalCommentsGiven')), 'maxCommentsGiven'],
+        [sequelize.fn('MAX', sequelize.col('totalFollowsGiven')), 'maxFollowsGiven']
       ],
       raw: true
     });
@@ -270,10 +288,13 @@ class ScoringEngine {
       maxAvgPrice: Math.max(parseFloat(result?.maxAvgPrice) || 1, 1),
       maxUniqueBuyers: Math.max(parseInt(result?.maxUniqueBuyers) || 1, 1),
       maxFollowers: Math.max(parseInt(result?.maxFollowers) || 1, 1),
-      maxLikes: Math.max(parseInt(result?.maxLikes) || 1, 1),
-      maxComments: Math.max(parseInt(result?.maxComments) || 1, 1),
+      maxLikesReceived: Math.max(parseInt(result?.maxLikesReceived) || 1, 1),
+      maxCommentsReceived: Math.max(parseInt(result?.maxCommentsReceived) || 1, 1),
       maxPosts: Math.max(parseInt(result?.maxPosts) || 1, 1),
-      maxEngagement: Math.max(parseFloat(result?.maxEngagement) || 1, 100)
+      maxEngagement: Math.max(parseFloat(result?.maxEngagement) || 1, 100),
+      maxLikesGiven: Math.max(parseInt(result?.maxLikesGiven) || 1, 1),
+      maxCommentsGiven: Math.max(parseInt(result?.maxCommentsGiven) || 1, 1),
+      maxFollowsGiven: Math.max(parseInt(result?.maxFollowsGiven) || 1, 1)
     };
   }
 
@@ -298,10 +319,13 @@ class ScoringEngine {
       avgPrice: normalize(rawMetrics.avgPrice, maxValues.maxAvgPrice),
       uniqueBuyers: normalize(rawMetrics.uniqueBuyers, maxValues.maxUniqueBuyers),
       followers: normalize(rawMetrics.followers, maxValues.maxFollowers),
-      likes: normalize(rawMetrics.likes, maxValues.maxLikes),
-      comments: normalize(rawMetrics.comments, maxValues.maxComments),
+      likesReceived: normalize(rawMetrics.likesReceived, maxValues.maxLikesReceived),
+      commentsReceived: normalize(rawMetrics.commentsReceived, maxValues.maxCommentsReceived),
       posts: normalize(rawMetrics.posts, maxValues.maxPosts),
-      engagement: normalize(rawMetrics.engagement, maxValues.maxEngagement)
+      engagement: normalize(rawMetrics.engagement, maxValues.maxEngagement),
+      likesGiven: normalize(rawMetrics.likesGiven, maxValues.maxLikesGiven),
+      commentsGiven: normalize(rawMetrics.commentsGiven, maxValues.maxCommentsGiven),
+      followsGiven: normalize(rawMetrics.followsGiven, maxValues.maxFollowsGiven)
     };
   }
 
@@ -335,15 +359,21 @@ class ScoringEngine {
 
   /**
    * Calculate influencer score from normalized metrics
+   * Includes both "receiving" (content popularity) and "giving" (community participation)
    */
   calculateInfluencerScore(normalized) {
     const w = this.config.influencerWeights;
     return (
+      // Receiving metrics (content popularity)
       (normalized.followers * w.followers) +
-      (normalized.likes * w.likes) +
-      (normalized.comments * w.comments) +
+      (normalized.likesReceived * w.likesReceived) +
+      (normalized.commentsReceived * w.commentsReceived) +
       (normalized.posts * w.posts) +
-      (normalized.engagement * w.engagement)
+      (normalized.engagement * w.engagement) +
+      // Giving metrics (community participation)
+      (normalized.likesGiven * w.likesGiven) +
+      (normalized.commentsGiven * w.commentsGiven) +
+      (normalized.followsGiven * w.followsGiven)
     );
   }
 
@@ -496,11 +526,16 @@ class ScoringEngine {
         };
       case 'influencer':
         return {
+          // Receiving metrics
           followers: parseInt(stats.followersCount),
-          likes: parseInt(stats.totalLikesReceived),
-          comments: parseInt(stats.totalCommentsReceived),
+          likesReceived: parseInt(stats.totalLikesReceived),
+          commentsReceived: parseInt(stats.totalCommentsReceived),
           posts: parseInt(stats.postsCreated),
-          engagementRate: parseFloat(stats.engagementRate)
+          engagementRate: parseFloat(stats.engagementRate),
+          // Giving metrics
+          likesGiven: parseInt(stats.totalLikesGiven) || 0,
+          commentsGiven: parseInt(stats.totalCommentsGiven) || 0,
+          followsGiven: parseInt(stats.totalFollowsGiven) || 0
         };
       default:
         return {};

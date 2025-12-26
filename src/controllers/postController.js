@@ -1,9 +1,21 @@
-const { User, Post, PostMedia, PostLike, PostComment, Follow } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment, Follow, ActivityLog } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
+
+/**
+ * Helper function to log activity (async, non-blocking)
+ */
+const logActivity = async (data) => {
+  try {
+    await ActivityLog.logActivity(data);
+  } catch (error) {
+    logger.error('Error logging activity:', error);
+    // Don't throw - activity logging should not block the main operation
+  }
+};
 
 /**
  * Helper function to convert IPFS URLs to HTTP gateway URLs
@@ -228,6 +240,18 @@ const createPost = async (req, res, next) => {
 
     // Attach media to post object for formatting
     post.media = mediaItems;
+
+    // Log post_create activity (async, non-blocking)
+    logActivity({
+      userWalletAddress: authorWalletAddress,
+      activityType: 'post_create',
+      relatedId: post.id,
+      relatedType: 'post',
+      metadata: {
+        postType: postType,
+        hasMedia: mediaItems.length > 0
+      }
+    });
 
     logger.info(`New post created by ${authorWalletAddress}, type: ${postType}`);
 
@@ -688,6 +712,29 @@ const likePost = async (req, res, next) => {
       postMedia: post.media
     }).catch(err => logger.error('Error creating like notification:', err));
 
+    // Log like_give activity for the user who liked (async, non-blocking)
+    logActivity({
+      userWalletAddress: userWalletAddress,
+      activityType: 'like_give',
+      relatedId: postId,
+      relatedType: 'post',
+      counterpartyWalletAddress: post.authorWalletAddress,
+      metadata: {}
+    });
+
+    // Log like_receive activity for the post author (async, non-blocking)
+    // Only if the liker is not the post author
+    if (userWalletAddress !== post.authorWalletAddress) {
+      logActivity({
+        userWalletAddress: post.authorWalletAddress,
+        activityType: 'like_receive',
+        relatedId: postId,
+        relatedType: 'post',
+        counterpartyWalletAddress: userWalletAddress,
+        metadata: {}
+      });
+    }
+
     logger.info(`Post ${postId} liked by ${userWalletAddress}`);
 
     res.status(200).json(
@@ -930,6 +977,36 @@ const addComment = async (req, res, next) => {
         postType: post.postType,
         postMedia: post.media
       }).catch(err => logger.error('Error creating comment notification:', err));
+    }
+
+    // Log comment_create activity for the commenter (async, non-blocking)
+    logActivity({
+      userWalletAddress: authorWalletAddress,
+      activityType: 'comment_create',
+      relatedId: comment.id,
+      relatedType: 'comment',
+      counterpartyWalletAddress: post.authorWalletAddress,
+      metadata: {
+        postId: postId,
+        commentId: comment.id,
+        isReply: !!parentCommentId
+      }
+    });
+
+    // Log comment_receive activity for the post author (async, non-blocking)
+    // Only if the commenter is not the post author
+    if (authorWalletAddress !== post.authorWalletAddress) {
+      logActivity({
+        userWalletAddress: post.authorWalletAddress,
+        activityType: 'comment_receive',
+        relatedId: postId,
+        relatedType: 'post',
+        counterpartyWalletAddress: authorWalletAddress,
+        metadata: {
+          postId: postId,
+          commentId: comment.id
+        }
+      });
     }
 
     await post.reload();

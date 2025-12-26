@@ -121,6 +121,72 @@ router.post('/nft-delist', activityController.logNftDelist);
 router.post('/post-create', activityController.logPostCreate);
 
 /**
+ * @route POST /api/v1/activities/like-give
+ * @desc Log like given activity (user likes a post)
+ * @access Public
+ * @body {string} walletAddress - User's wallet address (required)
+ * @body {string} postId - The post ID (required)
+ * @body {string} postAuthorWalletAddress - Post author's wallet address (optional)
+ * @body {object} metadata - Additional metadata (optional)
+ */
+router.post('/like-give', activityController.logLikeGive);
+
+/**
+ * @route POST /api/v1/activities/like-receive
+ * @desc Log like received activity (user's post gets liked)
+ * @access Public
+ * @body {string} walletAddress - User's wallet address (required)
+ * @body {string} postId - The post ID (required)
+ * @body {string} likerWalletAddress - Liker's wallet address (optional)
+ * @body {object} metadata - Additional metadata (optional)
+ */
+router.post('/like-receive', activityController.logLikeReceive);
+
+/**
+ * @route POST /api/v1/activities/comment-create
+ * @desc Log comment created activity (user comments on a post)
+ * @access Public
+ * @body {string} walletAddress - User's wallet address (required)
+ * @body {string} postId - The post ID (required)
+ * @body {string} commentId - The comment ID (optional)
+ * @body {string} postAuthorWalletAddress - Post author's wallet address (optional)
+ * @body {object} metadata - Additional metadata (optional)
+ */
+router.post('/comment-create', activityController.logCommentCreate);
+
+/**
+ * @route POST /api/v1/activities/comment-receive
+ * @desc Log comment received activity (user's post gets a comment)
+ * @access Public
+ * @body {string} walletAddress - User's wallet address (required)
+ * @body {string} postId - The post ID (required)
+ * @body {string} commentId - The comment ID (optional)
+ * @body {string} commenterWalletAddress - Commenter's wallet address (optional)
+ * @body {object} metadata - Additional metadata (optional)
+ */
+router.post('/comment-receive', activityController.logCommentReceive);
+
+/**
+ * @route POST /api/v1/activities/follow-give
+ * @desc Log follow given activity (user follows someone)
+ * @access Public
+ * @body {string} walletAddress - User's wallet address (required)
+ * @body {string} followedWalletAddress - Followed user's wallet address (required)
+ * @body {object} metadata - Additional metadata (optional)
+ */
+router.post('/follow-give', activityController.logFollowGive);
+
+/**
+ * @route POST /api/v1/activities/follow-receive
+ * @desc Log follow received activity (user gets a new follower)
+ * @access Public
+ * @body {string} walletAddress - User's wallet address (required)
+ * @body {string} followerWalletAddress - Follower's wallet address (required)
+ * @body {object} metadata - Additional metadata (optional)
+ */
+router.post('/follow-receive', activityController.logFollowReceive);
+
+/**
  * @route GET /api/v1/activities/user/:walletAddress
  * @desc Get user's activity history
  * @access Public
