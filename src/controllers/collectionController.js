@@ -224,8 +224,8 @@ const getCollections = async (req, res, next) => {
       stats: item.stats
     }));
 
-    // Apply boost sorting if requested
-    if (sortBy === 'boost' && collectionsWithStats.length > 0) {
+    // Always apply boost scoring (boost is primary sort)
+    if (collectionsWithStats.length > 0) {
       const db = require('../models');
       const boostEngine = initBoostEngine(db);
       const boostedCollections = await boostEngine.boostCollections(
@@ -235,8 +235,23 @@ const getCollections = async (req, res, next) => {
         }))
       );
 
-      // Sort by boost score (descending)
-      boostedCollections.sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0));
+      // Sort by boost score (primary), then by secondary sort
+      boostedCollections.sort((a, b) => {
+        // Primary sort: boost score (descending)
+        const boostDiff = (b.boostScore || 0) - (a.boostScore || 0);
+        if (Math.abs(boostDiff) > 0.01) return boostDiff;
+
+        // Secondary sort based on sortBy parameter
+        if (sortBy === 'totalVolume') {
+          return parseInt(b.totalVolume || 0) - parseInt(a.totalVolume || 0);
+        } else if (sortBy === 'floorPrice') {
+          return parseInt(b.floorPrice || 0) - parseInt(a.floorPrice || 0);
+        } else if (sortBy === 'name') {
+          return (a.name || '').localeCompare(b.name || '');
+        }
+        // Default: createdAt (most recent first)
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
 
       collectionsWithStats = boostedCollections;
     }
@@ -247,10 +262,13 @@ const getCollections = async (req, res, next) => {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: validCollections.length, // Use valid collections count
+          total: validCollections.length,
           pages: Math.ceil(validCollections.length / limit)
         },
-        sortBy
+        sorting: {
+          primary: 'boost',
+          secondary: sortBy
+        }
       }, 'Collections retrieved successfully')
     );
   } catch (error) {
@@ -1371,11 +1389,10 @@ const getNewNFTs = async (req, res, next) => {
       }
     }
 
-    // Apply sorting based on sortBy parameter
+    // Always apply boost scoring (boost is primary sort)
     let sortedNFTs = allNFTs;
 
-    if (sortBy === 'boost') {
-      // Apply boost scoring based on collection creator's subscription
+    if (allNFTs.length > 0) {
       const db = require('../models');
       const boostEngine = initBoostEngine(db);
 
@@ -1396,21 +1413,25 @@ const getNewNFTs = async (req, res, next) => {
               boostDetails: boost.components
             };
           }
-          return { ...nft, boostScore: 1.0 };
+          return { ...nft, boostScore: 1.0, boostDetails: null };
         })
       );
 
-      // Sort by boost score
-      sortedNFTs.sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0));
-    } else if (sortBy === 'recent') {
-      sortedNFTs.sort((a, b) => new Date(b.listedDate) - new Date(a.listedDate));
-    } else if (sortBy === 'price_low') {
-      sortedNFTs.sort((a, b) => parseInt(a.price) - parseInt(b.price));
-    } else if (sortBy === 'price_high') {
-      sortedNFTs.sort((a, b) => parseInt(b.price) - parseInt(a.price));
-    } else {
-      // Default: sort by listed date
-      sortedNFTs.sort((a, b) => new Date(b.listedDate) - new Date(a.listedDate));
+      // Sort by boost score (primary), then by secondary sort
+      sortedNFTs.sort((a, b) => {
+        // Primary sort: boost score (descending)
+        const boostDiff = (b.boostScore || 0) - (a.boostScore || 0);
+        if (Math.abs(boostDiff) > 0.01) return boostDiff;
+
+        // Secondary sort based on sortBy parameter
+        if (sortBy === 'price_low') {
+          return parseInt(a.price) - parseInt(b.price);
+        } else if (sortBy === 'price_high') {
+          return parseInt(b.price) - parseInt(a.price);
+        }
+        // Default: recent (by listedDate)
+        return new Date(b.listedDate) - new Date(a.listedDate);
+      });
     }
 
     // Limit results
@@ -1423,7 +1444,10 @@ const getNewNFTs = async (req, res, next) => {
         nfts: limitedNFTs,
         total: allNFTs.length,
         limit: parseInt(limit),
-        sortBy
+        sorting: {
+          primary: 'boost',
+          secondary: sortBy
+        }
       }, 'NFTs retrieved successfully')
     );
 

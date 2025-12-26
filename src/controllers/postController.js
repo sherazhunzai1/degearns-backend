@@ -330,7 +330,8 @@ const getUserPosts = async (req, res, next) => {
 
 /**
  * Get all posts (feed)
- * Returns all public posts sorted by most recent
+ * Returns all public posts with boost as primary sort
+ * Secondary sort options: 'recent' (default), 'popular'
  * Supports pagination
  */
 const getAllPosts = async (req, res, next) => {
@@ -340,7 +341,7 @@ const getAllPosts = async (req, res, next) => {
       limit = 20,
       postType,
       viewerWalletAddress,
-      sortBy = 'boost' // 'boost' (default), 'recent', 'popular'
+      sortBy = 'recent' // Secondary sort: 'recent' (default), 'popular'
     } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -356,19 +357,17 @@ const getAllPosts = async (req, res, next) => {
       whereClause.postType = postType;
     }
 
-    // For boost sorting, we need to fetch more posts and sort in memory
-    // This is because boost score depends on subscription status
-    const fetchLimit = sortBy === 'boost' ? parseInt(limit) * 3 : parseInt(limit);
-    const fetchOffset = sortBy === 'boost' ? 0 : offset;
+    // Fetch more posts for boost sorting (we sort in memory after calculating boost)
+    const fetchLimit = parseInt(limit) * 3;
 
-    // Get posts
+    // Get posts with initial ordering based on secondary sort
     const { count, rows: posts } = await Post.findAndCountAll({
       where: whereClause,
       order: sortBy === 'popular'
         ? [['likesCount', 'DESC'], ['createdAt', 'DESC']]
         : [['createdAt', 'DESC']],
       limit: fetchLimit,
-      offset: fetchOffset,
+      offset: 0, // Start from beginning, apply offset after boost sorting
       include: [
         {
           model: PostMedia,
@@ -397,15 +396,26 @@ const getAllPosts = async (req, res, next) => {
       authorMap[author.walletAddress] = author;
     });
 
-    // Apply boost scoring if sortBy is 'boost'
+    // Always apply boost scoring
     let processedPosts = posts;
-    if (sortBy === 'boost' && posts.length > 0) {
+    if (posts.length > 0) {
       const db = require('../models');
       const boostEngine = initBoostEngine(db);
       const boostedPosts = await boostEngine.boostPosts(posts);
 
-      // Sort by boost score
-      boostedPosts.sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0));
+      // Sort by boost score (primary), then by secondary sort
+      boostedPosts.sort((a, b) => {
+        // Primary sort: boost score (descending)
+        const boostDiff = (b.boostScore || 0) - (a.boostScore || 0);
+        if (Math.abs(boostDiff) > 0.01) return boostDiff; // If boost scores differ significantly
+
+        // Secondary sort based on sortBy parameter
+        if (sortBy === 'popular') {
+          return (b.likesCount || 0) - (a.likesCount || 0);
+        }
+        // Default: recent (by createdAt)
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
 
       // Apply pagination after boost sorting
       processedPosts = boostedPosts.slice(offset, offset + parseInt(limit));
@@ -421,17 +431,15 @@ const getAllPosts = async (req, res, next) => {
           viewerWalletAddress
         );
 
-        // Include boost info if available
-        if (post.boostScore !== undefined) {
-          formatted.boostScore = post.boostScore;
-          formatted.boostDetails = post.boostDetails;
-        }
+        // Always include boost info
+        formatted.boostScore = post.boostScore || 1.0;
+        formatted.boostDetails = post.boostDetails || null;
 
         return formatted;
       })
     );
 
-    logger.info(`All posts fetched, page: ${page}, sortBy: ${sortBy}`);
+    logger.info(`All posts fetched, page: ${page}, sortBy: ${sortBy} (boost primary)`);
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -442,7 +450,10 @@ const getAllPosts = async (req, res, next) => {
           total: count,
           totalPages: Math.ceil(count / parseInt(limit))
         },
-        sortBy
+        sorting: {
+          primary: 'boost',
+          secondary: sortBy
+        }
       }, 'Posts retrieved successfully')
     );
   } catch (error) {
