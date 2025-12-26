@@ -660,6 +660,414 @@ exports.logPostCreate = async (req, res) => {
 };
 
 /**
+ * Log like given activity (user likes a post)
+ * @route POST /api/v1/activities/like-give
+ */
+exports.logLikeGive = async (req, res) => {
+  try {
+    const { walletAddress, postId, postAuthorWalletAddress, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // Check for duplicate (user can only like a post once)
+    const existingActivity = await ActivityLog.findOne({
+      where: {
+        userWalletAddress: walletAddress,
+        activityType: 'like_give',
+        relatedId: postId
+      }
+    });
+
+    if (existingActivity) {
+      return res.status(200).json(
+        new ApiResponse(200, {
+          activity: existingActivity,
+          alreadyLogged: true
+        }, 'Like already logged for this post')
+      );
+    }
+
+    const activity = await ActivityLog.logActivity({
+      userWalletAddress: walletAddress,
+      activityType: 'like_give',
+      relatedId: postId,
+      relatedType: 'post',
+      counterpartyWalletAddress: postAuthorWalletAddress || null,
+      metadata: metadata || {}
+    });
+
+    logger.info(`Like give activity logged: ${walletAddress} liked post ${postId}`);
+
+    res.status(201).json(
+      new ApiResponse(201, { activity }, 'Like activity logged successfully')
+    );
+  } catch (error) {
+    logger.error('Error logging like give activity:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      message: 'Failed to log like activity'
+    });
+  }
+};
+
+/**
+ * Log like received activity (user's post gets liked)
+ * @route POST /api/v1/activities/like-receive
+ */
+exports.logLikeReceive = async (req, res) => {
+  try {
+    const { walletAddress, postId, likerWalletAddress, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // For like_receive, we allow multiple entries (different users can like the same post)
+    // But prevent duplicate from same liker
+    if (likerWalletAddress) {
+      const existingActivity = await ActivityLog.findOne({
+        where: {
+          userWalletAddress: walletAddress,
+          activityType: 'like_receive',
+          relatedId: postId,
+          counterpartyWalletAddress: likerWalletAddress
+        }
+      });
+
+      if (existingActivity) {
+        return res.status(200).json(
+          new ApiResponse(200, {
+            activity: existingActivity,
+            alreadyLogged: true
+          }, 'Like receive already logged from this user')
+        );
+      }
+    }
+
+    const activity = await ActivityLog.logActivity({
+      userWalletAddress: walletAddress,
+      activityType: 'like_receive',
+      relatedId: postId,
+      relatedType: 'post',
+      counterpartyWalletAddress: likerWalletAddress || null,
+      metadata: metadata || {}
+    });
+
+    logger.info(`Like receive activity logged: ${walletAddress} received like on post ${postId}`);
+
+    res.status(201).json(
+      new ApiResponse(201, { activity }, 'Like receive activity logged successfully')
+    );
+  } catch (error) {
+    logger.error('Error logging like receive activity:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      message: 'Failed to log like receive activity'
+    });
+  }
+};
+
+/**
+ * Log comment created activity (user comments on a post)
+ * @route POST /api/v1/activities/comment-create
+ */
+exports.logCommentCreate = async (req, res) => {
+  try {
+    const { walletAddress, postId, commentId, postAuthorWalletAddress, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // Check for duplicate by commentId if provided
+    if (commentId) {
+      const existingActivity = await ActivityLog.findOne({
+        where: {
+          userWalletAddress: walletAddress,
+          activityType: 'comment_create',
+          relatedId: commentId
+        }
+      });
+
+      if (existingActivity) {
+        return res.status(200).json(
+          new ApiResponse(200, {
+            activity: existingActivity,
+            alreadyLogged: true
+          }, 'Comment already logged')
+        );
+      }
+    }
+
+    const activity = await ActivityLog.logActivity({
+      userWalletAddress: walletAddress,
+      activityType: 'comment_create',
+      relatedId: commentId || postId,
+      relatedType: 'comment',
+      counterpartyWalletAddress: postAuthorWalletAddress || null,
+      metadata: {
+        postId: postId,
+        commentId: commentId,
+        ...metadata
+      }
+    });
+
+    logger.info(`Comment create activity logged: ${walletAddress} commented on post ${postId}`);
+
+    res.status(201).json(
+      new ApiResponse(201, { activity }, 'Comment activity logged successfully')
+    );
+  } catch (error) {
+    logger.error('Error logging comment create activity:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      message: 'Failed to log comment activity'
+    });
+  }
+};
+
+/**
+ * Log comment received activity (user's post gets a comment)
+ * @route POST /api/v1/activities/comment-receive
+ */
+exports.logCommentReceive = async (req, res) => {
+  try {
+    const { walletAddress, postId, commentId, commenterWalletAddress, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // Prevent duplicate from same comment
+    if (commentId) {
+      const existingActivity = await ActivityLog.findOne({
+        where: {
+          userWalletAddress: walletAddress,
+          activityType: 'comment_receive',
+          metadata: {
+            commentId: commentId
+          }
+        }
+      });
+
+      if (existingActivity) {
+        return res.status(200).json(
+          new ApiResponse(200, {
+            activity: existingActivity,
+            alreadyLogged: true
+          }, 'Comment receive already logged')
+        );
+      }
+    }
+
+    const activity = await ActivityLog.logActivity({
+      userWalletAddress: walletAddress,
+      activityType: 'comment_receive',
+      relatedId: postId,
+      relatedType: 'post',
+      counterpartyWalletAddress: commenterWalletAddress || null,
+      metadata: {
+        postId: postId,
+        commentId: commentId,
+        ...metadata
+      }
+    });
+
+    logger.info(`Comment receive activity logged: ${walletAddress} received comment on post ${postId}`);
+
+    res.status(201).json(
+      new ApiResponse(201, { activity }, 'Comment receive activity logged successfully')
+    );
+  } catch (error) {
+    logger.error('Error logging comment receive activity:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      message: 'Failed to log comment receive activity'
+    });
+  }
+};
+
+/**
+ * Log follow given activity (user follows someone)
+ * @route POST /api/v1/activities/follow-give
+ */
+exports.logFollowGive = async (req, res) => {
+  try {
+    const { walletAddress, followedWalletAddress, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!followedWalletAddress) {
+      throw new ApiError(400, 'Followed wallet address is required');
+    }
+
+    // Check for duplicate (user can only follow someone once)
+    const existingActivity = await ActivityLog.findOne({
+      where: {
+        userWalletAddress: walletAddress,
+        activityType: 'follow_give',
+        counterpartyWalletAddress: followedWalletAddress
+      }
+    });
+
+    if (existingActivity) {
+      return res.status(200).json(
+        new ApiResponse(200, {
+          activity: existingActivity,
+          alreadyLogged: true
+        }, 'Follow already logged for this user')
+      );
+    }
+
+    const activity = await ActivityLog.logActivity({
+      userWalletAddress: walletAddress,
+      activityType: 'follow_give',
+      relatedId: null,
+      relatedType: 'user',
+      counterpartyWalletAddress: followedWalletAddress,
+      metadata: metadata || {}
+    });
+
+    logger.info(`Follow give activity logged: ${walletAddress} followed ${followedWalletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, { activity }, 'Follow activity logged successfully')
+    );
+  } catch (error) {
+    logger.error('Error logging follow give activity:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      message: 'Failed to log follow activity'
+    });
+  }
+};
+
+/**
+ * Log follow received activity (user gets a new follower)
+ * @route POST /api/v1/activities/follow-receive
+ */
+exports.logFollowReceive = async (req, res) => {
+  try {
+    const { walletAddress, followerWalletAddress, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!followerWalletAddress) {
+      throw new ApiError(400, 'Follower wallet address is required');
+    }
+
+    // Check for duplicate
+    const existingActivity = await ActivityLog.findOne({
+      where: {
+        userWalletAddress: walletAddress,
+        activityType: 'follow_receive',
+        counterpartyWalletAddress: followerWalletAddress
+      }
+    });
+
+    if (existingActivity) {
+      return res.status(200).json(
+        new ApiResponse(200, {
+          activity: existingActivity,
+          alreadyLogged: true
+        }, 'Follow receive already logged from this user')
+      );
+    }
+
+    const activity = await ActivityLog.logActivity({
+      userWalletAddress: walletAddress,
+      activityType: 'follow_receive',
+      relatedId: null,
+      relatedType: 'user',
+      counterpartyWalletAddress: followerWalletAddress,
+      metadata: metadata || {}
+    });
+
+    logger.info(`Follow receive activity logged: ${walletAddress} received follower ${followerWalletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, { activity }, 'Follow receive activity logged successfully')
+    );
+  } catch (error) {
+    logger.error('Error logging follow receive activity:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
+    res.status(500).json({
+      success: false,
+      statusCode: 500,
+      message: 'Failed to log follow receive activity'
+    });
+  }
+};
+
+/**
  * Get user's activity history
  * @route GET /api/v1/activities/user/:walletAddress
  */
@@ -775,10 +1183,21 @@ exports.getUserActivitySummary = async (req, res) => {
             sales: aggregated.nft_sell?.count || 0
           },
           influencer: {
+            // Content creation
             posts: aggregated.post_create?.count || 0,
+            // Receiving (content popularity)
             likesReceived: aggregated.like_receive?.count || 0,
             commentsReceived: aggregated.comment_receive?.count || 0,
             followersGained: aggregated.follow_receive?.count || 0
+          },
+          engagement: {
+            // Giving (community participation)
+            likesGiven: aggregated.like_give?.count || 0,
+            commentsGiven: aggregated.comment_create?.count || 0,
+            followsGiven: aggregated.follow_give?.count || 0,
+            totalEngagementActions: (aggregated.like_give?.count || 0) +
+                                    (aggregated.comment_create?.count || 0) +
+                                    (aggregated.follow_give?.count || 0)
           }
         }
       }, 'Activity summary retrieved successfully')

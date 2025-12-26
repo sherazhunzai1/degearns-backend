@@ -27,8 +27,14 @@ The Activity Logging API allows the frontend to log user activities for the scor
 6. [NFT List](#nft-list)
 7. [NFT Delist](#nft-delist)
 8. [Post Create](#post-create)
-9. [Get User Activities](#get-user-activities)
-10. [Get User Summary](#get-user-summary)
+9. [Like Give](#like-give)
+10. [Like Receive](#like-receive)
+11. [Comment Create](#comment-create)
+12. [Comment Receive](#comment-receive)
+13. [Follow Give](#follow-give)
+14. [Follow Receive](#follow-receive)
+15. [Get User Activities](#get-user-activities)
+16. [Get User Summary](#get-user-summary)
 
 ---
 
@@ -44,6 +50,12 @@ The Activity Logging API allows the frontend to log user activities for the scor
 | `nft_list` | - | User listed an NFT for sale |
 | `nft_delist` | - | User removed NFT from sale |
 | `post_create` | Influencer | User created a post |
+| `like_give` | Engagement | User liked someone's post |
+| `like_receive` | Influencer | User's post received a like |
+| `comment_create` | Engagement | User commented on a post |
+| `comment_receive` | Influencer | User's post received a comment |
+| `follow_give` | Engagement | User followed another user |
+| `follow_receive` | Influencer | User received a new follower |
 
 ---
 
@@ -600,6 +612,324 @@ POST /api/v1/activities/post-create
 
 ---
 
+### Like Give
+
+Log when a user likes someone's post. This contributes to the user's engagement score.
+
+```
+POST /api/v1/activities/like-give
+```
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address (the one giving the like) |
+| `postId` | string (UUID) | Yes | The post ID being liked |
+| `postAuthorWalletAddress` | string | No | Post author's wallet address |
+| `metadata` | object | No | Additional metadata |
+
+#### Example Request
+
+```json
+{
+  "walletAddress": "rLikerWalletAddress...",
+  "postId": "770e8400-e29b-41d4-a716-446655440002",
+  "postAuthorWalletAddress": "rAuthorWalletAddress..."
+}
+```
+
+#### Example Response (Success - 201)
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "activity": {
+      "id": "activity-uuid",
+      "userWalletAddress": "rLikerWalletAddress...",
+      "activityType": "like_give",
+      "relatedId": "770e8400-e29b-41d4-a716-446655440002",
+      "relatedType": "post",
+      "counterpartyWalletAddress": "rAuthorWalletAddress...",
+      "scoringPeriodMonth": 12,
+      "scoringPeriodYear": 2025,
+      "createdAt": "2025-12-26T10:00:00.000Z"
+    }
+  },
+  "message": "Like activity logged successfully"
+}
+```
+
+---
+
+### Like Receive
+
+Log when a user's post receives a like. This contributes to the influencer score.
+
+```
+POST /api/v1/activities/like-receive
+```
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | Post author's wallet address (the one receiving the like) |
+| `postId` | string (UUID) | Yes | The post ID that was liked |
+| `likerWalletAddress` | string | No | Liker's wallet address |
+| `metadata` | object | No | Additional metadata |
+
+#### Example Request
+
+```json
+{
+  "walletAddress": "rAuthorWalletAddress...",
+  "postId": "770e8400-e29b-41d4-a716-446655440002",
+  "likerWalletAddress": "rLikerWalletAddress..."
+}
+```
+
+#### Example Response (Success - 201)
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "activity": {
+      "id": "activity-uuid",
+      "userWalletAddress": "rAuthorWalletAddress...",
+      "activityType": "like_receive",
+      "relatedId": "770e8400-e29b-41d4-a716-446655440002",
+      "relatedType": "post",
+      "counterpartyWalletAddress": "rLikerWalletAddress...",
+      "scoringPeriodMonth": 12,
+      "scoringPeriodYear": 2025,
+      "createdAt": "2025-12-26T10:00:00.000Z"
+    }
+  },
+  "message": "Like receive activity logged successfully"
+}
+```
+
+---
+
+### Comment Create
+
+Log when a user comments on a post. This contributes to the user's engagement score.
+
+```
+POST /api/v1/activities/comment-create
+```
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address (the commenter) |
+| `postId` | string (UUID) | Yes | The post ID being commented on |
+| `commentId` | string (UUID) | No | The comment ID |
+| `postAuthorWalletAddress` | string | No | Post author's wallet address |
+| `metadata` | object | No | Additional metadata |
+
+#### Example Request
+
+```json
+{
+  "walletAddress": "rCommenterWalletAddress...",
+  "postId": "770e8400-e29b-41d4-a716-446655440002",
+  "commentId": "880e8400-e29b-41d4-a716-446655440003",
+  "postAuthorWalletAddress": "rAuthorWalletAddress..."
+}
+```
+
+#### Example Response (Success - 201)
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "activity": {
+      "id": "activity-uuid",
+      "userWalletAddress": "rCommenterWalletAddress...",
+      "activityType": "comment_create",
+      "relatedId": "880e8400-e29b-41d4-a716-446655440003",
+      "relatedType": "comment",
+      "counterpartyWalletAddress": "rAuthorWalletAddress...",
+      "metadata": {
+        "postId": "770e8400-e29b-41d4-a716-446655440002",
+        "commentId": "880e8400-e29b-41d4-a716-446655440003"
+      },
+      "scoringPeriodMonth": 12,
+      "scoringPeriodYear": 2025,
+      "createdAt": "2025-12-26T10:00:00.000Z"
+    }
+  },
+  "message": "Comment activity logged successfully"
+}
+```
+
+---
+
+### Comment Receive
+
+Log when a user's post receives a comment. This contributes to the influencer score.
+
+```
+POST /api/v1/activities/comment-receive
+```
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | Post author's wallet address (the one receiving the comment) |
+| `postId` | string (UUID) | Yes | The post ID that received the comment |
+| `commentId` | string (UUID) | No | The comment ID |
+| `commenterWalletAddress` | string | No | Commenter's wallet address |
+| `metadata` | object | No | Additional metadata |
+
+#### Example Request
+
+```json
+{
+  "walletAddress": "rAuthorWalletAddress...",
+  "postId": "770e8400-e29b-41d4-a716-446655440002",
+  "commentId": "880e8400-e29b-41d4-a716-446655440003",
+  "commenterWalletAddress": "rCommenterWalletAddress..."
+}
+```
+
+#### Example Response (Success - 201)
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "activity": {
+      "id": "activity-uuid",
+      "userWalletAddress": "rAuthorWalletAddress...",
+      "activityType": "comment_receive",
+      "relatedId": "770e8400-e29b-41d4-a716-446655440002",
+      "relatedType": "post",
+      "counterpartyWalletAddress": "rCommenterWalletAddress...",
+      "metadata": {
+        "postId": "770e8400-e29b-41d4-a716-446655440002",
+        "commentId": "880e8400-e29b-41d4-a716-446655440003"
+      },
+      "scoringPeriodMonth": 12,
+      "scoringPeriodYear": 2025,
+      "createdAt": "2025-12-26T10:00:00.000Z"
+    }
+  },
+  "message": "Comment receive activity logged successfully"
+}
+```
+
+---
+
+### Follow Give
+
+Log when a user follows another user. This contributes to the user's engagement score.
+
+```
+POST /api/v1/activities/follow-give
+```
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address (the follower) |
+| `followedWalletAddress` | string | Yes | Wallet address of user being followed |
+| `metadata` | object | No | Additional metadata |
+
+#### Example Request
+
+```json
+{
+  "walletAddress": "rFollowerWalletAddress...",
+  "followedWalletAddress": "rFollowedWalletAddress..."
+}
+```
+
+#### Example Response (Success - 201)
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "activity": {
+      "id": "activity-uuid",
+      "userWalletAddress": "rFollowerWalletAddress...",
+      "activityType": "follow_give",
+      "relatedType": "user",
+      "counterpartyWalletAddress": "rFollowedWalletAddress...",
+      "scoringPeriodMonth": 12,
+      "scoringPeriodYear": 2025,
+      "createdAt": "2025-12-26T10:00:00.000Z"
+    }
+  },
+  "message": "Follow activity logged successfully"
+}
+```
+
+---
+
+### Follow Receive
+
+Log when a user receives a new follower. This contributes to the influencer score.
+
+```
+POST /api/v1/activities/follow-receive
+```
+
+#### Request Body
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address (the one being followed) |
+| `followerWalletAddress` | string | Yes | Follower's wallet address |
+| `metadata` | object | No | Additional metadata |
+
+#### Example Request
+
+```json
+{
+  "walletAddress": "rFollowedWalletAddress...",
+  "followerWalletAddress": "rFollowerWalletAddress..."
+}
+```
+
+#### Example Response (Success - 201)
+
+```json
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "activity": {
+      "id": "activity-uuid",
+      "userWalletAddress": "rFollowedWalletAddress...",
+      "activityType": "follow_receive",
+      "relatedType": "user",
+      "counterpartyWalletAddress": "rFollowerWalletAddress...",
+      "scoringPeriodMonth": 12,
+      "scoringPeriodYear": 2025,
+      "createdAt": "2025-12-26T10:00:00.000Z"
+    }
+  },
+  "message": "Follow receive activity logged successfully"
+}
+```
+
+---
+
 ### Get User Activities
 
 Get a user's activity history.
@@ -747,9 +1077,15 @@ GET /api/v1/activities/user/rXXXXXXXXXXXXXXXXXXXX/summary?month=12&year=2025
       },
       "influencer": {
         "posts": 10,
-        "likesReceived": 0,
-        "commentsReceived": 0,
-        "followersGained": 0
+        "likesReceived": 25,
+        "commentsReceived": 12,
+        "followersGained": 8
+      },
+      "engagement": {
+        "likesGiven": 45,
+        "commentsGiven": 20,
+        "followsGiven": 15,
+        "totalEngagementActions": 80
       }
     }
   },
@@ -773,6 +1109,11 @@ GET /api/v1/activities/user/rXXXXXXXXXXXXXXXXXXXX/summary?month=12&year=2025
 | User lists an NFT | `POST /nft-list` | After `NFTokenCreateOffer` (sell) transaction succeeds |
 | User delists an NFT | `POST /nft-delist` | After `NFTokenCancelOffer` transaction succeeds |
 | User creates a post | `POST /post-create` | After post is saved to database |
+| User likes a post | `POST /like-give` (for liker) + `POST /like-receive` (for author) | After like is saved |
+| User comments on a post | `POST /comment-create` (for commenter) + `POST /comment-receive` (for author) | After comment is saved |
+| User follows someone | `POST /follow-give` (for follower) + `POST /follow-receive` (for followed) | After follow is saved |
+
+> **Note:** For engagement actions (likes, comments, follows), you should call BOTH endpoints - one for the user performing the action and one for the user receiving the action. This allows proper scoring for both parties.
 
 ### Example: Logging Collection Creation
 

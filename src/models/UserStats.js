@@ -77,11 +77,11 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Calculated creator score (before boost)'
     },
 
-    // ===== INFLUENCER METRICS =====
+    // ===== INFLUENCER METRICS (Receiving) =====
     followersCount: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
-      comment: 'Total followers'
+      comment: 'New followers received this month'
     },
     totalLikesReceived: {
       type: DataTypes.INTEGER,
@@ -103,6 +103,24 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 0,
       comment: 'Engagement rate percentage'
     },
+
+    // ===== ENGAGEMENT METRICS (Giving) =====
+    totalLikesGiven: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Total likes given to others posts'
+    },
+    totalCommentsGiven: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Total comments made on others posts'
+    },
+    totalFollowsGiven: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Total users followed'
+    },
+
     influencerScore: {
       type: DataTypes.DECIMAL(20, 6),
       defaultValue: 0,
