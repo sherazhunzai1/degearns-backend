@@ -10,10 +10,7 @@ The Activity Logging API allows the frontend to log user activities for the scor
 ```
 
 ### Authentication
-All endpoints require JWT authentication via Bearer token:
-```
-Authorization: Bearer <token>
-```
+**All endpoints are open and do not require authentication.** The wallet address is passed in the request body for POST endpoints or as a URL parameter for GET endpoints.
 
 ---
 
@@ -27,8 +24,8 @@ Authorization: Bearer <token>
 6. [NFT List](#nft-list)
 7. [NFT Delist](#nft-delist)
 8. [Post Create](#post-create)
-9. [Get My Activities](#get-my-activities)
-10. [Get My Summary](#get-my-summary)
+9. [Get User Activities](#get-user-activities)
+10. [Get User Summary](#get-user-summary)
 
 ---
 
@@ -61,6 +58,7 @@ POST /api/v1/activities/collection-create
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `collectionId` | string (UUID) | Yes | The collection ID from database |
 | `transactionHash` | string | No | XRPL transaction hash if applicable |
 | `metadata` | object | No | Additional metadata |
@@ -69,6 +67,7 @@ POST /api/v1/activities/collection-create
 
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "collectionId": "550e8400-e29b-41d4-a716-446655440000",
   "transactionHash": "A1B2C3D4E5F6...",
   "metadata": {
@@ -126,9 +125,9 @@ POST /api/v1/activities/collection-create
 
 | Status | Message |
 |--------|---------|
+| 400 | Wallet address is required |
 | 400 | Collection ID is required |
-| 401 | Unauthorized |
-| 404 | Collection not found or does not belong to you |
+| 404 | Collection not found or does not belong to this wallet |
 
 ---
 
@@ -144,6 +143,7 @@ POST /api/v1/activities/drop-create
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `dropId` | string (UUID) | Yes | The drop ID |
 | `collectionId` | string (UUID) | No | Related collection ID |
 | `transactionHash` | string | No | XRPL transaction hash |
@@ -153,6 +153,7 @@ POST /api/v1/activities/drop-create
 
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "dropId": "660e8400-e29b-41d4-a716-446655440001",
   "collectionId": "550e8400-e29b-41d4-a716-446655440000",
   "metadata": {
@@ -199,6 +200,7 @@ POST /api/v1/activities/nft-mint
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `transactionHash` | string | Yes | XRPL transaction hash |
 | `nftTokenId` | string | No | The NFT token ID on XRPL |
 | `collectionId` | string (UUID) | No | Collection ID |
@@ -210,6 +212,7 @@ POST /api/v1/activities/nft-mint
 
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "transactionHash": "E8F7A6B5C4D3E2F1...",
   "nftTokenId": "000800006203F49C21D5D6E0...",
   "collectionId": "550e8400-e29b-41d4-a716-446655440000",
@@ -265,6 +268,7 @@ POST /api/v1/activities/nft-buy
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `transactionHash` | string | Yes | XRPL transaction hash |
 | `xrpAmount` | number | Yes | Purchase amount in drops |
 | `nftTokenId` | string | No | The NFT token ID |
@@ -276,6 +280,7 @@ POST /api/v1/activities/nft-buy
 
 ```json
 {
+  "walletAddress": "rBuyerWalletAddress...",
   "transactionHash": "F9E8D7C6B5A4...",
   "xrpAmount": 100000000,
   "nftTokenId": "000800006203F49C21D5D6E0...",
@@ -318,6 +323,7 @@ POST /api/v1/activities/nft-buy
 
 | Status | Message |
 |--------|---------|
+| 400 | Wallet address is required |
 | 400 | Transaction hash is required |
 | 400 | XRP amount is required |
 
@@ -335,6 +341,7 @@ POST /api/v1/activities/nft-sell
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `transactionHash` | string | Yes | XRPL transaction hash |
 | `xrpAmount` | number | Yes | Sale amount in drops |
 | `nftTokenId` | string | No | The NFT token ID |
@@ -346,6 +353,7 @@ POST /api/v1/activities/nft-sell
 
 ```json
 {
+  "walletAddress": "rSellerWalletAddress...",
   "transactionHash": "A1B2C3D4E5F6...",
   "xrpAmount": 150000000,
   "nftTokenId": "000800006203F49C21D5D6E0...",
@@ -397,6 +405,7 @@ POST /api/v1/activities/nft-list
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `transactionHash` | string | Yes | XRPL transaction hash |
 | `nftTokenId` | string | No | The NFT token ID |
 | `collectionId` | string (UUID) | No | Collection ID |
@@ -408,6 +417,7 @@ POST /api/v1/activities/nft-list
 
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "transactionHash": "B2C3D4E5F6A7...",
   "nftTokenId": "000800006203F49C21D5D6E0...",
   "xrpAmount": 200000000,
@@ -457,6 +467,7 @@ POST /api/v1/activities/nft-delist
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `transactionHash` | string | Yes | XRPL transaction hash |
 | `nftTokenId` | string | No | The NFT token ID |
 | `collectionId` | string (UUID) | No | Collection ID |
@@ -467,6 +478,7 @@ POST /api/v1/activities/nft-delist
 
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "transactionHash": "C3D4E5F6A7B8...",
   "nftTokenId": "000800006203F49C21D5D6E0...",
   "offerId": "OFFER123456..."
@@ -510,6 +522,7 @@ POST /api/v1/activities/post-create
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's wallet address |
 | `postId` | string (UUID) | Yes | The post ID |
 | `metadata` | object | No | Additional metadata |
 
@@ -517,6 +530,7 @@ POST /api/v1/activities/post-create
 
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "postId": "770e8400-e29b-41d4-a716-446655440002",
   "metadata": {
     "hasMedia": true,
@@ -549,13 +563,19 @@ POST /api/v1/activities/post-create
 
 ---
 
-### Get My Activities
+### Get User Activities
 
-Get the authenticated user's activity history.
+Get a user's activity history.
 
 ```
-GET /api/v1/activities/my-activities
+GET /api/v1/activities/user/:walletAddress
 ```
+
+#### URL Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `walletAddress` | string | User's wallet address |
 
 #### Query Parameters
 
@@ -570,7 +590,7 @@ GET /api/v1/activities/my-activities
 #### Example Request
 
 ```
-GET /api/v1/activities/my-activities?page=1&limit=10&activityType=nft_buy&month=12&year=2025
+GET /api/v1/activities/user/rXXXXXXXXXXXXXXXXXXXX?page=1&limit=10&activityType=nft_buy&month=12&year=2025
 ```
 
 #### Example Response (Success - 200)
@@ -580,6 +600,7 @@ GET /api/v1/activities/my-activities?page=1&limit=10&activityType=nft_buy&month=
   "success": true,
   "statusCode": 200,
   "data": {
+    "walletAddress": "rXXXX...",
     "activities": [
       {
         "id": "activity-uuid-1",
@@ -619,13 +640,19 @@ GET /api/v1/activities/my-activities?page=1&limit=10&activityType=nft_buy&month=
 
 ---
 
-### Get My Summary
+### Get User Summary
 
-Get the authenticated user's activity summary for the scoring system.
+Get a user's activity summary for the scoring system.
 
 ```
-GET /api/v1/activities/my-summary
+GET /api/v1/activities/user/:walletAddress/summary
 ```
+
+#### URL Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `walletAddress` | string | User's wallet address |
 
 #### Query Parameters
 
@@ -637,7 +664,7 @@ GET /api/v1/activities/my-summary
 #### Example Request
 
 ```
-GET /api/v1/activities/my-summary?month=12&year=2025
+GET /api/v1/activities/user/rXXXXXXXXXXXXXXXXXXXX/summary?month=12&year=2025
 ```
 
 #### Example Response (Success - 200)
@@ -647,6 +674,7 @@ GET /api/v1/activities/my-summary?month=12&year=2025
   "success": true,
   "statusCode": 200,
   "data": {
+    "walletAddress": "rXXXX...",
     "period": {
       "month": 12,
       "year": 2025
@@ -719,15 +747,15 @@ GET /api/v1/activities/my-summary?month=12&year=2025
 
 ```javascript
 // After NFTokenAcceptOffer transaction succeeds
-async function logNftPurchase(txResult, nftDetails) {
+async function logNftPurchase(txResult, nftDetails, userWallet) {
   try {
     const response = await fetch('/api/v1/activities/nft-buy', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${userToken}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        walletAddress: userWallet,
         transactionHash: txResult.hash,
         xrpAmount: parseInt(txResult.Amount), // in drops
         nftTokenId: nftDetails.nftTokenId,
@@ -742,7 +770,7 @@ async function logNftPurchase(txResult, nftDetails) {
 
     const data = await response.json();
 
-    if (data.alreadyLogged) {
+    if (data.data?.alreadyLogged) {
       console.log('Activity was already logged');
     } else {
       console.log('Activity logged successfully');
@@ -758,15 +786,15 @@ async function logNftPurchase(txResult, nftDetails) {
 
 ```javascript
 // After collection is created in database
-async function logCollectionCreation(collectionId) {
+async function logCollectionCreation(collectionId, userWallet) {
   try {
     const response = await fetch('/api/v1/activities/collection-create', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${userToken}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
+        walletAddress: userWallet,
         collectionId: collectionId
       })
     });
@@ -798,7 +826,6 @@ async function logCollectionCreation(collectionId) {
 | Status Code | Description |
 |-------------|-------------|
 | 400 | Bad Request - Missing or invalid parameters |
-| 401 | Unauthorized - Missing or invalid token |
 | 404 | Not Found - Resource doesn't exist |
 | 500 | Internal Server Error |
 
@@ -833,3 +860,4 @@ This determines which monthly leaderboard the activity counts toward.
 2. **Handle failures gracefully** - Activity logging failures should not block user flows
 3. **Include metadata** - Provide as much context as possible in the metadata field
 4. **Use collection IDs** - Always include `collectionId` when available for better analytics
+5. **Always include wallet address** - Since APIs are open, wallet address must be provided in every request

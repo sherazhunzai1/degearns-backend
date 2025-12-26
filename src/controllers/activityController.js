@@ -3,6 +3,7 @@
  *
  * Handles logging of user activities for the scoring system.
  * These endpoints are called from the frontend after blockchain transactions complete.
+ * All endpoints are open (no authentication required).
  */
 
 const { ActivityLog, Collection, User } = require('../models');
@@ -16,10 +17,13 @@ const logger = require('../utils/logger');
  */
 exports.logCollectionCreate = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
-    const { collectionId, transactionHash, metadata } = req.body;
+    const { walletAddress, collectionId, transactionHash, metadata } = req.body;
 
     // Validate required fields
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
     if (!collectionId) {
       throw new ApiError(400, 'Collection ID is required');
     }
@@ -33,7 +37,7 @@ exports.logCollectionCreate = async (req, res) => {
     });
 
     if (!collection) {
-      throw new ApiError(404, 'Collection not found or does not belong to you');
+      throw new ApiError(404, 'Collection not found or does not belong to this wallet');
     }
 
     // Check if activity already logged for this collection
@@ -97,8 +101,11 @@ exports.logCollectionCreate = async (req, res) => {
  */
 exports.logDropCreate = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
-    const { dropId, collectionId, transactionHash, metadata } = req.body;
+    const { walletAddress, dropId, collectionId, transactionHash, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!dropId) {
       throw new ApiError(400, 'Drop ID is required');
@@ -160,8 +167,8 @@ exports.logDropCreate = async (req, res) => {
  */
 exports.logNftMint = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
     const {
+      walletAddress,
       nftTokenId,
       collectionId,
       dropId,
@@ -169,6 +176,10 @@ exports.logNftMint = async (req, res) => {
       xrpAmount,
       metadata
     } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
@@ -234,8 +245,8 @@ exports.logNftMint = async (req, res) => {
  */
 exports.logNftBuy = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
     const {
+      walletAddress,
       nftTokenId,
       collectionId,
       transactionHash,
@@ -243,6 +254,10 @@ exports.logNftBuy = async (req, res) => {
       sellerWalletAddress,
       metadata
     } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
@@ -313,8 +328,8 @@ exports.logNftBuy = async (req, res) => {
  */
 exports.logNftSell = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
     const {
+      walletAddress,
       nftTokenId,
       collectionId,
       transactionHash,
@@ -322,6 +337,10 @@ exports.logNftSell = async (req, res) => {
       buyerWalletAddress,
       metadata
     } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
@@ -392,8 +411,8 @@ exports.logNftSell = async (req, res) => {
  */
 exports.logNftList = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
     const {
+      walletAddress,
       nftTokenId,
       collectionId,
       transactionHash,
@@ -401,6 +420,10 @@ exports.logNftList = async (req, res) => {
       offerId,
       metadata
     } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
@@ -468,14 +491,18 @@ exports.logNftList = async (req, res) => {
  */
 exports.logNftDelist = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
     const {
+      walletAddress,
       nftTokenId,
       collectionId,
       transactionHash,
       offerId,
       metadata
     } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
@@ -541,8 +568,11 @@ exports.logNftDelist = async (req, res) => {
  */
 exports.logPostCreate = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
-    const { postId, metadata } = req.body;
+    const { walletAddress, postId, metadata } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -598,11 +628,11 @@ exports.logPostCreate = async (req, res) => {
 
 /**
  * Get user's activity history
- * @route GET /api/v1/activities/my-activities
+ * @route GET /api/v1/activities/user/:walletAddress
  */
-exports.getMyActivities = async (req, res) => {
+exports.getUserActivities = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
+    const { walletAddress } = req.params;
     const {
       page = 1,
       limit = 20,
@@ -610,6 +640,10 @@ exports.getMyActivities = async (req, res) => {
       month,
       year
     } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const where = { userWalletAddress: walletAddress };
@@ -632,6 +666,7 @@ exports.getMyActivities = async (req, res) => {
 
     res.status(200).json(
       new ApiResponse(200, {
+        walletAddress,
         activities,
         pagination: {
           page: parseInt(page),
@@ -644,6 +679,13 @@ exports.getMyActivities = async (req, res) => {
     );
   } catch (error) {
     logger.error('Error getting user activities:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
     res.status(500).json({
       success: false,
       statusCode: 500,
@@ -653,13 +695,17 @@ exports.getMyActivities = async (req, res) => {
 };
 
 /**
- * Get activity summary for current user
- * @route GET /api/v1/activities/my-summary
+ * Get user's activity summary for scoring
+ * @route GET /api/v1/activities/user/:walletAddress/summary
  */
-exports.getMyActivitySummary = async (req, res) => {
+exports.getUserActivitySummary = async (req, res) => {
   try {
-    const walletAddress = req.user.walletAddress;
+    const { walletAddress } = req.params;
     const { month, year } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     const now = new Date();
     const targetMonth = month ? parseInt(month) : now.getMonth() + 1;
@@ -676,6 +722,7 @@ exports.getMyActivitySummary = async (req, res) => {
 
     res.status(200).json(
       new ApiResponse(200, {
+        walletAddress,
         period: {
           month: targetMonth,
           year: targetYear
@@ -705,6 +752,13 @@ exports.getMyActivitySummary = async (req, res) => {
     );
   } catch (error) {
     logger.error('Error getting activity summary:', error);
+    if (error instanceof ApiError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        statusCode: error.statusCode,
+        message: error.message
+      });
+    }
     res.status(500).json({
       success: false,
       statusCode: 500,
@@ -712,3 +766,7 @@ exports.getMyActivitySummary = async (req, res) => {
     });
   }
 };
+
+// Keep old function names as aliases for backward compatibility
+exports.getMyActivities = exports.getUserActivities;
+exports.getMyActivitySummary = exports.getUserActivitySummary;
