@@ -3,6 +3,7 @@ const app = require('./app');
 const { connectDatabase } = require('./config/sequelize');
 const xrplConfig = require('./config/xrpl');
 const logger = require('./utils/logger');
+const { initScoringJobs } = require('./jobs/scoringJobs');
 
 const PORT = process.env.PORT || 5000;
 
@@ -21,6 +22,14 @@ const startServer = async () => {
     // Connect to XRPL
     await xrplConfig.connect();
 
+    // Initialize and start scoring jobs
+    const models = require('./models');
+    const scoringJobs = initScoringJobs(models);
+    if (process.env.ENABLE_SCORING_JOBS !== 'false') {
+      scoringJobs.start();
+      logger.info('Scoring cron jobs initialized');
+    }
+
     // Start server
     const server = app.listen(PORT, () => {
       logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
@@ -38,6 +47,7 @@ const startServer = async () => {
     // Graceful shutdown
     process.on('SIGTERM', async () => {
       logger.info('SIGTERM signal received: closing HTTP server');
+      scoringJobs.stop();
       server.close(async () => {
         logger.info('HTTP server closed');
         await xrplConfig.disconnect();
@@ -47,6 +57,7 @@ const startServer = async () => {
 
     process.on('SIGINT', async () => {
       logger.info('SIGINT signal received: closing HTTP server');
+      scoringJobs.stop();
       server.close(async () => {
         logger.info('HTTP server closed');
         await xrplConfig.disconnect();

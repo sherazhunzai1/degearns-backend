@@ -16,6 +16,7 @@ const {
   adminRewardsController,
   adminBannerController
 } = require('../controllers/admin');
+const adminScoringController = require('../controllers/admin/adminScoringController');
 
 const xrplConfig = require('../config/xrpl');
 const xrplService = require('../services/xrplService');
@@ -455,5 +456,43 @@ router.put('/banners/:bannerId/toggle', adminBannerController.toggleBannerStatus
 
 // DELETE /admin/banners/:bannerId - Delete banner
 router.delete('/banners/:bannerId', adminBannerController.deleteBanner);
+
+// ============================================
+// SCORING & LEADERBOARD MANAGEMENT ROUTES
+// ============================================
+
+// POST /admin/scoring/recalculate-all - Trigger full score recalculation
+router.post('/scoring/recalculate-all', adminScoringController.recalculateAllScores);
+
+// POST /admin/scoring/recalculate/:walletAddress - Recalculate scores for a specific user
+router.post('/scoring/recalculate/:walletAddress', adminScoringController.recalculateUserScores);
+
+// GET /admin/scoring/jobs/status - Get scoring jobs status
+router.get('/scoring/jobs/status', adminScoringController.getScoringJobsStatus);
+
+// GET /admin/scoring/config - Get scoring configuration
+router.get('/scoring/config', adminScoringController.getScoringConfig);
+
+// GET /admin/scoring/user/:walletAddress - Get detailed user stats with activity log
+router.get('/scoring/user/:walletAddress', adminScoringController.getDetailedUserStats);
+
+// ============================================
+// SUBSCRIPTION MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/subscriptions - Get all subscriptions
+router.get('/subscriptions', adminScoringController.getAllSubscriptions);
+
+// GET /admin/subscriptions/stats - Get subscription statistics
+router.get('/subscriptions/stats', adminScoringController.getSubscriptionStats);
+
+// POST /admin/subscriptions - Create subscription for a user
+router.post('/subscriptions', adminScoringController.createSubscription);
+
+// POST /admin/subscriptions/:subscriptionId/cancel - Cancel subscription
+router.post('/subscriptions/:subscriptionId/cancel', adminScoringController.cancelSubscription);
+
+// POST /admin/subscriptions/:subscriptionId/extend - Extend subscription
+router.post('/subscriptions/:subscriptionId/extend', adminScoringController.extendSubscription);
 
 module.exports = router;

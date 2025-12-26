@@ -1,0 +1,536 @@
+/**
+ * Scoring Engine Service
+ *
+ * Calculates trader, creator, and influencer scores for users.
+ * Applies subscription-based boost multipliers.
+ */
+
+const { Op } = require('sequelize');
+const scoringConfig = require('../config/scoring');
+
+class ScoringEngine {
+  constructor(models) {
+    this.models = models;
+    this.config = scoringConfig;
+
+    // Validate configuration on initialization
+    this.config.validateWeights();
+  }
+
+  /**
+   * Calculate scores for a single user
+   * @param {string} walletAddress - User's wallet address
+   * @returns {Object} Calculated scores
+   */
+  async calculateUserScores(walletAddress) {
+    const { User, UserStats, Subscription, ActivityLog, Follow, Post, PostLike, PostComment, DropMint, Drop, Collection } = this.models;
+
+    // Get or create user stats
+    let userStats = await UserStats.findOne({ where: { userWalletAddress: walletAddress } });
+    if (!userStats) {
+      userStats = await UserStats.create({ userWalletAddress: walletAddress });
+    }
+
+    // Get user's boost multiplier from subscription
+    const boostMultiplier = await Subscription.getUserBoostMultiplier(walletAddress);
+
+    // Calculate date range (rolling 30-day window)
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - this.config.periods.rollingWindowDays);
+
+    // Gather raw metrics
+    const rawMetrics = await this.gatherRawMetrics(walletAddress, startDate, endDate);
+
+    // Get max values for normalization
+    const maxValues = await this.getMaxValuesForNormalization();
+
+    // Normalize metrics
+    const normalizedMetrics = this.normalizeMetrics(rawMetrics, maxValues);
+
+    // Calculate base scores
+    const traderScore = this.calculateTraderScore(normalizedMetrics);
+    const creatorScore = this.calculateCreatorScore(normalizedMetrics);
+    const influencerScore = this.calculateInfluencerScore(normalizedMetrics);
+
+    // Apply boost
+    const boostedTraderScore = traderScore * boostMultiplier;
+    const boostedCreatorScore = creatorScore * boostMultiplier;
+    const boostedInfluencerScore = influencerScore * boostMultiplier;
+
+    // Update user stats
+    await userStats.update({
+      // Raw metrics
+      totalVolumeBought: rawMetrics.volumeBought,
+      totalVolumeSold: rawMetrics.volumeSold,
+      numberOfTrades: rawMetrics.trades,
+      uniqueCollectionsTraded: rawMetrics.uniqueCollections,
+      profitMargin: rawMetrics.profitMargin,
+      totalSalesVolume: rawMetrics.salesVolume,
+      nftsSold: rawMetrics.nftsSold,
+      collectionsCreated: rawMetrics.collections,
+      averageNftPrice: rawMetrics.avgPrice,
+      uniqueBuyers: rawMetrics.uniqueBuyers,
+      followersCount: rawMetrics.followers,
+      totalLikesReceived: rawMetrics.likes,
+      totalCommentsReceived: rawMetrics.comments,
+      postsCreated: rawMetrics.posts,
+      engagementRate: rawMetrics.engagement,
+
+      // Base scores
+      traderScore,
+      creatorScore,
+      influencerScore,
+
+      // Boosted scores
+      boostedTraderScore,
+      boostedCreatorScore,
+      boostedInfluencerScore,
+
+      // Meta
+      currentBoostMultiplier: boostMultiplier,
+      lastCalculatedAt: new Date(),
+      calculationVersion: this.config.algorithmVersion
+    });
+
+    return {
+      walletAddress,
+      rawMetrics,
+      normalizedMetrics,
+      scores: {
+        trader: traderScore,
+        creator: creatorScore,
+        influencer: influencerScore
+      },
+      boostedScores: {
+        trader: boostedTraderScore,
+        creator: boostedCreatorScore,
+        influencer: boostedInfluencerScore
+      },
+      boostMultiplier
+    };
+  }
+
+  /**
+   * Gather raw metrics for a user
+   */
+  async gatherRawMetrics(walletAddress, startDate, endDate) {
+    const { ActivityLog, Follow, Post, PostLike, PostComment, DropMint, Drop, Collection } = this.models;
+
+    // Get aggregated activities
+    const activities = await ActivityLog.aggregateForUser(walletAddress, startDate, endDate);
+
+    // Trader metrics
+    const volumeBought = (activities.nft_buy?.totalAmount || 0) + (activities.nft_mint?.totalAmount || 0);
+    const volumeSold = activities.nft_sell?.totalAmount || 0;
+    const trades = (activities.nft_buy?.count || 0) + (activities.nft_sell?.count || 0);
+    const uniqueCollections = await ActivityLog.getUniqueCollectionsTraded(walletAddress, startDate, endDate);
+
+    // Calculate profit margin
+    let profitMargin = 0;
+    if (volumeBought > 0) {
+      profitMargin = ((volumeSold - volumeBought) / volumeBought) * 100;
+    }
+
+    // Creator metrics
+    const salesVolume = volumeSold;
+    const nftsSold = activities.nft_sell?.count || 0;
+    const collections = await Collection.count({ where: { creatorWalletAddress: walletAddress } });
+    const avgPrice = nftsSold > 0 ? salesVolume / nftsSold : 0;
+    const uniqueBuyers = await ActivityLog.getUniqueBuyersForCreator(walletAddress, startDate, endDate);
+
+    // Influencer metrics
+    const followers = await Follow.count({ where: { followingWalletAddress: walletAddress } });
+
+    // Get likes and comments received on user's posts
+    const userPosts = await Post.findAll({
+      where: { authorWalletAddress: walletAddress },
+      attributes: ['id']
+    });
+    const postIds = userPosts.map(p => p.id);
+
+    let likes = 0;
+    let comments = 0;
+    if (postIds.length > 0) {
+      likes = await PostLike.count({
+        where: {
+          postId: { [Op.in]: postIds },
+          createdAt: { [Op.between]: [startDate, endDate] }
+        }
+      });
+      comments = await PostComment.count({
+        where: {
+          postId: { [Op.in]: postIds },
+          createdAt: { [Op.between]: [startDate, endDate] }
+        }
+      });
+    }
+
+    const posts = await Post.count({
+      where: {
+        authorWalletAddress: walletAddress,
+        createdAt: { [Op.between]: [startDate, endDate] }
+      }
+    });
+
+    // Calculate engagement rate
+    let engagement = 0;
+    if (followers > 0 && posts > 0) {
+      const totalEngagements = likes + comments;
+      engagement = (totalEngagements / (followers * posts)) * 100;
+    }
+
+    return {
+      // Trader
+      volumeBought,
+      volumeSold,
+      trades,
+      uniqueCollections,
+      profitMargin,
+      // Creator
+      salesVolume,
+      nftsSold,
+      collections,
+      avgPrice,
+      uniqueBuyers,
+      // Influencer
+      followers,
+      likes,
+      comments,
+      posts,
+      engagement
+    };
+  }
+
+  /**
+   * Get maximum values across all users for normalization
+   */
+  async getMaxValuesForNormalization() {
+    const { UserStats } = this.models;
+    const { sequelize } = this.models;
+
+    const result = await UserStats.findOne({
+      attributes: [
+        [sequelize.fn('MAX', sequelize.col('totalVolumeBought')), 'maxVolumeBought'],
+        [sequelize.fn('MAX', sequelize.col('totalVolumeSold')), 'maxVolumeSold'],
+        [sequelize.fn('MAX', sequelize.col('numberOfTrades')), 'maxTrades'],
+        [sequelize.fn('MAX', sequelize.col('uniqueCollectionsTraded')), 'maxUniqueCollections'],
+        [sequelize.fn('MAX', sequelize.col('profitMargin')), 'maxProfitMargin'],
+        [sequelize.fn('MAX', sequelize.col('totalSalesVolume')), 'maxSalesVolume'],
+        [sequelize.fn('MAX', sequelize.col('nftsSold')), 'maxNftsSold'],
+        [sequelize.fn('MAX', sequelize.col('collectionsCreated')), 'maxCollections'],
+        [sequelize.fn('MAX', sequelize.col('averageNftPrice')), 'maxAvgPrice'],
+        [sequelize.fn('MAX', sequelize.col('uniqueBuyers')), 'maxUniqueBuyers'],
+        [sequelize.fn('MAX', sequelize.col('followersCount')), 'maxFollowers'],
+        [sequelize.fn('MAX', sequelize.col('totalLikesReceived')), 'maxLikes'],
+        [sequelize.fn('MAX', sequelize.col('totalCommentsReceived')), 'maxComments'],
+        [sequelize.fn('MAX', sequelize.col('postsCreated')), 'maxPosts'],
+        [sequelize.fn('MAX', sequelize.col('engagementRate')), 'maxEngagement']
+      ],
+      raw: true
+    });
+
+    // Ensure we have minimum values to avoid division by zero
+    return {
+      maxVolumeBought: Math.max(parseFloat(result?.maxVolumeBought) || 1, 1),
+      maxVolumeSold: Math.max(parseFloat(result?.maxVolumeSold) || 1, 1),
+      maxTrades: Math.max(parseInt(result?.maxTrades) || 1, 1),
+      maxUniqueCollections: Math.max(parseInt(result?.maxUniqueCollections) || 1, 1),
+      maxProfitMargin: Math.max(parseFloat(result?.maxProfitMargin) || 1, 100),
+      maxSalesVolume: Math.max(parseFloat(result?.maxSalesVolume) || 1, 1),
+      maxNftsSold: Math.max(parseInt(result?.maxNftsSold) || 1, 1),
+      maxCollections: Math.max(parseInt(result?.maxCollections) || 1, 1),
+      maxAvgPrice: Math.max(parseFloat(result?.maxAvgPrice) || 1, 1),
+      maxUniqueBuyers: Math.max(parseInt(result?.maxUniqueBuyers) || 1, 1),
+      maxFollowers: Math.max(parseInt(result?.maxFollowers) || 1, 1),
+      maxLikes: Math.max(parseInt(result?.maxLikes) || 1, 1),
+      maxComments: Math.max(parseInt(result?.maxComments) || 1, 1),
+      maxPosts: Math.max(parseInt(result?.maxPosts) || 1, 1),
+      maxEngagement: Math.max(parseFloat(result?.maxEngagement) || 1, 100)
+    };
+  }
+
+  /**
+   * Normalize metrics to 0-100 scale
+   */
+  normalizeMetrics(rawMetrics, maxValues) {
+    const normalize = (value, max) => {
+      if (!max || max === 0) return 0;
+      return Math.min((value / max) * this.config.normalization.maxScore, this.config.normalization.maxScore);
+    };
+
+    return {
+      volumeBought: normalize(rawMetrics.volumeBought, maxValues.maxVolumeBought),
+      volumeSold: normalize(rawMetrics.volumeSold, maxValues.maxVolumeSold),
+      trades: normalize(rawMetrics.trades, maxValues.maxTrades),
+      uniqueCollections: normalize(rawMetrics.uniqueCollections, maxValues.maxUniqueCollections),
+      profitMargin: normalize(Math.max(0, rawMetrics.profitMargin), maxValues.maxProfitMargin),
+      salesVolume: normalize(rawMetrics.salesVolume, maxValues.maxSalesVolume),
+      nftsSold: normalize(rawMetrics.nftsSold, maxValues.maxNftsSold),
+      collections: normalize(rawMetrics.collections, maxValues.maxCollections),
+      avgPrice: normalize(rawMetrics.avgPrice, maxValues.maxAvgPrice),
+      uniqueBuyers: normalize(rawMetrics.uniqueBuyers, maxValues.maxUniqueBuyers),
+      followers: normalize(rawMetrics.followers, maxValues.maxFollowers),
+      likes: normalize(rawMetrics.likes, maxValues.maxLikes),
+      comments: normalize(rawMetrics.comments, maxValues.maxComments),
+      posts: normalize(rawMetrics.posts, maxValues.maxPosts),
+      engagement: normalize(rawMetrics.engagement, maxValues.maxEngagement)
+    };
+  }
+
+  /**
+   * Calculate trader score from normalized metrics
+   */
+  calculateTraderScore(normalized) {
+    const w = this.config.traderWeights;
+    return (
+      (normalized.volumeBought * w.volumeBought) +
+      (normalized.volumeSold * w.volumeSold) +
+      (normalized.trades * w.trades) +
+      (normalized.uniqueCollections * w.uniqueCollections) +
+      (normalized.profitMargin * w.profitMargin)
+    );
+  }
+
+  /**
+   * Calculate creator score from normalized metrics
+   */
+  calculateCreatorScore(normalized) {
+    const w = this.config.creatorWeights;
+    return (
+      (normalized.salesVolume * w.salesVolume) +
+      (normalized.nftsSold * w.nftsSold) +
+      (normalized.collections * w.collections) +
+      (normalized.avgPrice * w.avgPrice) +
+      (normalized.uniqueBuyers * w.uniqueBuyers)
+    );
+  }
+
+  /**
+   * Calculate influencer score from normalized metrics
+   */
+  calculateInfluencerScore(normalized) {
+    const w = this.config.influencerWeights;
+    return (
+      (normalized.followers * w.followers) +
+      (normalized.likes * w.likes) +
+      (normalized.comments * w.comments) +
+      (normalized.posts * w.posts) +
+      (normalized.engagement * w.engagement)
+    );
+  }
+
+  /**
+   * Recalculate scores for all users
+   * @param {Object} options - Options for batch processing
+   * @returns {Object} Summary of recalculation
+   */
+  async recalculateAllScores(options = {}) {
+    const { User } = this.models;
+    const { batchSize = this.config.periods.batchSize, onProgress = null } = options;
+
+    const startTime = Date.now();
+    let processed = 0;
+    let errors = 0;
+
+    // Get all active users
+    const totalUsers = await User.count({ where: { isBanned: false } });
+    let offset = 0;
+
+    console.log(`Starting score recalculation for ${totalUsers} users...`);
+
+    while (offset < totalUsers) {
+      const users = await User.findAll({
+        where: { isBanned: false },
+        attributes: ['walletAddress'],
+        limit: batchSize,
+        offset
+      });
+
+      // Process batch in parallel
+      const results = await Promise.allSettled(
+        users.map(user => this.calculateUserScores(user.walletAddress))
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          processed++;
+        } else {
+          errors++;
+          console.error('Error calculating scores:', result.reason);
+        }
+      }
+
+      offset += batchSize;
+
+      if (onProgress) {
+        onProgress({ processed, total: totalUsers, errors });
+      }
+    }
+
+    const duration = Date.now() - startTime;
+
+    console.log(`Score recalculation complete: ${processed} processed, ${errors} errors, ${duration}ms`);
+
+    return {
+      processed,
+      errors,
+      total: totalUsers,
+      durationMs: duration
+    };
+  }
+
+  /**
+   * Get leaderboard for a category
+   * @param {string} category - 'trader', 'creator', or 'influencer'
+   * @param {Object} options - Pagination options
+   */
+  async getLeaderboard(category, options = {}) {
+    const { UserStats, User, Subscription } = this.models;
+    const { limit = 100, offset = 0 } = options;
+
+    const scoreField = `boosted${category.charAt(0).toUpperCase() + category.slice(1)}Score`;
+
+    const stats = await UserStats.findAll({
+      where: {
+        [scoreField]: { [Op.gt]: this.config.normalization.minLeaderboardScore }
+      },
+      order: [[scoreField, 'DESC']],
+      limit,
+      offset,
+      raw: true
+    });
+
+    // Enrich with user details
+    const leaderboard = await Promise.all(stats.map(async (stat, index) => {
+      const [user, subscription] = await Promise.all([
+        User.findOne({
+          where: { walletAddress: stat.userWalletAddress },
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }),
+        Subscription.getActiveSubscription(stat.userWalletAddress)
+      ]);
+
+      return {
+        rank: offset + index + 1,
+        walletAddress: stat.userWalletAddress,
+        score: parseFloat(stat[scoreField]),
+        baseScore: parseFloat(stat[`${category}Score`]),
+        boostMultiplier: parseFloat(stat.currentBoostMultiplier),
+        planType: subscription?.planType || 'free',
+        user: user ? user.toJSON() : null,
+        metrics: this.getCategoryMetrics(stat, category)
+      };
+    }));
+
+    return leaderboard;
+  }
+
+  /**
+   * Get category-specific metrics from stats
+   */
+  getCategoryMetrics(stats, category) {
+    switch (category) {
+      case 'trader':
+        return {
+          volumeBought: parseFloat(stats.totalVolumeBought),
+          volumeBoughtXrp: (parseFloat(stats.totalVolumeBought) / 1000000).toFixed(6),
+          volumeSold: parseFloat(stats.totalVolumeSold),
+          volumeSoldXrp: (parseFloat(stats.totalVolumeSold) / 1000000).toFixed(6),
+          trades: parseInt(stats.numberOfTrades),
+          uniqueCollections: parseInt(stats.uniqueCollectionsTraded),
+          profitMargin: parseFloat(stats.profitMargin)
+        };
+      case 'creator':
+        return {
+          salesVolume: parseFloat(stats.totalSalesVolume),
+          salesVolumeXrp: (parseFloat(stats.totalSalesVolume) / 1000000).toFixed(6),
+          nftsSold: parseInt(stats.nftsSold),
+          collections: parseInt(stats.collectionsCreated),
+          avgPrice: parseFloat(stats.averageNftPrice),
+          avgPriceXrp: (parseFloat(stats.averageNftPrice) / 1000000).toFixed(6),
+          uniqueBuyers: parseInt(stats.uniqueBuyers)
+        };
+      case 'influencer':
+        return {
+          followers: parseInt(stats.followersCount),
+          likes: parseInt(stats.totalLikesReceived),
+          comments: parseInt(stats.totalCommentsReceived),
+          posts: parseInt(stats.postsCreated),
+          engagementRate: parseFloat(stats.engagementRate)
+        };
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Get user's rank in each category
+   */
+  async getUserRanks(walletAddress) {
+    const { UserStats } = this.models;
+
+    const userStats = await UserStats.findOne({
+      where: { userWalletAddress: walletAddress }
+    });
+
+    if (!userStats) {
+      return { trader: null, creator: null, influencer: null };
+    }
+
+    const [traderRank, creatorRank, influencerRank] = await Promise.all([
+      UserStats.count({
+        where: {
+          boostedTraderScore: { [Op.gt]: userStats.boostedTraderScore }
+        }
+      }),
+      UserStats.count({
+        where: {
+          boostedCreatorScore: { [Op.gt]: userStats.boostedCreatorScore }
+        }
+      }),
+      UserStats.count({
+        where: {
+          boostedInfluencerScore: { [Op.gt]: userStats.boostedInfluencerScore }
+        }
+      })
+    ]);
+
+    return {
+      trader: traderRank + 1,
+      creator: creatorRank + 1,
+      influencer: influencerRank + 1
+    };
+  }
+
+  /**
+   * Get complete user stats with rankings
+   */
+  async getUserStats(walletAddress) {
+    const { UserStats, Subscription, User } = this.models;
+
+    const [userStats, subscription, user, ranks] = await Promise.all([
+      UserStats.findOne({ where: { userWalletAddress: walletAddress } }),
+      Subscription.getActiveSubscription(walletAddress),
+      User.findOne({
+        where: { walletAddress },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      this.getUserRanks(walletAddress)
+    ]);
+
+    if (!userStats) {
+      return null;
+    }
+
+    return {
+      user: user ? user.toJSON() : null,
+      subscription: subscription ? subscription.toJSON() : { planType: 'free', boostMultiplier: 1.0 },
+      stats: userStats.toJSON(),
+      ranks,
+      lastCalculatedAt: userStats.lastCalculatedAt
+    };
+  }
+}
+
+module.exports = ScoringEngine;
