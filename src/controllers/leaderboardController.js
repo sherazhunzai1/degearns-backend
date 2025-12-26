@@ -2,6 +2,7 @@
  * Leaderboard Controller
  *
  * Handles leaderboard and user stats API endpoints
+ * Supports monthly-based rankings with month/year filtering
  */
 
 const {
@@ -27,12 +28,50 @@ const getScoringEngine = () => {
 };
 
 /**
+ * Parse and validate month/year from query params
+ * Returns current month/year if not specified
+ */
+const parsePeriod = (query) => {
+  const currentPeriod = scoringConfig.getCurrentPeriod();
+
+  let month = query.month ? parseInt(query.month) : currentPeriod.month;
+  let year = query.year ? parseInt(query.year) : currentPeriod.year;
+
+  // Validate month
+  if (month < 1 || month > 12) {
+    month = currentPeriod.month;
+  }
+
+  // Validate year (reasonable range)
+  if (year < 2020 || year > 2100) {
+    year = currentPeriod.year;
+  }
+
+  return { month, year };
+};
+
+/**
+ * Get month name from number
+ */
+const getMonthName = (month) => {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return months[month - 1] || 'Unknown';
+};
+
+/**
  * Get leaderboard for a category
  * GET /leaderboard/:type
+ * Query params: page, limit, month, year
  */
 const getLeaderboard = async (req, res) => {
   const { type } = req.params;
   const { page = 1, limit = 20 } = req.query;
+
+  // Parse period from query
+  const { month, year } = parsePeriod(req.query);
 
   // Validate category type
   const validTypes = ['traders', 'creators', 'influencers'];
@@ -50,7 +89,9 @@ const getLeaderboard = async (req, res) => {
   const scoringEngine = getScoringEngine();
   const leaderboard = await scoringEngine.getLeaderboard(category, {
     limit: parsedLimit,
-    offset
+    offset,
+    month,
+    year
   });
 
   // Get total count for pagination
@@ -63,6 +104,11 @@ const getLeaderboard = async (req, res) => {
 
   res.status(200).json(new ApiResponse(200, {
     category: type,
+    period: {
+      month,
+      year,
+      name: `${getMonthName(month)} ${year}`
+    },
     leaderboard,
     pagination: {
       page: parsedPage,
@@ -71,23 +117,27 @@ const getLeaderboard = async (req, res) => {
       totalPages: Math.ceil(total / parsedLimit),
       hasMore: offset + leaderboard.length < total
     }
-  }, `Top ${type} retrieved successfully`));
+  }, `Top ${type} for ${getMonthName(month)} ${year} retrieved successfully`));
 };
 
 /**
  * Get user stats by wallet address
  * GET /leaderboard/user/:walletAddress
+ * Query params: month, year
  */
 const getUserStats = async (req, res) => {
   const { walletAddress } = req.params;
 
+  // Parse period from query
+  const { month, year } = parsePeriod(req.query);
+
   const scoringEngine = getScoringEngine();
-  const stats = await scoringEngine.getUserStats(walletAddress);
+  const stats = await scoringEngine.getUserStats(walletAddress, month, year);
 
   if (!stats) {
     // If no stats exist, create them
-    await scoringEngine.calculateUserScores(walletAddress);
-    const newStats = await scoringEngine.getUserStats(walletAddress);
+    await scoringEngine.calculateUserScores(walletAddress, month, year);
+    const newStats = await scoringEngine.getUserStats(walletAddress, month, year);
 
     if (!newStats) {
       throw new ApiError(404, 'User not found');
@@ -102,15 +152,24 @@ const getUserStats = async (req, res) => {
 /**
  * Get user's rank in each category
  * GET /leaderboard/user/:walletAddress/ranks
+ * Query params: month, year
  */
 const getUserRanks = async (req, res) => {
   const { walletAddress } = req.params;
 
+  // Parse period from query
+  const { month, year } = parsePeriod(req.query);
+
   const scoringEngine = getScoringEngine();
-  const ranks = await scoringEngine.getUserRanks(walletAddress);
+  const ranks = await scoringEngine.getUserRanks(walletAddress, month, year);
 
   res.status(200).json(new ApiResponse(200, {
     walletAddress,
+    period: {
+      month,
+      year,
+      name: `${getMonthName(month)} ${year}`
+    },
     ranks
   }, 'User ranks retrieved successfully'));
 };
@@ -118,6 +177,7 @@ const getUserRanks = async (req, res) => {
 /**
  * Recalculate scores for authenticated user
  * POST /leaderboard/recalculate
+ * Query params: month, year (optional, defaults to current month)
  */
 const recalculateMyScores = async (req, res) => {
   const walletAddress = req.user?.walletAddress;
@@ -126,10 +186,13 @@ const recalculateMyScores = async (req, res) => {
     throw new ApiError(401, 'Authentication required');
   }
 
-  const scoringEngine = getScoringEngine();
-  const result = await scoringEngine.calculateUserScores(walletAddress);
+  // Parse period from query
+  const { month, year } = parsePeriod(req.query);
 
-  res.status(200).json(new ApiResponse(200, result, 'Scores recalculated successfully'));
+  const scoringEngine = getScoringEngine();
+  const result = await scoringEngine.calculateUserScores(walletAddress, month, year);
+
+  res.status(200).json(new ApiResponse(200, result, `Scores for ${getMonthName(month)} ${year} recalculated successfully`));
 };
 
 /**
@@ -210,8 +273,12 @@ const getMySubscription = async (req, res) => {
 /**
  * Get leaderboard statistics
  * GET /leaderboard/stats
+ * Query params: month, year
  */
 const getLeaderboardStats = async (req, res) => {
+  // Parse period from query
+  const { month, year } = parsePeriod(req.query);
+
   const [
     totalUsers,
     subscribedUsers,
@@ -242,6 +309,11 @@ const getLeaderboardStats = async (req, res) => {
   ]);
 
   res.status(200).json(new ApiResponse(200, {
+    period: {
+      month,
+      year,
+      name: `${getMonthName(month)} ${year}`
+    },
     totalUsers,
     subscribedUsers,
     averageScores: {
@@ -256,15 +328,19 @@ const getLeaderboardStats = async (req, res) => {
 /**
  * Compare two users' stats
  * GET /leaderboard/compare/:walletAddress1/:walletAddress2
+ * Query params: month, year
  */
 const compareUsers = async (req, res) => {
   const { walletAddress1, walletAddress2 } = req.params;
 
+  // Parse period from query
+  const { month, year } = parsePeriod(req.query);
+
   const scoringEngine = getScoringEngine();
 
   const [user1Stats, user2Stats] = await Promise.all([
-    scoringEngine.getUserStats(walletAddress1),
-    scoringEngine.getUserStats(walletAddress2)
+    scoringEngine.getUserStats(walletAddress1, month, year),
+    scoringEngine.getUserStats(walletAddress2, month, year)
   ]);
 
   if (!user1Stats) {
@@ -276,6 +352,11 @@ const compareUsers = async (req, res) => {
   }
 
   res.status(200).json(new ApiResponse(200, {
+    period: {
+      month,
+      year,
+      name: `${getMonthName(month)} ${year}`
+    },
     user1: user1Stats,
     user2: user2Stats,
     comparison: {
@@ -301,6 +382,42 @@ const compareUsers = async (req, res) => {
   }, 'User comparison retrieved successfully'));
 };
 
+/**
+ * Get available periods (months) for historical data
+ * GET /leaderboard/periods
+ */
+const getAvailablePeriods = async (req, res) => {
+  const currentPeriod = scoringConfig.getCurrentPeriod();
+
+  // Generate last 12 months
+  const periods = [];
+  for (let i = 0; i < 12; i++) {
+    let month = currentPeriod.month - i;
+    let year = currentPeriod.year;
+
+    if (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+
+    periods.push({
+      month,
+      year,
+      name: `${getMonthName(month)} ${year}`,
+      isCurrent: i === 0
+    });
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    currentPeriod: {
+      month: currentPeriod.month,
+      year: currentPeriod.year,
+      name: `${getMonthName(currentPeriod.month)} ${currentPeriod.year}`
+    },
+    availablePeriods: periods
+  }, 'Available periods retrieved successfully'));
+};
+
 module.exports = {
   getLeaderboard,
   getUserStats,
@@ -309,5 +426,6 @@ module.exports = {
   getSubscriptionPlans,
   getMySubscription,
   getLeaderboardStats,
-  compareUsers
+  compareUsers,
+  getAvailablePeriods
 };

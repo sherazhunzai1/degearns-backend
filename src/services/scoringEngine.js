@@ -2,7 +2,7 @@
  * Scoring Engine Service
  *
  * Calculates trader, creator, and influencer scores for users.
- * Applies subscription-based boost multipliers.
+ * Uses monthly-based scoring periods with subscription boost multipliers.
  */
 
 const { Op } = require('sequelize');
@@ -18,12 +18,19 @@ class ScoringEngine {
   }
 
   /**
-   * Calculate scores for a single user
+   * Calculate scores for a single user for a specific month
    * @param {string} walletAddress - User's wallet address
+   * @param {number} month - Month (1-12), defaults to current month
+   * @param {number} year - Year, defaults to current year
    * @returns {Object} Calculated scores
    */
-  async calculateUserScores(walletAddress) {
+  async calculateUserScores(walletAddress, month = null, year = null) {
     const { User, UserStats, Subscription, ActivityLog, Follow, Post, PostLike, PostComment, DropMint, Drop, Collection } = this.models;
+
+    // Default to current month/year if not specified
+    const period = this.config.getCurrentPeriod();
+    const targetMonth = month || period.month;
+    const targetYear = year || period.year;
 
     // Get or create user stats
     let userStats = await UserStats.findOne({ where: { userWalletAddress: walletAddress } });
@@ -34,16 +41,14 @@ class ScoringEngine {
     // Get user's boost multiplier from subscription
     const boostMultiplier = await Subscription.getUserBoostMultiplier(walletAddress);
 
-    // Calculate date range (rolling 30-day window)
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - this.config.periods.rollingWindowDays);
+    // Get date range for the specified month
+    const { startDate, endDate } = this.config.getMonthDateRange(targetMonth, targetYear);
 
-    // Gather raw metrics
+    // Gather raw metrics for the month
     const rawMetrics = await this.gatherRawMetrics(walletAddress, startDate, endDate);
 
-    // Get max values for normalization
-    const maxValues = await this.getMaxValuesForNormalization();
+    // Get max values for normalization (for the same month across all users)
+    const maxValues = await this.getMaxValuesForNormalization(targetMonth, targetYear);
 
     // Normalize metrics
     const normalizedMetrics = this.normalizeMetrics(rawMetrics, maxValues);
@@ -95,6 +100,7 @@ class ScoringEngine {
 
     return {
       walletAddress,
+      period: { month: targetMonth, year: targetYear },
       rawMetrics,
       normalizedMetrics,
       scores: {
@@ -112,7 +118,7 @@ class ScoringEngine {
   }
 
   /**
-   * Gather raw metrics for a user
+   * Gather raw metrics for a user within a date range
    */
   async gatherRawMetrics(walletAddress, startDate, endDate) {
     const { ActivityLog, Follow, Post, PostLike, PostComment, DropMint, Drop, Collection } = this.models;
@@ -135,14 +141,32 @@ class ScoringEngine {
     // Creator metrics
     const salesVolume = volumeSold;
     const nftsSold = activities.nft_sell?.count || 0;
-    const collections = await Collection.count({ where: { creatorWalletAddress: walletAddress } });
+
+    // For collections, count those created in the month
+    const collections = await Collection.count({
+      where: {
+        creatorWalletAddress: walletAddress,
+        createdAt: { [Op.between]: [startDate, endDate] }
+      }
+    });
+
     const avgPrice = nftsSold > 0 ? salesVolume / nftsSold : 0;
     const uniqueBuyers = await ActivityLog.getUniqueBuyersForCreator(walletAddress, startDate, endDate);
 
-    // Influencer metrics
-    const followers = await Follow.count({ where: { followingWalletAddress: walletAddress } });
+    // Influencer metrics - new followers gained in the month
+    const newFollowers = await Follow.count({
+      where: {
+        followingWalletAddress: walletAddress,
+        createdAt: { [Op.between]: [startDate, endDate] }
+      }
+    });
 
-    // Get likes and comments received on user's posts
+    // Total followers (for engagement calculation)
+    const totalFollowers = await Follow.count({
+      where: { followingWalletAddress: walletAddress }
+    });
+
+    // Get likes and comments received on user's posts during the month
     const userPosts = await Post.findAll({
       where: { authorWalletAddress: walletAddress },
       attributes: ['id']
@@ -166,6 +190,7 @@ class ScoringEngine {
       });
     }
 
+    // Posts created in the month
     const posts = await Post.count({
       where: {
         authorWalletAddress: walletAddress,
@@ -173,11 +198,11 @@ class ScoringEngine {
       }
     });
 
-    // Calculate engagement rate
+    // Calculate engagement rate for the month
     let engagement = 0;
-    if (followers > 0 && posts > 0) {
+    if (totalFollowers > 0 && posts > 0) {
       const totalEngagements = likes + comments;
-      engagement = (totalEngagements / (followers * posts)) * 100;
+      engagement = (totalEngagements / (totalFollowers * posts)) * 100;
     }
 
     return {
@@ -194,7 +219,8 @@ class ScoringEngine {
       avgPrice,
       uniqueBuyers,
       // Influencer
-      followers,
+      followers: newFollowers, // New followers this month
+      totalFollowers,
       likes,
       comments,
       posts,
@@ -204,8 +230,9 @@ class ScoringEngine {
 
   /**
    * Get maximum values across all users for normalization
+   * Uses current month's data for fair comparison
    */
-  async getMaxValuesForNormalization() {
+  async getMaxValuesForNormalization(month, year) {
     const { UserStats } = this.models;
     const { sequelize } = this.models;
 
@@ -321,13 +348,23 @@ class ScoringEngine {
   }
 
   /**
-   * Recalculate scores for all users
+   * Recalculate scores for all users for a specific month
    * @param {Object} options - Options for batch processing
    * @returns {Object} Summary of recalculation
    */
   async recalculateAllScores(options = {}) {
     const { User } = this.models;
-    const { batchSize = this.config.periods.batchSize, onProgress = null } = options;
+    const {
+      batchSize = this.config.periods.batchSize,
+      onProgress = null,
+      month = null,
+      year = null
+    } = options;
+
+    // Default to current month/year
+    const period = this.config.getCurrentPeriod();
+    const targetMonth = month || period.month;
+    const targetYear = year || period.year;
 
     const startTime = Date.now();
     let processed = 0;
@@ -337,7 +374,7 @@ class ScoringEngine {
     const totalUsers = await User.count({ where: { isBanned: false } });
     let offset = 0;
 
-    console.log(`Starting score recalculation for ${totalUsers} users...`);
+    console.log(`Starting score recalculation for ${totalUsers} users (${targetMonth}/${targetYear})...`);
 
     while (offset < totalUsers) {
       const users = await User.findAll({
@@ -349,7 +386,7 @@ class ScoringEngine {
 
       // Process batch in parallel
       const results = await Promise.allSettled(
-        users.map(user => this.calculateUserScores(user.walletAddress))
+        users.map(user => this.calculateUserScores(user.walletAddress, targetMonth, targetYear))
       );
 
       for (const result of results) {
@@ -376,18 +413,24 @@ class ScoringEngine {
       processed,
       errors,
       total: totalUsers,
-      durationMs: duration
+      durationMs: duration,
+      period: { month: targetMonth, year: targetYear }
     };
   }
 
   /**
-   * Get leaderboard for a category
+   * Get leaderboard for a category for a specific month
    * @param {string} category - 'trader', 'creator', or 'influencer'
-   * @param {Object} options - Pagination options
+   * @param {Object} options - Pagination and period options
    */
   async getLeaderboard(category, options = {}) {
     const { UserStats, User, Subscription } = this.models;
-    const { limit = 100, offset = 0 } = options;
+    const { limit = 100, offset = 0, month = null, year = null } = options;
+
+    // Default to current month/year
+    const period = this.config.getCurrentPeriod();
+    const targetMonth = month || period.month;
+    const targetYear = year || period.year;
 
     const scoreField = `boosted${category.charAt(0).toUpperCase() + category.slice(1)}Score`;
 
@@ -465,9 +508,9 @@ class ScoringEngine {
   }
 
   /**
-   * Get user's rank in each category
+   * Get user's rank in each category for a specific month
    */
-  async getUserRanks(walletAddress) {
+  async getUserRanks(walletAddress, month = null, year = null) {
     const { UserStats } = this.models;
 
     const userStats = await UserStats.findOne({
@@ -504,10 +547,15 @@ class ScoringEngine {
   }
 
   /**
-   * Get complete user stats with rankings
+   * Get complete user stats with rankings for a specific month
    */
-  async getUserStats(walletAddress) {
+  async getUserStats(walletAddress, month = null, year = null) {
     const { UserStats, Subscription, User } = this.models;
+
+    // Default to current month/year
+    const period = this.config.getCurrentPeriod();
+    const targetMonth = month || period.month;
+    const targetYear = year || period.year;
 
     const [userStats, subscription, user, ranks] = await Promise.all([
       UserStats.findOne({ where: { userWalletAddress: walletAddress } }),
@@ -516,7 +564,7 @@ class ScoringEngine {
         where: { walletAddress },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
       }),
-      this.getUserRanks(walletAddress)
+      this.getUserRanks(walletAddress, targetMonth, targetYear)
     ]);
 
     if (!userStats) {
@@ -528,8 +576,27 @@ class ScoringEngine {
       subscription: subscription ? subscription.toJSON() : { planType: 'free', boostMultiplier: 1.0 },
       stats: userStats.toJSON(),
       ranks,
+      period: { month: targetMonth, year: targetYear },
       lastCalculatedAt: userStats.lastCalculatedAt
     };
+  }
+
+  /**
+   * Get month name from month number
+   */
+  getMonthName(month) {
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return months[month - 1] || 'Unknown';
+  }
+
+  /**
+   * Format period for display
+   */
+  formatPeriod(month, year) {
+    return `${this.getMonthName(month)} ${year}`;
   }
 }
 

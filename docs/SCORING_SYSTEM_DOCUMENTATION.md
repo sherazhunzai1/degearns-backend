@@ -2,13 +2,15 @@
 
 ## Summary
 
-The Weighted Scoring Algorithm is a comprehensive ranking system for the DeGearns NFT Marketplace that calculates and ranks users based on their trading, creation, and social influence activities. The system supports subscription-based boost multipliers that give paying users an advantage in the leaderboards.
+The Weighted Scoring Algorithm is a comprehensive **monthly-based** ranking system for the DeGearns NFT Marketplace that calculates and ranks users based on their trading, creation, and social influence activities within each calendar month. The system supports subscription-based boost multipliers that give paying users an advantage in the leaderboards.
 
 ### Key Features
 
+- **Monthly Rankings**: Each month has separate leaderboards for traders, creators, and influencers
 - **Three Scoring Categories**: Traders, Creators, and Influencers
 - **Subscription Tiers**: Free, Basic, Pro, and Premium with increasing boost multipliers
-- **Automated Recalculation**: Hourly cron jobs recalculate all user scores
+- **Automated Recalculation**: Hourly cron jobs recalculate all user scores for the current month
+- **Historical Data**: View past months' rankings via API with month/year parameters
 - **Real-time Leaderboards**: Public API endpoints for accessing rankings
 - **Admin Management**: Full control over subscriptions and manual score recalculation
 
@@ -50,15 +52,21 @@ The Weighted Scoring Algorithm is a comprehensive ranking system for the DeGearn
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Scoring Flow
+### Monthly Scoring Flow
 
-1. **Activity Logging**: User activities (trades, mints, posts, follows, etc.) are logged in the `ActivityLogs` table
-2. **Metrics Aggregation**: The scoring engine aggregates raw metrics from activity logs
+1. **Activity Logging**: User activities (trades, mints, posts, follows, etc.) are logged in the `ActivityLogs` table with timestamps
+2. **Monthly Aggregation**: The scoring engine aggregates raw metrics from activity logs for the specific calendar month
 3. **Normalization**: Metrics are normalized to a 0-100 scale relative to the maximum values in the system
 4. **Weighted Calculation**: Normalized metrics are multiplied by category-specific weights
 5. **Boost Application**: Base scores are multiplied by the user's subscription boost multiplier
-6. **Storage**: Final boosted scores are stored in the `UserStats` table
-7. **Leaderboard**: Users are ranked by their boosted scores in each category
+6. **Storage**: Final boosted scores are stored in the `UserStats` table (updated for current month)
+7. **Monthly Leaderboard**: Users are ranked by their boosted scores in each category for the specific month
+
+### Monthly Reset Behavior
+
+- At the start of each month, scores reset to 0 and are recalculated based on that month's activity
+- Historical rankings are preserved and can be viewed by passing `month` and `year` query parameters
+- Example: View December 2025 rankings with `?month=12&year=2025`
 
 ### Formula
 
@@ -265,9 +273,47 @@ CREATE TABLE ActivityLogs (
 
 ### Public Endpoints
 
+#### Get Available Periods
+
+Get available months for historical leaderboard data.
+
+```
+GET /api/v1/leaderboard/periods
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "data": {
+    "currentPeriod": {
+      "month": 12,
+      "year": 2025,
+      "name": "December 2025"
+    },
+    "availablePeriods": [
+      {
+        "month": 12,
+        "year": 2025,
+        "name": "December 2025",
+        "isCurrent": true
+      },
+      {
+        "month": 11,
+        "year": 2025,
+        "name": "November 2025",
+        "isCurrent": false
+      }
+    ]
+  },
+  "message": "Available periods retrieved successfully"
+}
+```
+
 #### Get Leaderboard
 
-Retrieve rankings for a specific category.
+Retrieve rankings for a specific category and month.
 
 ```
 GET /api/v1/leaderboard/:type
@@ -277,6 +323,8 @@ GET /api/v1/leaderboard/:type
 - `type`: `traders` | `creators` | `influencers`
 - `page` (query): Page number (default: 1)
 - `limit` (query): Results per page (default: 20, max: 100)
+- `month` (query): Month (1-12), defaults to current month
+- `year` (query): Year (e.g., 2025), defaults to current year
 
 **Response:**
 ```json
@@ -285,6 +333,11 @@ GET /api/v1/leaderboard/:type
   "statusCode": 200,
   "data": {
     "category": "traders",
+    "period": {
+      "month": 12,
+      "year": 2025,
+      "name": "December 2025"
+    },
     "leaderboard": [
       {
         "rank": 1,
@@ -324,11 +377,15 @@ GET /api/v1/leaderboard/:type
 
 #### Get User Stats
 
-Retrieve detailed stats for a specific user.
+Retrieve detailed stats for a specific user for a given month.
 
 ```
 GET /api/v1/leaderboard/user/:walletAddress
 ```
+
+**Query Parameters:**
+- `month` (query): Month (1-12), defaults to current month
+- `year` (query): Year (e.g., 2025), defaults to current year
 
 **Response:**
 ```json
@@ -371,11 +428,15 @@ GET /api/v1/leaderboard/user/:walletAddress
 
 #### Get User Ranks
 
-Get a user's rank in each category.
+Get a user's rank in each category for a given month.
 
 ```
 GET /api/v1/leaderboard/user/:walletAddress/ranks
 ```
+
+**Query Parameters:**
+- `month` (query): Month (1-12), defaults to current month
+- `year` (query): Year (e.g., 2025), defaults to current year
 
 **Response:**
 ```json
@@ -384,6 +445,11 @@ GET /api/v1/leaderboard/user/:walletAddress/ranks
   "statusCode": 200,
   "data": {
     "walletAddress": "rXXXX...",
+    "period": {
+      "month": 12,
+      "year": 2025,
+      "name": "December 2025"
+    },
     "ranks": {
       "trader": 1,
       "creator": 15,
@@ -460,11 +526,15 @@ GET /api/v1/leaderboard/plans
 
 #### Get Leaderboard Stats
 
-Get overall leaderboard statistics.
+Get overall leaderboard statistics for a given month.
 
 ```
 GET /api/v1/leaderboard/stats
 ```
+
+**Query Parameters:**
+- `month` (query): Month (1-12), defaults to current month
+- `year` (query): Year (e.g., 2025), defaults to current year
 
 **Response:**
 ```json
@@ -472,6 +542,11 @@ GET /api/v1/leaderboard/stats
   "success": true,
   "statusCode": 200,
   "data": {
+    "period": {
+      "month": 12,
+      "year": 2025,
+      "name": "December 2025"
+    },
     "totalUsers": 5000,
     "subscribedUsers": 250,
     "averageScores": {
@@ -487,11 +562,15 @@ GET /api/v1/leaderboard/stats
 
 #### Compare Users
 
-Compare stats between two users.
+Compare stats between two users for a given month.
 
 ```
 GET /api/v1/leaderboard/compare/:walletAddress1/:walletAddress2
 ```
+
+**Query Parameters:**
+- `month` (query): Month (1-12), defaults to current month
+- `year` (query): Year (e.g., 2025), defaults to current year
 
 **Response:**
 ```json
@@ -499,6 +578,11 @@ GET /api/v1/leaderboard/compare/:walletAddress1/:walletAddress2
   "success": true,
   "statusCode": 200,
   "data": {
+    "period": {
+      "month": 12,
+      "year": 2025,
+      "name": "December 2025"
+    },
     "user1": { /* full user stats */ },
     "user2": { /* full user stats */ },
     "comparison": {
@@ -536,12 +620,16 @@ Authorization: Bearer <token>
 
 #### Recalculate My Scores
 
-Trigger score recalculation for the authenticated user.
+Trigger score recalculation for the authenticated user for a specific month.
 
 ```
 POST /api/v1/leaderboard/recalculate
 Authorization: Bearer <token>
 ```
+
+**Query Parameters:**
+- `month` (query): Month (1-12), defaults to current month
+- `year` (query): Year (e.g., 2025), defaults to current year
 
 ### Admin Endpoints
 
@@ -759,9 +847,9 @@ module.exports = {
     engagement: 0.20
   },
 
-  // Scoring periods
+  // Scoring periods (monthly-based)
   periods: {
-    rollingWindowDays: 30,
+    useMonthlyPeriod: true,
     recalculationIntervalMs: 3600000,
     batchSize: 100
   },
@@ -885,6 +973,6 @@ This will create the following tables:
 1. **Redis Caching**: Add Redis for caching leaderboards for faster queries
 2. **Real-time Updates**: WebSocket notifications for rank changes
 3. **Custom Weights**: Allow admin to adjust weights from dashboard
-4. **Seasonal Leaderboards**: Monthly/quarterly leaderboard resets
+4. **Yearly Leaderboards**: Aggregate yearly rankings across all months
 5. **Subscription Payments**: Integrate XRPL payment processing for subscriptions
 6. **Achievement Badges**: Add achievement system based on scoring milestones
