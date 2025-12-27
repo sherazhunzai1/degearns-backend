@@ -10,9 +10,10 @@ The Subscription APIs provide comprehensive functionality for managing user subs
 
 1. [Subscription Tiers](#subscription-tiers)
 2. [Boost Status](#boost-status)
-3. [User Subscription](#user-subscription)
-4. [Admin Subscription Management](#admin-subscription-management)
-5. [Data Models](#data-models)
+3. [User Subscription (Leaderboard)](#user-subscription)
+4. [Subscription Management (User)](#subscription-management-user)
+5. [Admin Subscription Management](#admin-subscription-management)
+6. [Data Models](#data-models)
 
 ---
 
@@ -841,6 +842,266 @@ GET /api/v1/leaderboard/plans
   "success": true
 }
 ```
+
+---
+
+## Subscription Management (User)
+
+Authenticated endpoints for users to manage their own subscriptions.
+
+**Base URL:** `/api/v1/subscription-tiers`
+
+### Get My Subscription
+
+Retrieves the current user's subscription with full tier details.
+
+```
+GET /api/v1/subscription-tiers/my-subscription
+```
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Response (With Subscription):**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "hasActiveSubscription": true,
+    "subscription": {
+      "id": "uuid-here",
+      "userWalletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "planType": "pro",
+      "startDate": "2025-01-01T00:00:00.000Z",
+      "endDate": "2025-02-01T00:00:00.000Z",
+      "isActive": true,
+      "boostMultiplier": 1.2,
+      "remainingDays": 25
+    },
+    "currentTier": {
+      "name": "pro",
+      "displayName": "Pro",
+      "description": "Professional tools for serious creators",
+      "boostMultiplier": 1.2,
+      "boostPercentage": 20,
+      "features": [...],
+      "color": "#8B5CF6",
+      "icon": "zap",
+      "badge": "Most Popular"
+    }
+  },
+  "message": "Subscription retrieved successfully",
+  "success": true
+}
+```
+
+**Response (No Subscription):**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "hasActiveSubscription": false,
+    "currentTier": {
+      "name": "free",
+      "displayName": "Free",
+      "boostMultiplier": 1.0,
+      "boostPercentage": 0
+    }
+  },
+  "message": "No active subscription",
+  "success": true
+}
+```
+
+---
+
+### Get Upgrade Options
+
+Retrieves available upgrade options based on the user's current subscription.
+
+```
+GET /api/v1/subscription-tiers/upgrade-options
+```
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Response:**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "currentPlan": {
+      "name": "basic",
+      "displayName": "Basic",
+      "boostMultiplier": 1.1,
+      "expiresAt": "2025-02-15T00:00:00.000Z",
+      "remainingDays": 20
+    },
+    "upgradeOptions": [
+      {
+        "name": "pro",
+        "displayName": "Pro",
+        "description": "Professional tools for serious creators",
+        "boostMultiplier": 1.2,
+        "boostPercentage": 20,
+        "monthlyPriceXrp": 25.00,
+        "yearlyPriceXrp": 250.00,
+        "features": [...],
+        "isUpgrade": true,
+        "upgradeFrom": "basic",
+        "boostIncrease": "+10%",
+        "badge": "Most Popular"
+      },
+      {
+        "name": "premium",
+        "displayName": "Premium",
+        "description": "Maximum visibility and exclusive benefits",
+        "boostMultiplier": 1.3,
+        "boostPercentage": 30,
+        "monthlyPriceXrp": 50.00,
+        "yearlyPriceXrp": 500.00,
+        "features": [...],
+        "isUpgrade": true,
+        "upgradeFrom": "basic",
+        "boostIncrease": "+20%",
+        "badge": "Best Value"
+      }
+    ],
+    "canUpgrade": true
+  },
+  "message": "Upgrade options retrieved successfully",
+  "success": true
+}
+```
+
+---
+
+### Subscribe to a Plan
+
+Subscribe to a new plan or upgrade from current subscription.
+
+```
+POST /api/v1/subscription-tiers/subscribe
+```
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Request Body:**
+```json
+{
+  "planType": "pro",
+  "billingCycle": "monthly",
+  "paymentTransactionHash": "ABCD1234567890EFGH...",
+  "paymentAmount": "25000000"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `planType` | string | Yes | Plan to subscribe to: `basic`, `pro`, or `premium` |
+| `billingCycle` | string | No | Billing cycle: `monthly` (default) or `yearly` |
+| `paymentTransactionHash` | string | Yes | XRPL payment transaction hash |
+| `paymentAmount` | string | No | Amount paid in drops |
+
+**Response:**
+```json
+{
+  "statusCode": 201,
+  "data": {
+    "subscription": {
+      "id": "new-uuid-here",
+      "userWalletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "planType": "pro",
+      "startDate": "2025-01-27T00:00:00.000Z",
+      "endDate": "2025-02-26T00:00:00.000Z",
+      "isActive": true,
+      "boostMultiplier": 1.2,
+      "remainingDays": 30,
+      "paymentTransactionHash": "ABCD1234567890EFGH..."
+    },
+    "tier": {
+      "name": "pro",
+      "displayName": "Pro",
+      "boostMultiplier": 1.2,
+      "boostPercentage": 20,
+      "features": [...]
+    },
+    "message": "Successfully subscribed to Pro"
+  },
+  "message": "Subscription created successfully",
+  "success": true
+}
+```
+
+**Error Responses:**
+
+| Status | Message |
+|--------|---------|
+| 400 | Invalid plan type. Must be basic, pro, or premium |
+| 400 | Payment transaction hash is required |
+| 400 | Selected plan is not available |
+| 401 | Authentication required |
+
+---
+
+### Cancel Subscription
+
+Cancel the current active subscription.
+
+```
+POST /api/v1/subscription-tiers/cancel
+```
+
+**Headers:**
+```
+Authorization: Bearer <jwt_token>
+```
+
+**Request Body:**
+```json
+{
+  "reason": "No longer needed"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | No | Cancellation reason |
+
+**Response:**
+```json
+{
+  "statusCode": 200,
+  "data": {
+    "subscription": {
+      "id": "uuid-here",
+      "userWalletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "planType": "pro",
+      "isActive": false,
+      "cancelledAt": "2025-01-27T12:00:00.000Z",
+      "cancelReason": "No longer needed"
+    },
+    "message": "Subscription cancelled successfully. You will retain access until the end of your billing period."
+  },
+  "message": "Subscription cancelled successfully",
+  "success": true
+}
+```
+
+**Error Responses:**
+
+| Status | Message |
+|--------|---------|
+| 401 | Authentication required |
+| 404 | No active subscription found |
 
 ---
 
