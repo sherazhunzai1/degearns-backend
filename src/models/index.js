@@ -26,6 +26,7 @@ const Group = require('./Group')(sequelize, DataTypes);
 const GroupMember = require('./GroupMember')(sequelize, DataTypes);
 const GroupMessage = require('./GroupMessage')(sequelize, DataTypes);
 const Subscription = require('./Subscription')(sequelize, DataTypes);
+const SubscriptionTier = require('./SubscriptionTier')(sequelize, DataTypes);
 const UserStats = require('./UserStats')(sequelize, DataTypes);
 const ActivityLog = require('./ActivityLog')(sequelize, DataTypes);
 
@@ -450,6 +451,7 @@ module.exports = {
   GroupMember,
   GroupMessage,
   Subscription,
+  SubscriptionTier,
   UserStats,
   ActivityLog
 };

@@ -16,6 +16,7 @@ const bannerRoutes = require('./bannerRoutes');
 const leaderboardRoutes = require('./leaderboardRoutes');
 const activityRoutes = require('./activityRoutes');
 const boostRoutes = require('./boostRoutes');
+const subscriptionTierRoutes = require('./subscriptionTierRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -33,6 +34,7 @@ router.use('/banners', bannerRoutes);
 router.use('/leaderboard', leaderboardRoutes);
 router.use('/activities', activityRoutes);
 router.use('/boost', boostRoutes);
+router.use('/subscription-tiers', subscriptionTierRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
