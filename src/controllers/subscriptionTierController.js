@@ -7,7 +7,7 @@
  * - Compare tiers
  */
 
-const { SubscriptionTier, Subscription, User, UserStats, sequelize } = require('../models');
+const { SubscriptionTier, Subscription, User, UserStats, AdminWallet, sequelize } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const ScoringEngine = require('../services/scoringEngine');
@@ -411,6 +411,7 @@ const cancelMySubscription = async (req, res, next) => {
 /**
  * Get upgrade options for current user
  * Shows available upgrades based on current subscription
+ * Includes payment wallet address for subscription payments
  */
 const getUpgradeOptions = async (req, res, next) => {
   try {
@@ -425,6 +426,15 @@ const getUpgradeOptions = async (req, res, next) => {
 
     // Get all active tiers
     const allTiers = await SubscriptionTier.getActiveTiers();
+
+    // Get the subscription payment wallet
+    const paymentWallet = await AdminWallet.findOne({
+      where: {
+        type: 'subscriptions',
+        isActive: true
+      },
+      attributes: ['walletAddress', 'label']
+    });
 
     // Determine which tiers are upgrades
     const tierOrder = { free: 0, basic: 1, pro: 2, premium: 3 };
@@ -451,7 +461,11 @@ const getUpgradeOptions = async (req, res, next) => {
           remainingDays: currentSubscription?.getRemainingDays() || null
         },
         upgradeOptions,
-        canUpgrade: upgradeOptions.length > 0
+        canUpgrade: upgradeOptions.length > 0,
+        paymentWallet: paymentWallet ? {
+          walletAddress: paymentWallet.walletAddress,
+          label: paymentWallet.label || 'Subscription Payments'
+        } : null
       }, 'Upgrade options retrieved successfully')
     );
   } catch (error) {

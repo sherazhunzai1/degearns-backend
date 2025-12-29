@@ -919,7 +919,7 @@ Authorization: Bearer <jwt_token>
 
 ### Get Upgrade Options
 
-Retrieves available upgrade options based on the user's current subscription.
+Retrieves available upgrade options based on the user's current subscription. Includes the payment wallet address where subscription payments should be sent.
 
 ```
 GET /api/v1/subscription-tiers/upgrade-options
@@ -972,12 +972,18 @@ Authorization: Bearer <jwt_token>
         "badge": "Best Value"
       }
     ],
-    "canUpgrade": true
+    "canUpgrade": true,
+    "paymentWallet": {
+      "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      "label": "Subscription Payments"
+    }
   },
   "message": "Upgrade options retrieved successfully",
   "success": true
 }
 ```
+
+**Note:** The `paymentWallet` field contains the XRPL wallet address where subscription payments should be sent. This wallet is configured via the Admin Wallets API with type `subscriptions`. If no subscription wallet is configured, `paymentWallet` will be `null`.
 
 ---
 
