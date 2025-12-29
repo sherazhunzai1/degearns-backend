@@ -12,7 +12,7 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Admin wallet address'
     },
     type: {
-      type: DataTypes.ENUM('platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'other'),
+      type: DataTypes.ENUM('platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'rewards', 'other'),
       allowNull: false,
       comment: 'Purpose of this admin wallet'
     },
