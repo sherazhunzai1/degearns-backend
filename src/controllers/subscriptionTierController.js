@@ -202,14 +202,14 @@ const getTierFeatures = async (req, res, next) => {
 };
 
 /**
- * Get authenticated user's current subscription
+ * Get user's current subscription by wallet address
  */
 const getMySubscription = async (req, res, next) => {
   try {
-    const walletAddress = req.user?.walletAddress;
+    const walletAddress = req.query.walletAddress || req.body.walletAddress;
 
     if (!walletAddress) {
-      throw new ApiError(401, 'Authentication required');
+      throw new ApiError(400, 'Wallet address is required');
     }
 
     const subscription = await Subscription.getActiveSubscription(walletAddress);
@@ -252,18 +252,17 @@ const getMySubscription = async (req, res, next) => {
  */
 const subscribeToPlan = async (req, res, next) => {
   try {
-    const walletAddress = req.user?.walletAddress;
-
-    if (!walletAddress) {
-      throw new ApiError(401, 'Authentication required');
-    }
-
     const {
+      walletAddress,
       planType,
       billingCycle = 'monthly',
       paymentTransactionHash,
       paymentAmount
     } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
 
     // Validate plan type
     if (!planType || !['basic', 'pro', 'premium'].includes(planType)) {
@@ -365,13 +364,11 @@ const subscribeToPlan = async (req, res, next) => {
  */
 const cancelMySubscription = async (req, res, next) => {
   try {
-    const walletAddress = req.user?.walletAddress;
+    const { walletAddress, reason } = req.body;
 
     if (!walletAddress) {
-      throw new ApiError(401, 'Authentication required');
+      throw new ApiError(400, 'Wallet address is required');
     }
-
-    const { reason } = req.body;
 
     const subscription = await Subscription.getActiveSubscription(walletAddress);
 
@@ -409,16 +406,16 @@ const cancelMySubscription = async (req, res, next) => {
 };
 
 /**
- * Get upgrade options for current user
+ * Get upgrade options for user
  * Shows available upgrades based on current subscription
  * Includes payment wallet address for subscription payments
  */
 const getUpgradeOptions = async (req, res, next) => {
   try {
-    const walletAddress = req.user?.walletAddress;
+    const walletAddress = req.query.walletAddress || req.body.walletAddress;
 
     if (!walletAddress) {
-      throw new ApiError(401, 'Authentication required');
+      throw new ApiError(400, 'Wallet address is required');
     }
 
     const currentSubscription = await Subscription.getActiveSubscription(walletAddress);
