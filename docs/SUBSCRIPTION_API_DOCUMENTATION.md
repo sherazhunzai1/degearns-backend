@@ -847,22 +847,23 @@ GET /api/v1/leaderboard/plans
 
 ## Subscription Management (User)
 
-Authenticated endpoints for users to manage their own subscriptions.
+Public endpoints for users to manage their own subscriptions. No JWT authentication required - wallet address is passed as a parameter.
 
 **Base URL:** `/api/v1/subscription-tiers`
 
 ### Get My Subscription
 
-Retrieves the current user's subscription with full tier details.
+Retrieves the user's subscription with full tier details.
 
 ```
-GET /api/v1/subscription-tiers/my-subscription
+GET /api/v1/subscription-tiers/my-subscription?walletAddress=rXXXXXX...
 ```
 
-**Headers:**
-```
-Authorization: Bearer <jwt_token>
-```
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's XRPL wallet address |
 
 **Response (With Subscription):**
 ```json
@@ -922,13 +923,14 @@ Authorization: Bearer <jwt_token>
 Retrieves available upgrade options based on the user's current subscription. Includes the payment wallet address where subscription payments should be sent.
 
 ```
-GET /api/v1/subscription-tiers/upgrade-options
+GET /api/v1/subscription-tiers/upgrade-options?walletAddress=rXXXXXX...
 ```
 
-**Headers:**
-```
-Authorization: Bearer <jwt_token>
-```
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's XRPL wallet address |
 
 **Response:**
 ```json
@@ -995,14 +997,10 @@ Subscribe to a new plan or upgrade from current subscription.
 POST /api/v1/subscription-tiers/subscribe
 ```
 
-**Headers:**
-```
-Authorization: Bearer <jwt_token>
-```
-
 **Request Body:**
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "planType": "pro",
   "billingCycle": "monthly",
   "paymentTransactionHash": "ABCD1234567890EFGH...",
@@ -1012,6 +1010,7 @@ Authorization: Bearer <jwt_token>
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's XRPL wallet address |
 | `planType` | string | Yes | Plan to subscribe to: `basic`, `pro`, or `premium` |
 | `billingCycle` | string | No | Billing cycle: `monthly` (default) or `yearly` |
 | `paymentTransactionHash` | string | Yes | XRPL payment transaction hash |
@@ -1051,10 +1050,10 @@ Authorization: Bearer <jwt_token>
 
 | Status | Message |
 |--------|---------|
+| 400 | Wallet address is required |
 | 400 | Invalid plan type. Must be basic, pro, or premium |
 | 400 | Payment transaction hash is required |
 | 400 | Selected plan is not available |
-| 401 | Authentication required |
 
 ---
 
@@ -1066,20 +1065,17 @@ Cancel the current active subscription.
 POST /api/v1/subscription-tiers/cancel
 ```
 
-**Headers:**
-```
-Authorization: Bearer <jwt_token>
-```
-
 **Request Body:**
 ```json
 {
+  "walletAddress": "rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
   "reason": "No longer needed"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `walletAddress` | string | Yes | User's XRPL wallet address |
 | `reason` | string | No | Cancellation reason |
 
 **Response:**
@@ -1106,7 +1102,7 @@ Authorization: Bearer <jwt_token>
 
 | Status | Message |
 |--------|---------|
-| 401 | Authentication required |
+| 400 | Wallet address is required |
 | 404 | No active subscription found |
 
 ---
