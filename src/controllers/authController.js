@@ -1,7 +1,6 @@
 const { User } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
-const { generateToken } = require('../middleware/auth');
 const logger = require('../utils/logger');
 
 /**
@@ -23,6 +22,16 @@ const getOrCreateUser = async (req, res, next) => {
 
     let isNewUser = false;
 
+    // If user exists, check if they are banned
+    if (user && user.isBanned) {
+      logger.warn(`Banned user attempted to authenticate: ${walletAddress}`);
+      throw new ApiError(403, 'Your account has been banned', {
+        isBanned: true,
+        banReason: user.banReason || 'No reason provided',
+        bannedAt: user.bannedAt
+      });
+    }
+
     // If user doesn't exist, create new user with wallet address as default username
     if (!user) {
       user = await User.create({
@@ -35,15 +44,11 @@ const getOrCreateUser = async (req, res, next) => {
       logger.info(`New user created with wallet: ${walletAddress}`);
     }
 
-    // Generate JWT token
-    const token = generateToken(user.id, user.walletAddress);
-
     logger.info(`User authenticated: ${walletAddress}`);
 
     res.status(200).json(
       new ApiResponse(200, {
         user,
-        token,
         isNewUser
       }, 'User authenticated successfully')
     );
