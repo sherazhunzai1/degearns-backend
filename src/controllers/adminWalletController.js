@@ -18,7 +18,7 @@ const createAdminWallet = async (req, res, next) => {
       throw new ApiError(400, 'Wallet type is required');
     }
 
-    const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'other'];
+    const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'rewards', 'other'];
     if (!validTypes.includes(type)) {
       throw new ApiError(400, `Invalid type. Must be one of: ${validTypes.join(', ')}`);
     }
@@ -107,7 +107,7 @@ const getAdminWalletByType = async (req, res, next) => {
   try {
     const { type } = req.params;
 
-    const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'other'];
+    const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'rewards', 'other'];
     if (!validTypes.includes(type)) {
       throw new ApiError(400, `Invalid type. Must be one of: ${validTypes.join(', ')}`);
     }

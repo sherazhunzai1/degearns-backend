@@ -939,7 +939,7 @@ const upsertAdminWallet = async (req, res) => {
     throw new ApiError(400, 'Wallet type is required');
   }
 
-  const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'rewards', 'other'];
+  const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'rewards', 'other'];
   if (!validTypes.includes(type)) {
     throw new ApiError(400, `Invalid type. Must be one of: ${validTypes.join(', ')}`);
   }
