@@ -474,26 +474,33 @@ const getExploreDrops = async (req, res, next) => {
       where: {
         // Only fetch active or scheduled drops (exclude ended, paused, sold_out, draft)
         status: { [Op.in]: ['active', 'scheduled'] },
-        // End date must be greater than or equal to current date (or null for no end date)
-        // This ensures drops whose end date has passed are NOT fetched
-        [Op.or]: [
-          { endDate: null },
-          { endDate: { [Op.gte]: now } }
-        ],
-        // Start date must be either:
-        // 1. Less than or equal to now (live)
-        // 2. Within the next 10 days (coming soon)
-        // 3. Null (no start date = live)
-        [Op.or]: [
-          { startDate: null },
-          { startDate: { [Op.lte]: now } },
+        // Combine endDate and startDate filters using Op.and to avoid key collision
+        [Op.and]: [
+          // End date must be greater than or equal to current date (or null for no end date)
+          // This ensures drops whose end date has passed are NOT fetched
           {
-            startDate: {
-              [Op.and]: [
-                { [Op.gt]: now },
-                { [Op.lte]: tenDaysFromNow }
-              ]
-            }
+            [Op.or]: [
+              { endDate: null },
+              { endDate: { [Op.gte]: now } }
+            ]
+          },
+          // Start date must be either:
+          // 1. Less than or equal to now (live)
+          // 2. Within the next 10 days (coming soon)
+          // 3. Null (no start date = live)
+          {
+            [Op.or]: [
+              { startDate: null },
+              { startDate: { [Op.lte]: now } },
+              {
+                startDate: {
+                  [Op.and]: [
+                    { [Op.gt]: now },
+                    { [Op.lte]: tenDaysFromNow }
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
