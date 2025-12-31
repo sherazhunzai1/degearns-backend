@@ -2927,9 +2927,20 @@ const getDropDashboardByTaxon = async (req, res, next) => {
     // Determine launch status based on workflow progress
     let launchStatus;
     let launchStatusCode;
+    const now = new Date();
+    const endDate = drop.endDate ? new Date(drop.endDate) : null;
+    const startDate = drop.startDate ? new Date(drop.startDate) : null;
 
-    if (drop.isMintingEnabled && drop.status === 'active') {
-      // Minting is enabled and drop is active
+    // Check if drop has ended (time expired)
+    if (endDate && endDate < now) {
+      launchStatus = 'time ends';
+      launchStatusCode = 7;
+    } else if (drop.isSoldOut()) {
+      // Check if sold out
+      launchStatus = 'sold out';
+      launchStatusCode = 8;
+    } else if (drop.isMintingEnabled && drop.status === 'active' && (!startDate || startDate <= now)) {
+      // Minting is enabled, drop is active, and start time has passed
       launchStatus = 'live';
       launchStatusCode = 6;
     } else if (drop.totalSupply === 0) {
@@ -2948,6 +2959,10 @@ const getDropDashboardByTaxon = async (req, res, next) => {
       // Fees paid but pricing/schedule not configured
       launchStatus = 'waiting for price details and schedule dates';
       launchStatusCode = 4;
+    } else if (startDate && startDate > now) {
+      // Everything configured but start time hasn't arrived yet
+      launchStatus = 'scheduled';
+      launchStatusCode = 9;
     } else {
       // Everything configured, ready to launch
       launchStatus = 'ready for launch';
