@@ -475,6 +475,205 @@ class NotificationService {
     }
   }
 
+  // ==================== SUBSCRIPTION NOTIFICATIONS ====================
+
+  /**
+   * Create a notification when user subscribes to a plan
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.subscriptionId - ID of the subscription
+   * @param {string} params.walletAddress - Wallet address of the subscriber
+   * @param {string} params.planType - Type of plan subscribed to (basic, pro, premium)
+   * @param {string} params.planDisplayName - Display name of the plan
+   * @param {number} params.boostPercentage - Boost percentage of the plan
+   * @param {string} params.billingCycle - Billing cycle (monthly, yearly)
+   * @param {Date} params.endDate - Subscription end date
+   */
+  async createSubscriptionCreatedNotification({ subscriptionId, walletAddress, planType, planDisplayName, boostPercentage, billingCycle, endDate }) {
+    try {
+      const notification = await this.Notification.create({
+        recipientWalletAddress: walletAddress,
+        senderWalletAddress: walletAddress, // System notification, sender is self
+        type: 'subscription_created',
+        title: 'Subscription Activated',
+        message: `Welcome to ${planDisplayName}! You now have a ${boostPercentage}% score boost.`,
+        relatedEntityId: subscriptionId,
+        relatedEntityType: 'subscription',
+        metadata: {
+          subscriptionId,
+          planType,
+          planDisplayName,
+          boostPercentage,
+          billingCycle,
+          endDate: endDate ? endDate.toISOString() : null
+        }
+      });
+
+      logger.info(`Subscription created notification sent to ${walletAddress} for ${planType} plan`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating subscription created notification:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Create a notification when user upgrades their subscription
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.subscriptionId - ID of the new subscription
+   * @param {string} params.walletAddress - Wallet address of the subscriber
+   * @param {string} params.previousPlan - Previous plan type
+   * @param {string} params.newPlan - New plan type
+   * @param {string} params.newPlanDisplayName - Display name of the new plan
+   * @param {number} params.previousBoost - Previous boost percentage
+   * @param {number} params.newBoost - New boost percentage
+   * @param {Date} params.endDate - Subscription end date
+   */
+  async createSubscriptionUpgradedNotification({ subscriptionId, walletAddress, previousPlan, newPlan, newPlanDisplayName, previousBoost, newBoost, endDate }) {
+    try {
+      const boostIncrease = newBoost - previousBoost;
+
+      const notification = await this.Notification.create({
+        recipientWalletAddress: walletAddress,
+        senderWalletAddress: walletAddress,
+        type: 'subscription_upgraded',
+        title: 'Subscription Upgraded',
+        message: `Congratulations! You've upgraded to ${newPlanDisplayName}. Your score boost increased by ${boostIncrease}%.`,
+        relatedEntityId: subscriptionId,
+        relatedEntityType: 'subscription',
+        metadata: {
+          subscriptionId,
+          previousPlan,
+          newPlan,
+          newPlanDisplayName,
+          previousBoost,
+          newBoost,
+          boostIncrease,
+          endDate: endDate ? endDate.toISOString() : null
+        }
+      });
+
+      logger.info(`Subscription upgraded notification sent to ${walletAddress}: ${previousPlan} -> ${newPlan}`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating subscription upgraded notification:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Create a notification when user cancels their subscription
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.subscriptionId - ID of the cancelled subscription
+   * @param {string} params.walletAddress - Wallet address of the subscriber
+   * @param {string} params.planType - Type of plan that was cancelled
+   * @param {string} params.planDisplayName - Display name of the plan
+   * @param {Date} params.accessUntil - Date until which access is retained
+   */
+  async createSubscriptionCancelledNotification({ subscriptionId, walletAddress, planType, planDisplayName, accessUntil }) {
+    try {
+      const formattedDate = accessUntil ? new Date(accessUntil).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      }) : 'the end of your billing period';
+
+      const notification = await this.Notification.create({
+        recipientWalletAddress: walletAddress,
+        senderWalletAddress: walletAddress,
+        type: 'subscription_cancelled',
+        title: 'Subscription Cancelled',
+        message: `Your ${planDisplayName} subscription has been cancelled. You'll retain access until ${formattedDate}.`,
+        relatedEntityId: subscriptionId,
+        relatedEntityType: 'subscription',
+        metadata: {
+          subscriptionId,
+          planType,
+          planDisplayName,
+          accessUntil: accessUntil ? accessUntil.toISOString() : null
+        }
+      });
+
+      logger.info(`Subscription cancelled notification sent to ${walletAddress} for ${planType} plan`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating subscription cancelled notification:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Create a notification when subscription is about to expire (for cron job use)
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.subscriptionId - ID of the subscription
+   * @param {string} params.walletAddress - Wallet address of the subscriber
+   * @param {string} params.planType - Type of plan
+   * @param {string} params.planDisplayName - Display name of the plan
+   * @param {number} params.daysRemaining - Days until expiration
+   * @param {Date} params.endDate - Subscription end date
+   */
+  async createSubscriptionExpiringNotification({ subscriptionId, walletAddress, planType, planDisplayName, daysRemaining, endDate }) {
+    try {
+      const notification = await this.Notification.create({
+        recipientWalletAddress: walletAddress,
+        senderWalletAddress: walletAddress,
+        type: 'subscription_expiring',
+        title: 'Subscription Expiring Soon',
+        message: `Your ${planDisplayName} subscription expires in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}. Renew now to keep your benefits!`,
+        relatedEntityId: subscriptionId,
+        relatedEntityType: 'subscription',
+        metadata: {
+          subscriptionId,
+          planType,
+          planDisplayName,
+          daysRemaining,
+          endDate: endDate ? endDate.toISOString() : null
+        }
+      });
+
+      logger.info(`Subscription expiring notification sent to ${walletAddress} - ${daysRemaining} days remaining`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating subscription expiring notification:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Create a notification when subscription has expired (for cron job use)
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.subscriptionId - ID of the expired subscription
+   * @param {string} params.walletAddress - Wallet address of the subscriber
+   * @param {string} params.planType - Type of plan that expired
+   * @param {string} params.planDisplayName - Display name of the plan
+   */
+  async createSubscriptionExpiredNotification({ subscriptionId, walletAddress, planType, planDisplayName }) {
+    try {
+      const notification = await this.Notification.create({
+        recipientWalletAddress: walletAddress,
+        senderWalletAddress: walletAddress,
+        type: 'subscription_expired',
+        title: 'Subscription Expired',
+        message: `Your ${planDisplayName} subscription has expired. Subscribe again to restore your benefits!`,
+        relatedEntityId: subscriptionId,
+        relatedEntityType: 'subscription',
+        metadata: {
+          subscriptionId,
+          planType,
+          planDisplayName,
+          expiredAt: new Date().toISOString()
+        }
+      });
+
+      logger.info(`Subscription expired notification sent to ${walletAddress} for ${planType} plan`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating subscription expired notification:', error);
+      return null;
+    }
+  }
+
+  // ==================== NOTIFICATION RETRIEVAL & MANAGEMENT ====================
+
   /**
    * Get notifications for a user
    * @param {string} walletAddress - Wallet address of the user

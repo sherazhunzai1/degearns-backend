@@ -1488,6 +1488,97 @@ finalScore = (subscriptionBoost × 0.50) + (recencyBoost × 0.30) + (engagementB
 
 ---
 
+## Subscription Notifications
+
+The system automatically sends notifications for subscription-related events. These notifications are delivered through the existing notification system.
+
+### Notification Types
+
+| Type | Trigger | Description |
+|------|---------|-------------|
+| `subscription_created` | New subscription | Sent when a user subscribes to a paid plan from free tier |
+| `subscription_upgraded` | Plan upgrade | Sent when a user upgrades from one paid plan to a higher tier |
+| `subscription_cancelled` | Cancellation | Sent when a user cancels their subscription |
+| `subscription_expiring` | Near expiration | Sent when subscription is about to expire (cron job) |
+| `subscription_expired` | Expiration | Sent when subscription has expired (cron job) |
+
+### Notification Examples
+
+**Subscription Created:**
+```json
+{
+  "id": "notification-uuid",
+  "type": "subscription_created",
+  "title": "Subscription Activated",
+  "message": "Welcome to Pro! You now have a 20% score boost.",
+  "metadata": {
+    "subscriptionId": "subscription-uuid",
+    "planType": "pro",
+    "planDisplayName": "Pro",
+    "boostPercentage": 20,
+    "billingCycle": "monthly",
+    "endDate": "2025-02-27T00:00:00.000Z"
+  },
+  "relatedEntityType": "subscription",
+  "isRead": false,
+  "createdAt": "2025-01-27T12:00:00.000Z"
+}
+```
+
+**Subscription Upgraded:**
+```json
+{
+  "id": "notification-uuid",
+  "type": "subscription_upgraded",
+  "title": "Subscription Upgraded",
+  "message": "Congratulations! You've upgraded to Premium. Your score boost increased by 10%.",
+  "metadata": {
+    "subscriptionId": "subscription-uuid",
+    "previousPlan": "pro",
+    "newPlan": "premium",
+    "newPlanDisplayName": "Premium",
+    "previousBoost": 20,
+    "newBoost": 30,
+    "boostIncrease": 10,
+    "endDate": "2025-02-27T00:00:00.000Z"
+  },
+  "relatedEntityType": "subscription",
+  "isRead": false,
+  "createdAt": "2025-01-27T12:00:00.000Z"
+}
+```
+
+**Subscription Cancelled:**
+```json
+{
+  "id": "notification-uuid",
+  "type": "subscription_cancelled",
+  "title": "Subscription Cancelled",
+  "message": "Your Pro subscription has been cancelled. You'll retain access until January 27, 2025.",
+  "metadata": {
+    "subscriptionId": "subscription-uuid",
+    "planType": "pro",
+    "planDisplayName": "Pro",
+    "accessUntil": "2025-01-27T00:00:00.000Z"
+  },
+  "relatedEntityType": "subscription",
+  "isRead": false,
+  "createdAt": "2025-01-27T12:00:00.000Z"
+}
+```
+
+### Fetching Subscription Notifications
+
+Use the existing notifications API to fetch subscription notifications:
+
+```
+GET /api/v1/notifications/:walletAddress?type=subscription_created
+GET /api/v1/notifications/:walletAddress?type=subscription_upgraded
+GET /api/v1/notifications/:walletAddress?type=subscription_cancelled
+```
+
+---
+
 ## Error Codes
 
 | Status | Description |
