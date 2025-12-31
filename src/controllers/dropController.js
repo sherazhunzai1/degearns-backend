@@ -472,11 +472,13 @@ const getExploreDrops = async (req, res, next) => {
 
     const { count, rows: drops } = await Drop.findAndCountAll({
       where: {
-        status: 'active',
-        // End date must be greater than current date (or null for no end date)
+        // Only fetch active or scheduled drops (exclude ended, paused, sold_out, draft)
+        status: { [Op.in]: ['active', 'scheduled'] },
+        // End date must be greater than or equal to current date (or null for no end date)
+        // This ensures drops whose end date has passed are NOT fetched
         [Op.or]: [
           { endDate: null },
-          { endDate: { [Op.gt]: now } }
+          { endDate: { [Op.gte]: now } }
         ],
         // Start date must be either:
         // 1. Less than or equal to now (live)
@@ -540,24 +542,26 @@ const getExploreDrops = async (req, res, next) => {
       };
     });
 
-    // Separate live and coming soon for frontend convenience
-    const liveDrops = exploreDrops.filter(d => d.dropStatus === 'live');
-    const comingSoonDrops = exploreDrops.filter(d => d.dropStatus === 'coming_soon');
+    // Filter out sold out drops and separate live and coming soon for frontend convenience
+    const availableDrops = exploreDrops.filter(d => !d.isSoldOut);
+    const liveDrops = availableDrops.filter(d => d.dropStatus === 'live');
+    const comingSoonDrops = availableDrops.filter(d => d.dropStatus === 'coming_soon');
 
     res.status(200).json(
       new ApiResponse(200, {
-        drops: exploreDrops,
+        drops: availableDrops,
         liveDrops,
         comingSoonDrops,
         summary: {
           totalLive: liveDrops.length,
-          totalComingSoon: comingSoonDrops.length
+          totalComingSoon: comingSoonDrops.length,
+          totalAvailable: availableDrops.length
         },
         pagination: {
-          total: count,
+          total: availableDrops.length,
           page: parseInt(page),
           limit: parseInt(limit),
-          pages: Math.ceil(count / limit)
+          pages: Math.ceil(availableDrops.length / limit)
         }
       }, 'Explore drops retrieved successfully')
     );
