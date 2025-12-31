@@ -1465,7 +1465,7 @@ const getTopSellers = async (req, res, next) => {
   try {
     const { limit = 10 } = req.query;
 
-    logger.info('Fetching top sellers');
+    logger.info('Fetching top sellers using boost rankings');
 
     // Get all collections grouped by creator
     const collections = await Collection.findAll({
@@ -1490,40 +1490,60 @@ const getTopSellers = async (req, res, next) => {
           profileImage: collection.creator?.profileImage || null,
           isVerified: collection.creator?.isVerified || false,
           collectionsCount: 0,
-          totalVolume: 0
+          totalVolume: 0,
+          // Track the earliest collection creation date for recency calculation
+          earliestCreatedAt: collection.createdAt
         };
       }
 
       sellerStats[wallet].collectionsCount++;
       sellerStats[wallet].totalVolume += parseInt(collection.totalVolume || 0);
+
+      // Keep track of the most recent collection for boost calculation
+      if (new Date(collection.createdAt) > new Date(sellerStats[wallet].earliestCreatedAt)) {
+        sellerStats[wallet].earliestCreatedAt = collection.createdAt;
+      }
     });
 
-    // Convert to array and sort by collections count and volume
-    const sellers = Object.values(sellerStats)
-      .sort((a, b) => {
-        // First sort by number of collections
-        if (b.collectionsCount !== a.collectionsCount) {
-          return b.collectionsCount - a.collectionsCount;
-        }
-        // Then by total volume
-        return b.totalVolume - a.totalVolume;
-      })
+    // Initialize boost engine and calculate boost scores for each creator
+    const boostEngine = initBoostEngine(db);
+
+    // Prepare items for batch boost calculation
+    const creatorsArray = Object.values(sellerStats).map(seller => ({
+      walletAddress: seller.walletAddress,
+      createdAt: seller.earliestCreatedAt,
+      // Use total volume as a proxy for engagement (views)
+      viewsCount: seller.totalVolume / 1000000,
+      likesCount: 0,
+      commentsCount: 0,
+      sharesCount: 0,
+      originalData: seller
+    }));
+
+    // Calculate boost scores for all creators
+    const boostedCreators = await boostEngine.calculateBatchBoostScores(creatorsArray);
+
+    // Sort by boost score (descending) and take top N
+    const sortedSellers = boostedCreators
+      .sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0))
       .slice(0, parseInt(limit))
-      .map(seller => ({
-        walletAddress: seller.walletAddress,
-        username: seller.username,
-        profileImage: seller.profileImage,
-        isVerified: seller.isVerified,
-        collectionsCount: seller.collectionsCount,
-        totalVolume: seller.totalVolume.toString()
+      .map(item => ({
+        walletAddress: item.originalData.walletAddress,
+        username: item.originalData.username,
+        profileImage: item.originalData.profileImage,
+        isVerified: item.originalData.isVerified,
+        collectionsCount: item.originalData.collectionsCount,
+        totalVolume: item.originalData.totalVolume.toString(),
+        boostScore: item.boostScore,
+        boostDetails: item.boostDetails
       }));
 
-    logger.info(`Found ${sellers.length} top sellers`);
+    logger.info(`Found ${sortedSellers.length} top sellers ranked by boost score`);
 
     res.status(200).json(
       new ApiResponse(200, {
-        sellers: sellers,
-        total: sellers.length
+        sellers: sortedSellers,
+        total: sortedSellers.length
       }, 'Top sellers retrieved successfully')
     );
 
