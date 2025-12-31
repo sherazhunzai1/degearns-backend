@@ -17,7 +17,22 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Wallet address of the user who triggered the notification'
     },
     type: {
-      type: DataTypes.ENUM('like', 'comment', 'comment_reply', 'follow', 'nft_listing', 'nft_purchase', 'drop_launch', 'drop_mint', 'drop_allowlist'),
+      type: DataTypes.ENUM(
+        'like',
+        'comment',
+        'comment_reply',
+        'follow',
+        'nft_listing',
+        'nft_purchase',
+        'drop_launch',
+        'drop_mint',
+        'drop_allowlist',
+        'subscription_created',
+        'subscription_upgraded',
+        'subscription_cancelled',
+        'subscription_expiring',
+        'subscription_expired'
+      ),
       allowNull: false,
       comment: 'Type of notification'
     },
@@ -37,7 +52,7 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'ID of the related entity (postId, commentId, followId, collectionId)'
     },
     relatedEntityType: {
-      type: DataTypes.ENUM('post', 'comment', 'follow', 'collection', 'nft', 'drop'),
+      type: DataTypes.ENUM('post', 'comment', 'follow', 'collection', 'nft', 'drop', 'subscription'),
       allowNull: true,
       comment: 'Type of the related entity'
     },

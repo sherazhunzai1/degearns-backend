@@ -11,6 +11,7 @@ const { SubscriptionTier, Subscription, User, UserStats, AdminWallet, sequelize 
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const ScoringEngine = require('../services/scoringEngine');
+const notificationService = require('../services/notificationService');
 
 // Get scoring engine instance
 const getScoringEngine = () => {
@@ -345,6 +346,42 @@ const subscribeToPlan = async (req, res, next) => {
       // Don't fail the subscription creation if scoring fails
     }
 
+    // Send notification
+    try {
+      const previousPlan = existingSubscription?.planType || 'free';
+      const previousBoost = existingSubscription
+        ? (Subscription.BOOST_MULTIPLIERS[previousPlan] * 100 - 100)
+        : 0;
+
+      if (existingSubscription && previousPlan !== 'free') {
+        // User is upgrading from a paid plan
+        await notificationService.createSubscriptionUpgradedNotification({
+          subscriptionId: subscription.id,
+          walletAddress,
+          previousPlan,
+          newPlan: planType,
+          newPlanDisplayName: tier.displayName,
+          previousBoost,
+          newBoost: tier.boostPercentage,
+          endDate
+        });
+      } else {
+        // New subscription (from free plan)
+        await notificationService.createSubscriptionCreatedNotification({
+          subscriptionId: subscription.id,
+          walletAddress,
+          planType,
+          planDisplayName: tier.displayName,
+          boostPercentage: tier.boostPercentage,
+          billingCycle,
+          endDate
+        });
+      }
+    } catch (notificationError) {
+      console.error('Failed to send subscription notification:', notificationError);
+      // Don't fail the subscription creation if notification fails
+    }
+
     res.status(201).json(
       new ApiResponse(201, {
         subscription: subscription.toJSON(),
@@ -392,6 +429,23 @@ const cancelMySubscription = async (req, res, next) => {
       await scoringEngine.calculateUserScores(walletAddress);
     } catch (scoringError) {
       console.error('Failed to recalculate scores:', scoringError);
+    }
+
+    // Send cancellation notification
+    try {
+      // Get tier display name
+      const tier = await SubscriptionTier.getTierByName(subscription.planType);
+
+      await notificationService.createSubscriptionCancelledNotification({
+        subscriptionId: subscription.id,
+        walletAddress,
+        planType: subscription.planType,
+        planDisplayName: tier?.displayName || subscription.planType,
+        accessUntil: subscription.endDate
+      });
+    } catch (notificationError) {
+      console.error('Failed to send cancellation notification:', notificationError);
+      // Don't fail the cancellation if notification fails
     }
 
     res.status(200).json(
