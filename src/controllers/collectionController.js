@@ -1506,6 +1506,7 @@ const getTopSellers = async (req, res, next) => {
     });
 
     // Initialize boost engine and calculate boost scores for each creator
+    const db = require('../models');
     const boostEngine = initBoostEngine(db);
 
     // Prepare items for batch boost calculation
