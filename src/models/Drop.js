@@ -250,6 +250,108 @@ module.exports = (sequelize, DataTypes) => {
     return this.status === 'active' && hasStarted && hasNotEnded && this.isMintingEnabled;
   };
 
+  // Helper method to auto-sync status based on current date/time
+  // Returns true if status was changed, false otherwise
+  Drop.prototype.syncStatusWithDates = async function() {
+    const now = new Date();
+    const startDate = this.startDate ? new Date(this.startDate) : null;
+    const endDate = this.endDate ? new Date(this.endDate) : null;
+    let statusChanged = false;
+
+    // If drop is scheduled and start date has passed, make it active
+    if (this.status === 'scheduled' && startDate && startDate <= now) {
+      // Only activate if payment is confirmed and minting is enabled
+      if (this.platformFeesStatus === 'paid' || this.paymentStatus === 'paid') {
+        this.status = 'active';
+        this.isMintingEnabled = true;
+        statusChanged = true;
+      }
+    }
+
+    // If drop is active and end date has passed, mark it as ended
+    if (this.status === 'active' && endDate && endDate < now) {
+      this.status = 'ended';
+      this.isMintingEnabled = false;
+      statusChanged = true;
+    }
+
+    // If drop is sold out, mark it as sold_out
+    if (this.status === 'active' && this.mintedCount >= this.totalSupply && this.totalSupply > 0) {
+      this.status = 'sold_out';
+      statusChanged = true;
+    }
+
+    // Save changes if any
+    if (statusChanged) {
+      await this.save();
+    }
+
+    return statusChanged;
+  };
+
+  // Static method to sync status for multiple drops
+  Drop.syncAllDropStatuses = async function() {
+    const now = new Date();
+    const { Op } = sequelize.Sequelize;
+
+    // Find drops that need status update
+    // 1. Scheduled drops where startDate has passed
+    const scheduledToActivate = await this.findAll({
+      where: {
+        status: 'scheduled',
+        startDate: { [Op.lte]: now },
+        [Op.or]: [
+          { platformFeesStatus: 'paid' },
+          { paymentStatus: 'paid' }
+        ]
+      }
+    });
+
+    // 2. Active drops where endDate has passed
+    const activeToEnd = await this.findAll({
+      where: {
+        status: 'active',
+        endDate: { [Op.lt]: now }
+      }
+    });
+
+    // 3. Active drops that are sold out
+    const activeToSoldOut = await this.findAll({
+      where: {
+        status: 'active',
+        totalSupply: { [Op.gt]: 0 },
+        [Op.and]: sequelize.literal('mintedCount >= totalSupply')
+      }
+    });
+
+    let updatedCount = 0;
+
+    // Activate scheduled drops
+    for (const drop of scheduledToActivate) {
+      drop.status = 'active';
+      drop.isMintingEnabled = true;
+      await drop.save();
+      updatedCount++;
+    }
+
+    // End active drops that have passed end date
+    for (const drop of activeToEnd) {
+      drop.status = 'ended';
+      drop.isMintingEnabled = false;
+      await drop.save();
+      updatedCount++;
+    }
+
+    // Mark sold out drops
+    for (const drop of activeToSoldOut) {
+      drop.status = 'sold_out';
+      await drop.save();
+      updatedCount++;
+    }
+
+    return updatedCount;
+  };
+
   // Helper method to check if drop is sold out
   Drop.prototype.isSoldOut = function() {
     return this.mintedCount >= this.totalSupply;

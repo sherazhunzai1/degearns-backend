@@ -425,6 +425,10 @@ ActivityLog.belongsTo(Collection, {
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
 
+// Initialize drop status service with models
+const dropStatusService = require('../services/dropStatusService');
+dropStatusService.init({ Drop });
+
 module.exports = {
   sequelize,
   User,
