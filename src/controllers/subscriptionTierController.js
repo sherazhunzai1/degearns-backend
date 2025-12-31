@@ -12,6 +12,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const ScoringEngine = require('../services/scoringEngine');
 const notificationService = require('../services/notificationService');
+const { initBoostEngine } = require('../services/boostEngine');
 
 // Get scoring engine instance
 const getScoringEngine = () => {
@@ -337,6 +338,15 @@ const subscribeToPlan = async (req, res, next) => {
       }
     });
 
+    // Clear boost engine cache to reflect new subscription immediately
+    try {
+      const db = require('../models');
+      const boostEngine = initBoostEngine(db);
+      boostEngine.clearUserCache(walletAddress);
+    } catch (cacheError) {
+      console.error('Failed to clear boost cache:', cacheError);
+    }
+
     // Recalculate user scores with new boost
     try {
       const scoringEngine = getScoringEngine();
@@ -422,6 +432,15 @@ const cancelMySubscription = async (req, res, next) => {
         cancelledByUser: true
       }
     });
+
+    // Clear boost engine cache to reflect cancellation immediately
+    try {
+      const db = require('../models');
+      const boostEngine = initBoostEngine(db);
+      boostEngine.clearUserCache(walletAddress);
+    } catch (cacheError) {
+      console.error('Failed to clear boost cache:', cacheError);
+    }
 
     // Recalculate user scores (will use free multiplier now)
     try {
