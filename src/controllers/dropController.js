@@ -5,6 +5,7 @@ const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
+const { initBoostEngine } = require('../services/boostEngine');
 
 /**
  * Step 1: Create a new drop (standalone collection for bulk NFT minting)
@@ -549,26 +550,55 @@ const getExploreDrops = async (req, res, next) => {
       };
     });
 
-    // Filter out sold out drops and separate live and coming soon for frontend convenience
+    // Filter out sold out drops
     const availableDrops = exploreDrops.filter(d => !d.isSoldOut);
-    const liveDrops = availableDrops.filter(d => d.dropStatus === 'live');
-    const comingSoonDrops = availableDrops.filter(d => d.dropStatus === 'coming_soon');
+
+    // Apply boost scoring based on creator's subscription tier
+    const db = require('../models');
+    const boostEngine = initBoostEngine(db);
+
+    // Prepare drops for boost calculation
+    const dropsForBoost = availableDrops.map(drop => ({
+      walletAddress: drop.creatorWalletAddress,
+      createdAt: drop.createdAt,
+      viewsCount: 0,
+      likesCount: 0,
+      commentsCount: 0,
+      sharesCount: 0,
+      originalData: drop
+    }));
+
+    // Calculate boost scores for all drops
+    const boostedDrops = await boostEngine.calculateBatchBoostScores(dropsForBoost);
+
+    // Sort by boost score (descending) and add boost info to drops
+    const sortedDrops = boostedDrops
+      .sort((a, b) => (b.boostScore || 0) - (a.boostScore || 0))
+      .map(item => ({
+        ...item.originalData,
+        boostScore: item.boostScore,
+        boostDetails: item.boostDetails
+      }));
+
+    // Separate live and coming soon for frontend convenience
+    const liveDrops = sortedDrops.filter(d => d.dropStatus === 'live');
+    const comingSoonDrops = sortedDrops.filter(d => d.dropStatus === 'coming_soon');
 
     res.status(200).json(
       new ApiResponse(200, {
-        drops: availableDrops,
+        drops: sortedDrops,
         liveDrops,
         comingSoonDrops,
         summary: {
           totalLive: liveDrops.length,
           totalComingSoon: comingSoonDrops.length,
-          totalAvailable: availableDrops.length
+          totalAvailable: sortedDrops.length
         },
         pagination: {
-          total: availableDrops.length,
+          total: sortedDrops.length,
           page: parseInt(page),
           limit: parseInt(limit),
-          pages: Math.ceil(availableDrops.length / limit)
+          pages: Math.ceil(sortedDrops.length / limit)
         }
       }, 'Explore drops retrieved successfully')
     );
