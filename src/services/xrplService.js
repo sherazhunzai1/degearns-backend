@@ -545,7 +545,9 @@ class XRPLService {
 
       // Fetch metadata with timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for IPFS
+
+      logger.info(`Fetching NFT metadata from: ${fetchUrl}`);
 
       const response = await fetch(fetchUrl, {
         signal: controller.signal,
@@ -562,9 +564,10 @@ class XRPLService {
       }
 
       const metadata = await response.json();
+      logger.info(`Successfully fetched metadata from: ${fetchUrl}`);
       return metadata;
     } catch (error) {
-      logger.warn(`Error fetching NFT metadata:`, error.message);
+      logger.warn(`Error fetching NFT metadata from ${fetchUrl}:`, error.message);
       return null;
     }
   }
