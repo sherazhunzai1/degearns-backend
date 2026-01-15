@@ -375,7 +375,7 @@ const getCollection = async (req, res, next) => {
           nftsWithOffers.push({
             nft,
             sellOffers: hasOffers ? sellOffers : [],
-            lowestPrice: hasOffers ? Math.min(...sellOffers.map(offer => parseInt(offer.Amount))).toString() : null,
+            lowestPrice: hasOffers ? Math.min(...sellOffers.map(offer => parseInt(offer.amount || offer.Amount))).toString() : null,
             ownerAddress: hasOffers ? sellOffers[0].owner : creatorWalletAddress, // Owner from sell offer or the wallet we queried
             isOnSale: hasOffers
           });
@@ -592,7 +592,7 @@ const updateCollectionStats = async (req, res, next) => {
           if (sellOffers.length > 0) {
             stats.listedCount++;
             sellOffers.forEach(offer => {
-              const amount = parseInt(offer.Amount);
+              const amount = parseInt(offer.amount || offer.Amount);
               if (!isNaN(amount) && amount > 0) {
                 prices.push(amount);
               }
@@ -722,7 +722,7 @@ const getUserCollections = async (req, res, next) => {
             if (sellOffers && sellOffers.length > 0) {
               listedCount++;
               sellOffers.forEach(offer => {
-                const amount = parseInt(offer.Amount);
+                const amount = parseInt(offer.amount || offer.Amount);
                 if (!isNaN(amount) && amount > 0) {
                   prices.push(amount);
                 }
