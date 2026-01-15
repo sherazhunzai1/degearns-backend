@@ -303,7 +303,7 @@ const getCollection = async (req, res, next) => {
     const creatorWalletAddress = wallet;
     logger.info(`Fetching collection with taxon: ${taxon}, creator: ${creatorWalletAddress}`);
 
-    // Fetch NFTs from XRPL blockchain
+    // Fetch NFTs from XRPL blockchain and extract collection metadata
     let nftsOnSale = [];
     let allNFTs = [];
     let totalSupply = 0;
@@ -324,7 +324,7 @@ const getCollection = async (req, res, next) => {
       totalSupply = collectionNFTs.length;
       logger.info(`Found ${totalSupply} NFTs with taxon ${taxon}`);
 
-      // Extract collection metadata from XRPL NFT metadata (ONLY SOURCE)
+      // Extract collection metadata from XRPL NFT metadata
       if (collectionNFTs.length > 0) {
         try {
           const firstNFTMetadata = await xrplService.fetchNFTMetadata(collectionNFTs[0].URI);
@@ -477,7 +477,7 @@ const getCollection = async (req, res, next) => {
 
     // Build collection response from XRPL data only
     const collectionData = {
-      id: crypto.randomUUID(), // Generate fresh UUID for response
+      id: crypto.randomUUID(),
       taxon: taxon,
       name: collectionTitle,
       title: collectionTitle,
