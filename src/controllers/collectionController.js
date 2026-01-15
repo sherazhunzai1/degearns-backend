@@ -343,9 +343,6 @@ const getCollection = async (req, res, next) => {
 
             // Extract collection image from XRPL metadata
             let imageUrl = firstNFTMetadata.image || firstNFTMetadata.image_url || firstNFTMetadata.imageUrl;
-            if (imageUrl && imageUrl.startsWith('ipfs://')) {
-              imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-            }
             collectionImage = imageUrl;
 
             // Extract description from XRPL metadata
@@ -425,10 +422,6 @@ const getCollection = async (req, res, next) => {
             let imageUrl = null;
             if (metadata) {
               imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-              // Handle IPFS URLs
-              if (imageUrl && imageUrl.startsWith('ipfs://')) {
-                imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-              }
             }
 
             return {
@@ -761,11 +754,7 @@ const getUserCollections = async (req, res, next) => {
 
               // Extract image
               if (metadata.image || metadata.image_url || metadata.imageUrl) {
-                let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-                if (imageUrl.startsWith('ipfs://')) {
-                  imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-                }
-                collectionImage = imageUrl;
+                collectionImage = metadata.image || metadata.image_url || metadata.imageUrl;
               }
             }
           } catch (err) {
@@ -1232,10 +1221,7 @@ const searchCollectionsAndNFTs = async (req, res, next) => {
                 }
 
                 // Extract image URL
-                let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-                if (imageUrl && imageUrl.startsWith('ipfs://')) {
-                  imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-                }
+                const imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
 
                 // Add matching NFT to results
                 matchingNFTs.push({
@@ -1348,9 +1334,6 @@ const getNewNFTs = async (req, res, next) => {
                 if (metadata) {
                   nftName = metadata.name || null;
                   imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-                  if (imageUrl && imageUrl.startsWith('ipfs://')) {
-                    imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-                  }
                 }
               } catch (err) {
                 logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}`);
@@ -1602,9 +1585,6 @@ const getPopularCollections = async (req, res, next) => {
 
             if (metadata) {
               imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-              if (imageUrl && imageUrl.startsWith('ipfs://')) {
-                imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-              }
 
               recentNFTs.push({
                 nftTokenId: nft.NFTokenID,

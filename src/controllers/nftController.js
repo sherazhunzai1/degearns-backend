@@ -67,13 +67,9 @@ exports.getNFTDetail = async (req, res) => {
         // Extract description from metadata
         nftDescription = metadata.description || null;
 
-        // Extract and format image URL
-        let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+        // Extract image URL
+        const imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
         if (imageUrl) {
-          // Handle IPFS URLs
-          if (imageUrl.startsWith('ipfs://')) {
-            imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-          }
           nftImage = imageUrl;
         }
 
