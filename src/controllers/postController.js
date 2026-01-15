@@ -27,7 +27,7 @@ const convertIpfsUrl = (url) => {
 
   // Convert ipfs:// protocol to HTTP gateway
   if (url.startsWith('ipfs://')) {
-    return url.replace('ipfs://', 'https://ipfs.io/ipfs/');
+    return url.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
   }
 
   // Already an HTTP URL, return as-is

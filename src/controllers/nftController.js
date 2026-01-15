@@ -72,7 +72,7 @@ exports.getNFTDetail = async (req, res) => {
         if (imageUrl) {
           // Handle IPFS URLs
           if (imageUrl.startsWith('ipfs://')) {
-            imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+            imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
           }
           nftImage = imageUrl;
         }

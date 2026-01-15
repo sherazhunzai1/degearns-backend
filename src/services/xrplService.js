@@ -540,7 +540,7 @@ class XRPLService {
       // Handle IPFS URLs
       let fetchUrl = metadataUrl;
       if (metadataUrl.startsWith('ipfs://')) {
-        fetchUrl = metadataUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+        fetchUrl = metadataUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
       }
 
       // Fetch metadata with timeout
@@ -582,7 +582,7 @@ class XRPLService {
 
       // Handle IPFS image URLs
       if (imageUrl && imageUrl.startsWith('ipfs://')) {
-        imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+        imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
       }
 
       return imageUrl || null;
@@ -940,7 +940,7 @@ class XRPLService {
           if (metadata) {
             imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
             if (imageUrl && imageUrl.startsWith('ipfs://')) {
-              imageUrl = imageUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
+              imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
             }
           }
 
