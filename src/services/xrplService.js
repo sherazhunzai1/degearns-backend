@@ -527,7 +527,7 @@ class XRPLService {
   }
 
   /**
-   * Fetch NFT metadata from URI
+   * Fetch NFT metadata from URI with retry and fallback gateways
    */
   async fetchNFTMetadata(uri) {
     try {
@@ -537,19 +537,63 @@ class XRPLService {
       const metadataUrl = this.convertHexToString(uri);
       if (!metadataUrl) return null;
 
-      // Handle IPFS URLs
-      let fetchUrl = metadataUrl;
+      // IPFS gateways to try (in order of preference)
+      const ipfsGateways = [
+        'https://gateway.pinata.cloud/ipfs/',
+        'https://ipfs.io/ipfs/',
+        'https://cloudflare-ipfs.com/ipfs/',
+        'https://dweb.link/ipfs/'
+      ];
+
+      // Extract IPFS hash if it's an IPFS URL
+      let ipfsHash = null;
       if (metadataUrl.startsWith('ipfs://')) {
-        fetchUrl = metadataUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
+        ipfsHash = metadataUrl.replace('ipfs://', '');
       }
 
-      // Fetch metadata with timeout
+      // If it's an IPFS URL, try multiple gateways
+      if (ipfsHash) {
+        for (const gateway of ipfsGateways) {
+          const fetchUrl = gateway + ipfsHash;
+
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000); // 20 second timeout
+
+            logger.info(`Fetching NFT metadata from: ${fetchUrl}`);
+
+            const response = await fetch(fetchUrl, {
+              signal: controller.signal,
+              headers: {
+                'Accept': 'application/json'
+              }
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+              const metadata = await response.json();
+              logger.info(`Successfully fetched metadata from: ${fetchUrl}`);
+              return metadata;
+            } else {
+              logger.warn(`Failed to fetch metadata from ${fetchUrl}: ${response.status}`);
+            }
+          } catch (error) {
+            logger.warn(`Error fetching from ${fetchUrl}: ${error.message}`);
+            // Continue to next gateway
+          }
+        }
+
+        // All gateways failed
+        logger.error(`All IPFS gateways failed for hash: ${ipfsHash}`);
+        return null;
+      }
+
+      // Not an IPFS URL, try direct fetch
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for IPFS
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
 
-      logger.info(`Fetching NFT metadata from: ${fetchUrl}`);
-
-      const response = await fetch(fetchUrl, {
+      const response = await fetch(metadataUrl, {
         signal: controller.signal,
         headers: {
           'Accept': 'application/json'
@@ -559,15 +603,15 @@ class XRPLService {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        logger.warn(`Failed to fetch metadata from ${fetchUrl}: ${response.status}`);
+        logger.warn(`Failed to fetch metadata from ${metadataUrl}: ${response.status}`);
         return null;
       }
 
       const metadata = await response.json();
-      logger.info(`Successfully fetched metadata from: ${fetchUrl}`);
+      logger.info(`Successfully fetched metadata from: ${metadataUrl}`);
       return metadata;
     } catch (error) {
-      logger.warn(`Error fetching NFT metadata from ${fetchUrl}:`, error.message);
+      logger.warn(`Error fetching NFT metadata:`, error.message);
       return null;
     }
   }
