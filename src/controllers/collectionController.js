@@ -9,6 +9,33 @@ const crypto = require('crypto');
 const { initBoostEngine } = require('../services/boostEngine');
 
 /**
+ * Helper function to convert gateway URLs to IPFS hash format
+ * Strips gateway URL prefixes and returns ipfs://{hash} format
+ */
+const convertToIpfsHash = (url) => {
+  if (!url) return url;
+
+  // Common IPFS gateway patterns to strip
+  const gatewayPatterns = [
+    /^https?:\/\/[^/]+\.mypinata\.cloud\/ipfs\//,
+    /^https?:\/\/gateway\.pinata\.cloud\/ipfs\//,
+    /^https?:\/\/ipfs\.io\/ipfs\//,
+    /^https?:\/\/cloudflare-ipfs\.com\/ipfs\//,
+    /^https?:\/\/dweb\.link\/ipfs\//
+  ];
+
+  for (const pattern of gatewayPatterns) {
+    if (pattern.test(url)) {
+      const hash = url.replace(pattern, '').split('?')[0]; // Remove query params too
+      return `ipfs://${hash}`;
+    }
+  }
+
+  // Already in ipfs:// format or raw hash, return as-is
+  return url;
+};
+
+/**
  * List/Register a collection on the marketplace
  * If collection with same taxon already exists, returns the existing collection
  * This makes the endpoint idempotent - safe to call multiple times
@@ -772,7 +799,7 @@ const getUserCollections = async (req, res, next) => {
           id: dbCollection ? dbCollection.id : crypto.randomUUID(),
           taxon: taxonNum,
           title: collectionTitle,
-          image: collectionImage,
+          image: convertToIpfsHash(collectionImage),
           floorPrice: floorPrice,
           items: totalItems,
           listedCount: listedCount,
