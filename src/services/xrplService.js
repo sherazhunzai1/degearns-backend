@@ -527,7 +527,7 @@ class XRPLService {
   }
 
   /**
-   * Fetch NFT metadata from URI
+   * Fetch NFT metadata from URI using Pinata premium gateway
    */
   async fetchNFTMetadata(uri) {
     try {
@@ -537,19 +537,55 @@ class XRPLService {
       const metadataUrl = this.convertHexToString(uri);
       if (!metadataUrl) return null;
 
-      // Handle IPFS URLs
-      let fetchUrl = metadataUrl;
+      // Get Pinata gateway config from environment variables
+      const pinataGatewayUrl = process.env.PINATA_GATEWAY_URL;
+      const pinataGatewayToken = process.env.PINATA_GATEWAY_TOKEN;
+
+      // Extract IPFS hash if it's an IPFS URL
+      let ipfsHash = null;
       if (metadataUrl.startsWith('ipfs://')) {
-        fetchUrl = metadataUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
+        ipfsHash = metadataUrl.replace('ipfs://', '');
       }
 
-      // Fetch metadata with timeout
+      // If it's an IPFS URL, use Pinata premium gateway
+      if (ipfsHash) {
+        // Build fetch URL with Pinata gateway and token
+        const fetchUrl = `${pinataGatewayUrl}/${ipfsHash}?pinataGatewayToken=${pinataGatewayToken}`;
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+          logger.info(`Fetching NFT metadata from Pinata gateway: ${pinataGatewayUrl}/${ipfsHash}`);
+
+          const response = await fetch(fetchUrl, {
+            signal: controller.signal,
+            headers: {
+              'Accept': 'application/json'
+            }
+          });
+
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const metadata = await response.json();
+            logger.info(`Successfully fetched metadata for hash: ${ipfsHash}`);
+            return metadata;
+          } else {
+            logger.warn(`Failed to fetch metadata from Pinata: ${response.status}`);
+            return null;
+          }
+        } catch (error) {
+          logger.warn(`Error fetching from Pinata gateway: ${error.message}`);
+          return null;
+        }
+      }
+
+      // Not an IPFS URL, try direct fetch
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for IPFS
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      logger.info(`Fetching NFT metadata from: ${fetchUrl}`);
-
-      const response = await fetch(fetchUrl, {
+      const response = await fetch(metadataUrl, {
         signal: controller.signal,
         headers: {
           'Accept': 'application/json'
@@ -559,15 +595,15 @@ class XRPLService {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        logger.warn(`Failed to fetch metadata from ${fetchUrl}: ${response.status}`);
+        logger.warn(`Failed to fetch metadata from ${metadataUrl}: ${response.status}`);
         return null;
       }
 
       const metadata = await response.json();
-      logger.info(`Successfully fetched metadata from: ${fetchUrl}`);
+      logger.info(`Successfully fetched metadata from: ${metadataUrl}`);
       return metadata;
     } catch (error) {
-      logger.warn(`Error fetching NFT metadata from ${fetchUrl}:`, error.message);
+      logger.warn(`Error fetching NFT metadata:`, error.message);
       return null;
     }
   }
