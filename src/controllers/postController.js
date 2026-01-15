@@ -19,18 +19,11 @@ const logActivity = async (data) => {
 };
 
 /**
- * Helper function to convert IPFS URLs to HTTP gateway URLs
- * Supports both ipfs:// protocol and direct CID formats
+ * Helper function to return IPFS URLs as-is
+ * No conversion - keep original IPFS hash/URL
  */
 const convertIpfsUrl = (url) => {
-  if (!url) return url;
-
-  // Convert ipfs:// protocol to HTTP gateway
-  if (url.startsWith('ipfs://')) {
-    return url.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-  }
-
-  // Already an HTTP URL, return as-is
+  // Return URL as-is without any conversion
   return url;
 };
 

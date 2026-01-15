@@ -581,12 +581,7 @@ class XRPLService {
       if (!metadata) return null;
 
       // Try common image field names
-      let imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-
-      // Handle IPFS image URLs
-      if (imageUrl && imageUrl.startsWith('ipfs://')) {
-        imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-      }
+      const imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
 
       return imageUrl || null;
     } catch (error) {
@@ -942,9 +937,6 @@ class XRPLService {
           let imageUrl = null;
           if (metadata) {
             imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-            if (imageUrl && imageUrl.startsWith('ipfs://')) {
-              imageUrl = imageUrl.replace('ipfs://', 'https://gateway.pinata.cloud/ipfs/');
-            }
           }
 
           return buyOffers.map(offer => {
