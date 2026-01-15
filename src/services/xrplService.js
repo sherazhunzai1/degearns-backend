@@ -527,7 +527,7 @@ class XRPLService {
   }
 
   /**
-   * Fetch NFT metadata from URI with retry and fallback gateways
+   * Fetch NFT metadata from URI using Pinata premium gateway
    */
   async fetchNFTMetadata(uri) {
     try {
@@ -537,13 +537,9 @@ class XRPLService {
       const metadataUrl = this.convertHexToString(uri);
       if (!metadataUrl) return null;
 
-      // IPFS gateways to try (in order of preference)
-      const ipfsGateways = [
-        'https://gateway.pinata.cloud/ipfs/',
-        'https://ipfs.io/ipfs/',
-        'https://cloudflare-ipfs.com/ipfs/',
-        'https://dweb.link/ipfs/'
-      ];
+      // Get Pinata gateway config from environment variables
+      const pinataGatewayUrl = process.env.PINATA_GATEWAY_URL;
+      const pinataGatewayToken = process.env.PINATA_GATEWAY_TOKEN;
 
       // Extract IPFS hash if it's an IPFS URL
       let ipfsHash = null;
@@ -551,47 +547,43 @@ class XRPLService {
         ipfsHash = metadataUrl.replace('ipfs://', '');
       }
 
-      // If it's an IPFS URL, try multiple gateways
+      // If it's an IPFS URL, use Pinata premium gateway
       if (ipfsHash) {
-        for (const gateway of ipfsGateways) {
-          const fetchUrl = gateway + ipfsHash;
+        // Build fetch URL with Pinata gateway and token
+        const fetchUrl = `${pinataGatewayUrl}/${ipfsHash}?pinataGatewayToken=${pinataGatewayToken}`;
 
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 20000); // 20 second timeout
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-            logger.info(`Fetching NFT metadata from: ${fetchUrl}`);
+          logger.info(`Fetching NFT metadata from Pinata gateway: ${pinataGatewayUrl}/${ipfsHash}`);
 
-            const response = await fetch(fetchUrl, {
-              signal: controller.signal,
-              headers: {
-                'Accept': 'application/json'
-              }
-            });
-
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-              const metadata = await response.json();
-              logger.info(`Successfully fetched metadata from: ${fetchUrl}`);
-              return metadata;
-            } else {
-              logger.warn(`Failed to fetch metadata from ${fetchUrl}: ${response.status}`);
+          const response = await fetch(fetchUrl, {
+            signal: controller.signal,
+            headers: {
+              'Accept': 'application/json'
             }
-          } catch (error) {
-            logger.warn(`Error fetching from ${fetchUrl}: ${error.message}`);
-            // Continue to next gateway
-          }
-        }
+          });
 
-        // All gateways failed
-        logger.error(`All IPFS gateways failed for hash: ${ipfsHash}`);
-        return null;
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const metadata = await response.json();
+            logger.info(`Successfully fetched metadata for hash: ${ipfsHash}`);
+            return metadata;
+          } else {
+            logger.warn(`Failed to fetch metadata from Pinata: ${response.status}`);
+            return null;
+          }
+        } catch (error) {
+          logger.warn(`Error fetching from Pinata gateway: ${error.message}`);
+          return null;
+        }
       }
 
       // Not an IPFS URL, try direct fetch
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       const response = await fetch(metadataUrl, {
         signal: controller.signal,
