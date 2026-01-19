@@ -3,6 +3,10 @@ const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions
+} = require('../utils/userHelpers');
 
 /**
  * Get all chat users for a specific logged-in user
@@ -50,6 +54,9 @@ const getChatUsers = async (req, res, next) => {
       userMap[user.walletAddress] = user;
     });
 
+    // Fetch subscription plans for all chat participants
+    const subscriptionMap = await getActiveSubscriptionsForWallets(otherWalletAddresses);
+
     // Get unread count for each conversation
     const chatUsers = await Promise.all(conversations.map(async (conv) => {
       const otherWallet = conv.participant1WalletAddress === walletAddress
@@ -73,10 +80,12 @@ const getChatUsers = async (req, res, next) => {
           walletAddress: user.walletAddress,
           username: user.username,
           profileImage: user.profileImage,
-          isVerified: user.isVerified
+          isVerified: user.isVerified,
+          subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
         } : {
           walletAddress: otherWallet,
-          username: otherWallet
+          username: otherWallet,
+          subscriptionPlan: subscriptionMap[otherWallet] || 'free'
         },
         lastMessageAt: conv.lastMessageAt,
         lastMessagePreview: conv.lastMessagePreview,
@@ -166,6 +175,9 @@ const getMessages = async (req, res, next) => {
       senderMap[sender.walletAddress] = sender;
     });
 
+    // Fetch subscription plans for all senders
+    const subscriptionMap = await getActiveSubscriptionsForWallets(senderAddresses);
+
     // Format messages with sender info
     const formattedMessages = messages.map(msg => {
       const sender = senderMap[msg.senderWalletAddress];
@@ -178,7 +190,8 @@ const getMessages = async (req, res, next) => {
           walletAddress: sender.walletAddress,
           username: sender.username,
           profileImage: sender.profileImage,
-          isVerified: sender.isVerified
+          isVerified: sender.isVerified,
+          subscriptionPlan: subscriptionMap[sender.walletAddress] || 'free'
         } : null,
         content: msg.content,
         messageType: msg.messageType,
@@ -293,6 +306,9 @@ const sendMessage = async (req, res, next) => {
       lastMessagePreview: content.substring(0, 100)
     });
 
+    // Fetch subscription plan for sender
+    const subscriptionMap = await getActiveSubscriptionsForWallets([senderWalletAddress]);
+
     logger.info(`Message sent from ${senderWalletAddress} to ${receiverWalletAddress}`);
 
     res.status(201).json(
@@ -306,7 +322,8 @@ const sendMessage = async (req, res, next) => {
             walletAddress: sender.walletAddress,
             username: sender.username,
             profileImage: sender.profileImage,
-            isVerified: sender.isVerified
+            isVerified: sender.isVerified,
+            subscriptionPlan: subscriptionMap[sender.walletAddress] || 'free'
           },
           content: message.content,
           messageType: message.messageType,
@@ -429,6 +446,9 @@ const getUnreadCount = async (req, res, next) => {
       });
     }
 
+    // Fetch subscription plans for all senders
+    const subscriptionMap = await getActiveSubscriptionsForWallets(senderAddresses);
+
     // Format unread by sender
     const unreadBySender = unreadByConversation.map(item => {
       const sender = senderMap[item.senderWalletAddress];
@@ -438,7 +458,8 @@ const getUnreadCount = async (req, res, next) => {
         sender: sender ? {
           walletAddress: sender.walletAddress,
           username: sender.username,
-          profileImage: sender.profileImage
+          profileImage: sender.profileImage,
+          subscriptionPlan: subscriptionMap[sender.walletAddress] || 'free'
         } : null,
         unreadCount: parseInt(item.unreadCount)
       };
@@ -495,11 +516,25 @@ const getAllUsers = async (req, res, next) => {
       offset
     });
 
+    // Fetch subscription plans for all users
+    const walletAddresses = users.map(user => user.walletAddress);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+    // Enrich users with subscription plans
+    const enrichedUsers = users.map(user => ({
+      id: user.id,
+      walletAddress: user.walletAddress,
+      username: user.username,
+      profileImage: user.profileImage,
+      isVerified: user.isVerified,
+      subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
+    }));
+
     logger.info(`All users fetched for chat by wallet: ${walletAddress}`);
 
     res.status(200).json(
       new ApiResponse(200, {
-        users,
+        users: enrichedUsers,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),

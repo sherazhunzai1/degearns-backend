@@ -14,6 +14,9 @@ const {
 } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../../utils/userHelpers');
 
 /**
  * Get overall platform dashboard statistics
@@ -315,9 +318,22 @@ const getTopCreators = async (req, res) => {
       throw new ApiError(400, 'Invalid metric. Use: drops, mints, revenue, or collections');
   }
 
+  // Enrich with subscription plans
+  const walletAddresses = topCreators.filter(c => c.creator).map(c => c.creatorWalletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedTopCreators = topCreators.map(creator => {
+    const creatorData = creator.toJSON();
+    if (creatorData.creator) {
+      creatorData.creator.walletAddress = creatorData.creatorWalletAddress;
+      creatorData.creator.subscriptionPlan = subscriptionMap[creatorData.creatorWalletAddress] || 'free';
+    }
+    return creatorData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
     metric,
-    topCreators
+    topCreators: enrichedTopCreators
   }, 'Top creators retrieved successfully'));
 };
 
@@ -356,8 +372,20 @@ const getRecentActivities = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = activities.filter(a => a.admin).map(a => a.admin.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedActivities = activities.map(activity => {
+    const activityData = activity.toJSON();
+    if (activityData.admin) {
+      activityData.admin.subscriptionPlan = subscriptionMap[activityData.admin.walletAddress] || 'free';
+    }
+    return activityData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    activities,
+    activities: enrichedActivities,
     pagination: {
       total: count,
       page: parseInt(page),

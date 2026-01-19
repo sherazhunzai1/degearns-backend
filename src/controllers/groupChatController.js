@@ -3,6 +3,10 @@ const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions
+} = require('../utils/userHelpers');
 
 /**
  * Create a new group chat
@@ -118,16 +122,31 @@ const createGroup = async (req, res, next) => {
       }]
     });
 
+    // Collect wallet addresses and fetch subscriptions
+    const walletAddresses = [
+      createdGroup.creator?.walletAddress,
+      ...members.map(m => m.user?.walletAddress)
+    ].filter(Boolean);
+
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+    // Add subscription plans to creator
+    const groupWithSubscription = createdGroup.toJSON();
+    if (groupWithSubscription.creator) {
+      groupWithSubscription.creator.subscriptionPlan = subscriptionMap[groupWithSubscription.creator.walletAddress] || 'free';
+    }
+
     logger.info(`Group created: ${group.id} by ${creatorWalletAddress}`);
 
     res.status(201).json(
       new ApiResponse(201, {
         group: {
-          ...createdGroup.toJSON(),
+          ...groupWithSubscription,
           members: members.map(m => ({
             ...m.user?.toJSON(),
             role: m.role,
-            joinedAt: m.joinedAt
+            joinedAt: m.joinedAt,
+            subscriptionPlan: subscriptionMap[m.user?.walletAddress] || 'free'
           }))
         }
       }, 'Group created successfully')
@@ -204,6 +223,13 @@ const getGroups = async (req, res, next) => {
       offset
     });
 
+    // Collect wallet addresses from all creators and fetch subscriptions
+    const creatorWalletAddresses = groups
+      .map(g => g.creator?.walletAddress)
+      .filter(Boolean);
+
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWalletAddresses);
+
     // Get unread count for each group
     const groupsWithUnread = await Promise.all(groups.map(async (group) => {
       const memberInfo = memberInfoMap[group.id];
@@ -221,8 +247,13 @@ const getGroups = async (req, res, next) => {
         }
       });
 
+      const groupJson = group.toJSON();
+      if (groupJson.creator) {
+        groupJson.creator.subscriptionPlan = subscriptionMap[groupJson.creator.walletAddress] || 'free';
+      }
+
       return {
-        ...group.toJSON(),
+        ...groupJson,
         myRole: memberInfo.role,
         unreadCount
       };
@@ -295,17 +326,32 @@ const getGroupDetails = async (req, res, next) => {
       order: [['role', 'ASC'], ['joinedAt', 'ASC']]
     });
 
+    // Collect wallet addresses and fetch subscriptions
+    const walletAddresses = [
+      group.creator?.walletAddress,
+      ...members.map(m => m.user?.walletAddress)
+    ].filter(Boolean);
+
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+    // Add subscription plans to group creator
+    const groupJson = group.toJSON();
+    if (groupJson.creator) {
+      groupJson.creator.subscriptionPlan = subscriptionMap[groupJson.creator.walletAddress] || 'free';
+    }
+
     logger.info(`Group details fetched: ${groupId}`);
 
     res.status(200).json(
       new ApiResponse(200, {
         group: {
-          ...group.toJSON(),
+          ...groupJson,
           myRole: membership.role,
           members: members.map(m => ({
             ...m.user?.toJSON(),
             role: m.role,
-            joinedAt: m.joinedAt
+            joinedAt: m.joinedAt,
+            subscriptionPlan: subscriptionMap[m.user?.walletAddress] || 'free'
           }))
         }
       }, 'Group details retrieved successfully')
@@ -935,6 +981,28 @@ const sendMessage = async (req, res, next) => {
       }
     }
 
+    // Fetch subscription plans for sender and reply sender
+    const walletAddresses = [
+      sender?.walletAddress,
+      replyToMessage?.sender?.walletAddress
+    ].filter(Boolean);
+
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+    // Add subscription plan to sender
+    const senderWithSubscription = sender ? {
+      ...sender.toJSON(),
+      subscriptionPlan: subscriptionMap[sender.walletAddress] || 'free'
+    } : null;
+
+    // Add subscription plan to reply message sender if exists
+    if (replyToMessage?.sender) {
+      replyToMessage.sender = {
+        ...replyToMessage.sender.toJSON ? replyToMessage.sender.toJSON() : replyToMessage.sender,
+        subscriptionPlan: subscriptionMap[replyToMessage.sender.walletAddress] || 'free'
+      };
+    }
+
     logger.info(`Message sent to group ${groupId} by ${senderWalletAddress}`);
 
     res.status(201).json(
@@ -943,7 +1011,7 @@ const sendMessage = async (req, res, next) => {
           id: message.id,
           groupId: message.groupId,
           senderWalletAddress: message.senderWalletAddress,
-          sender,
+          sender: senderWithSubscription,
           content: message.content,
           messageType: message.messageType,
           metadata: message.metadata,
@@ -1029,19 +1097,46 @@ const getMessages = async (req, res, next) => {
       });
     }
 
+    // Collect all wallet addresses from messages and reply messages
+    const walletAddresses = [
+      ...messages.map(m => m.sender?.walletAddress),
+      ...Object.values(replyMessagesMap).map(r => r.sender?.walletAddress)
+    ].filter(Boolean);
+
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
     // Format messages
-    const formattedMessages = messages.map(msg => ({
-      id: msg.id,
-      groupId: msg.groupId,
-      senderWalletAddress: msg.senderWalletAddress,
-      sender: msg.sender,
-      content: msg.content,
-      messageType: msg.messageType,
-      metadata: msg.metadata,
-      replyToMessageId: msg.replyToMessageId,
-      replyToMessage: msg.replyToMessageId ? replyMessagesMap[msg.replyToMessageId] : null,
-      createdAt: msg.createdAt
-    }));
+    const formattedMessages = messages.map(msg => {
+      const senderJson = msg.sender ? msg.sender.toJSON() : null;
+      if (senderJson) {
+        senderJson.subscriptionPlan = subscriptionMap[senderJson.walletAddress] || 'free';
+      }
+
+      let replyToMessage = null;
+      if (msg.replyToMessageId && replyMessagesMap[msg.replyToMessageId]) {
+        const replyMsg = replyMessagesMap[msg.replyToMessageId];
+        replyToMessage = {
+          ...replyMsg,
+          sender: replyMsg.sender ? {
+            ...(replyMsg.sender.toJSON ? replyMsg.sender.toJSON() : replyMsg.sender),
+            subscriptionPlan: subscriptionMap[replyMsg.sender.walletAddress] || 'free'
+          } : null
+        };
+      }
+
+      return {
+        id: msg.id,
+        groupId: msg.groupId,
+        senderWalletAddress: msg.senderWalletAddress,
+        sender: senderJson,
+        content: msg.content,
+        messageType: msg.messageType,
+        metadata: msg.metadata,
+        replyToMessageId: msg.replyToMessageId,
+        replyToMessage,
+        createdAt: msg.createdAt
+      };
+    });
 
     // Reverse to show oldest first
     formattedMessages.reverse();
@@ -1108,6 +1203,13 @@ const getGroupMembers = async (req, res, next) => {
       order: [['role', 'ASC'], ['joinedAt', 'ASC']]
     });
 
+    // Collect wallet addresses and fetch subscriptions
+    const walletAddresses = members
+      .map(m => m.user?.walletAddress)
+      .filter(Boolean);
+
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
     logger.info(`Members fetched for group ${groupId}`);
 
     res.status(200).json(
@@ -1116,7 +1218,8 @@ const getGroupMembers = async (req, res, next) => {
           ...m.user?.toJSON(),
           role: m.role,
           joinedAt: m.joinedAt,
-          isCreator: m.walletAddress === group.creatorWalletAddress
+          isCreator: m.walletAddress === group.creatorWalletAddress,
+          subscriptionPlan: subscriptionMap[m.user?.walletAddress] || 'free'
         })),
         total: members.length
       }, 'Members retrieved successfully')

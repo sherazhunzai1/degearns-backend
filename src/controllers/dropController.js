@@ -6,6 +6,10 @@ const { Op } = require('sequelize');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const { initBoostEngine } = require('../services/boostEngine');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions
+} = require('../utils/userHelpers');
 
 /**
  * Step 1: Create a new drop (standalone collection for bulk NFT minting)
@@ -193,8 +197,20 @@ const updateDrop = async (req, res, next) => {
       ]
     });
 
+    // Add subscription plan to creator
+    const creatorWallet = updatedDrop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
+    const enrichedDrop = {
+      ...updatedDrop.toJSON(),
+      creator: updatedDrop.creator ? {
+        ...updatedDrop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[updatedDrop.creator.walletAddress] || 'free'
+      } : null
+    };
+
     res.status(200).json(
-      new ApiResponse(200, updatedDrop, 'Drop updated successfully')
+      new ApiResponse(200, enrichedDrop, 'Drop updated successfully')
     );
   } catch (error) {
     next(error);
@@ -232,8 +248,16 @@ const getDropById = async (req, res, next) => {
       walletEligibility = await getWalletEligibilityData(drop, walletAddress);
     }
 
+    // Add subscription plan to creator
+    const creatorWallet = drop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
     const response = {
       ...drop.toJSON(),
+      creator: drop.creator ? {
+        ...drop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+      } : null,
       remainingSupply: drop.getRemainingSupply(),
       isCurrentlyActive: drop.isCurrentlyActive(),
       isSoldOut: drop.isSoldOut(),
@@ -301,9 +325,17 @@ const getDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Add subscription plans to creators
+    const creatorWallets = drops.map(d => d.creator?.walletAddress).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
+
     // Add computed fields
     const dropsWithStats = drops.map(drop => ({
       ...drop.toJSON(),
+      creator: drop.creator ? {
+        ...drop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+      } : null,
       remainingSupply: drop.getRemainingSupply(),
       isCurrentlyActive: drop.isCurrentlyActive(),
       isSoldOut: drop.isSoldOut()
@@ -369,11 +401,19 @@ const getActiveDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Add subscription plans to creators
+    const creatorWallets = drops.map(d => d.creator?.walletAddress).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
+
     // Filter out sold out drops and add computed fields
     const activeDrops = drops
       .filter(drop => !drop.isSoldOut())
       .map(drop => ({
         ...drop.toJSON(),
+        creator: drop.creator ? {
+          ...drop.creator.toJSON(),
+          subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+        } : null,
         remainingSupply: drop.getRemainingSupply(),
         isCurrentlyActive: drop.isCurrentlyActive(),
         isSoldOut: drop.isSoldOut()
@@ -431,8 +471,16 @@ const getUpcomingDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Add subscription plans to creators
+    const creatorWallets = drops.map(d => d.creator?.walletAddress).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
+
     const upcomingDrops = drops.map(drop => ({
       ...drop.toJSON(),
+      creator: drop.creator ? {
+        ...drop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+      } : null,
       remainingSupply: drop.getRemainingSupply(),
       isSoldOut: drop.isSoldOut()
     }));
@@ -520,6 +568,10 @@ const getExploreDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Add subscription plans to creators
+    const creatorWallets = drops.map(d => d.creator?.walletAddress).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
+
     // Add computed fields and dropStatus (live/coming_soon)
     const exploreDrops = drops.map(drop => {
       const dropData = drop.toJSON();
@@ -542,6 +594,10 @@ const getExploreDrops = async (req, res, next) => {
 
       return {
         ...dropData,
+        creator: drop.creator ? {
+          ...drop.creator.toJSON(),
+          subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+        } : null,
         dropStatus,
         daysUntilStart,
         remainingSupply: drop.getRemainingSupply(),
@@ -712,8 +768,20 @@ const updateDropStatus = async (req, res, next) => {
       ]
     });
 
+    // Add subscription plan to creator
+    const creatorWallet = updatedDrop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
+    const enrichedDrop = {
+      ...updatedDrop.toJSON(),
+      creator: updatedDrop.creator ? {
+        ...updatedDrop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[updatedDrop.creator.walletAddress] || 'free'
+      } : null
+    };
+
     res.status(200).json(
-      new ApiResponse(200, updatedDrop, 'Drop status updated successfully')
+      new ApiResponse(200, enrichedDrop, 'Drop status updated successfully')
     );
   } catch (error) {
     next(error);
@@ -771,8 +839,20 @@ const toggleDropSettings = async (req, res, next) => {
       ]
     });
 
+    // Add subscription plan to creator
+    const creatorWallet = updatedDrop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
+    const enrichedDrop = {
+      ...updatedDrop.toJSON(),
+      creator: updatedDrop.creator ? {
+        ...updatedDrop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[updatedDrop.creator.walletAddress] || 'free'
+      } : null
+    };
+
     res.status(200).json(
-      new ApiResponse(200, updatedDrop, `${setting} updated successfully`)
+      new ApiResponse(200, enrichedDrop, `${setting} updated successfully`)
     );
   } catch (error) {
     next(error);
@@ -828,8 +908,20 @@ const updatePaymentStatus = async (req, res, next) => {
       ]
     });
 
+    // Add subscription plan to creator
+    const creatorWallet = updatedDrop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
+    const enrichedDrop = {
+      ...updatedDrop.toJSON(),
+      creator: updatedDrop.creator ? {
+        ...updatedDrop.creator.toJSON(),
+        subscriptionPlan: subscriptionMap[updatedDrop.creator.walletAddress] || 'free'
+      } : null
+    };
+
     res.status(200).json(
-      new ApiResponse(200, updatedDrop, 'Payment status updated successfully')
+      new ApiResponse(200, enrichedDrop, 'Payment status updated successfully')
     );
   } catch (error) {
     next(error);
@@ -1257,9 +1349,21 @@ const getDropMints = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Add subscription plans to minters
+    const minterWallets = mints.map(m => m.minter?.walletAddress).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(minterWallets);
+
+    const enrichedMints = mints.map(mint => ({
+      ...mint.toJSON ? mint.toJSON() : mint,
+      minter: mint.minter ? {
+        ...mint.minter.toJSON ? mint.minter.toJSON() : mint.minter,
+        subscriptionPlan: subscriptionMap[mint.minter.walletAddress] || 'free'
+      } : null
+    }));
+
     res.status(200).json(
       new ApiResponse(200, {
-        mints,
+        mints: enrichedMints,
         pagination: {
           total: count,
           page: parseInt(page),
@@ -1380,6 +1484,10 @@ const getCreatorDrops = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
+    // Add subscription plans to creators
+    const creatorWallets = drops.map(d => d.creator?.walletAddress).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
+
     const dropsWithStats = drops.map(drop => {
       // Determine current workflow step
       let currentStep;
@@ -1409,6 +1517,10 @@ const getCreatorDrops = async (req, res, next) => {
 
       return {
         ...drop.toJSON(),
+        creator: drop.creator ? {
+          ...drop.creator.toJSON(),
+          subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+        } : null,
         remainingSupply: drop.getRemainingSupply(),
         isCurrentlyActive: drop.isCurrentlyActive(),
         isSoldOut: drop.isSoldOut(),
@@ -1504,10 +1616,28 @@ const getDropStats = async (req, res, next) => {
       limit: 10
     });
 
+    // Add subscription plans to creator and minters
+    const creatorWallet = drop.creator?.walletAddress;
+    const minterWallets = recentMints.map(m => m.minter?.walletAddress).filter(Boolean);
+    const allWallets = [creatorWallet, ...minterWallets].filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(allWallets);
+
+    const enrichedMints = recentMints.map(mint => ({
+      ...mint.toJSON ? mint.toJSON() : mint,
+      minter: mint.minter ? {
+        ...mint.minter.toJSON ? mint.minter.toJSON() : mint.minter,
+        subscriptionPlan: subscriptionMap[mint.minter.walletAddress] || 'free'
+      } : null
+    }));
+
     res.status(200).json(
       new ApiResponse(200, {
         drop: {
           ...drop.toJSON(),
+          creator: drop.creator ? {
+            ...drop.creator.toJSON(),
+            subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+          } : null,
           remainingSupply: drop.getRemainingSupply(),
           isCurrentlyActive: drop.isCurrentlyActive(),
           isSoldOut: drop.isSoldOut()
@@ -1523,7 +1653,7 @@ const getDropStats = async (req, res, next) => {
           totalRevenue,
           allowlistCount
         },
-        recentMints
+        recentMints: enrichedMints
       }, 'Drop statistics retrieved successfully')
     );
   } catch (error) {
@@ -2517,9 +2647,17 @@ const saveDropSettings = async (req, res, next) => {
       DropNft.count({ where: { dropId: id, status: 'reserved' } })
     ]);
 
+    // Add subscription plan to creator
+    const creatorWallet = updatedDrop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
     res.status(200).json(
       new ApiResponse(200, {
         ...updatedDrop.toJSON(),
+        creator: updatedDrop.creator ? {
+          ...updatedDrop.creator.toJSON(),
+          subscriptionPlan: subscriptionMap[updatedDrop.creator.walletAddress] || 'free'
+        } : null,
         remainingSupply: updatedDrop.getRemainingSupply(),
         isCurrentlyActive: updatedDrop.isCurrentlyActive(),
         isSoldOut: updatedDrop.isSoldOut(),
@@ -2601,6 +2739,10 @@ const getDropDashboard = async (req, res, next) => {
       nftCounts[sc.status] = parseInt(sc.count);
     });
 
+    // Add subscription plan to creator
+    const creatorWallet = drop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
     res.status(200).json(
       new ApiResponse(200, {
         // Launch details
@@ -2610,7 +2752,10 @@ const getDropDashboard = async (req, res, next) => {
           description: drop.description,
           image: drop.image,
           bannerImage: drop.bannerImage,
-          creator: drop.creator,
+          creator: drop.creator ? {
+            ...drop.creator.toJSON ? drop.creator.toJSON() : drop.creator,
+            subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+          } : null,
           collection: drop.collection,
           taxon: drop.collection?.taxon,
           totalSupply: drop.totalSupply
@@ -2721,6 +2866,10 @@ const getDropDetailsByTaxon = async (req, res, next) => {
     // Calculate listing percentage
     const mintedCount = drop.mintedCount || 0;
 
+    // Collect all wallet addresses for subscription plan enrichment
+    const creatorWallet = drop.creator?.walletAddress;
+    const allWalletsForSubscription = [creatorWallet].filter(Boolean);
+
     // Build response with requested fields
     const dropDetails = {
       id: drop.id,
@@ -2736,7 +2885,7 @@ const getDropDetailsByTaxon = async (req, res, next) => {
         discordUrl: drop.discordUrl,
         telegramUrl: drop.telegramUrl
       },
-      // Creator information
+      // Creator information (will be enriched with subscription plan later)
       creator: drop.creator ? {
         walletAddress: drop.creator.walletAddress,
         username: drop.creator.username,
@@ -2876,6 +3025,11 @@ const getDropDetailsByTaxon = async (req, res, next) => {
         }
       }
 
+      // Collect minter and owner wallet addresses for subscription enrichment
+      const minterWallets = nftsWithDetails.map(nft => nft.minter?.walletAddress).filter(Boolean);
+      const ownerWallets = nftsWithDetails.map(nft => nft.currentOwner?.walletAddress).filter(Boolean);
+      allWalletsForSubscription.push(...minterWallets, ...ownerWallets);
+
       dropDetails.mintedNfts = {
         items: nftsWithDetails,
         pagination: {
@@ -2892,6 +3046,29 @@ const getDropDetailsByTaxon = async (req, res, next) => {
           floorPriceFromListingsXrp: floorPriceFromListings ? (floorPriceFromListings / 1000000).toFixed(6) : null
         }
       };
+    }
+
+    // Add subscription plans to all users (creator, minters, owners)
+    const subscriptionMap = await getActiveSubscriptionsForWallets([...new Set(allWalletsForSubscription)]);
+
+    // Enrich creator with subscription plan
+    if (dropDetails.creator) {
+      dropDetails.creator.subscriptionPlan = subscriptionMap[dropDetails.creator.walletAddress] || 'free';
+    }
+
+    // Enrich minters and owners with subscription plans
+    if (dropDetails.mintedNfts?.items) {
+      dropDetails.mintedNfts.items = dropDetails.mintedNfts.items.map(nft => ({
+        ...nft,
+        minter: nft.minter ? {
+          ...nft.minter,
+          subscriptionPlan: subscriptionMap[nft.minter.walletAddress] || 'free'
+        } : nft.minter,
+        currentOwner: nft.currentOwner ? {
+          ...nft.currentOwner,
+          subscriptionPlan: subscriptionMap[nft.currentOwner.walletAddress] || 'free'
+        } : nft.currentOwner
+      }));
     }
 
     res.status(200).json(
@@ -3010,6 +3187,10 @@ const getDropDashboardByTaxon = async (req, res, next) => {
       launchStatusCode = 5;
     }
 
+    // Add subscription plan to creator
+    const creatorWallet = drop.creator?.walletAddress;
+    const subscriptionMap = creatorWallet ? await getActiveSubscriptionsForWallets([creatorWallet]) : {};
+
     res.status(200).json(
       new ApiResponse(200, {
         // Launch status
@@ -3023,7 +3204,10 @@ const getDropDashboardByTaxon = async (req, res, next) => {
           image: drop.image,
           bannerImage: drop.bannerImage,
           taxonId: drop.taxonId,
-          creator: drop.creator,
+          creator: drop.creator ? {
+            ...drop.creator.toJSON ? drop.creator.toJSON() : drop.creator,
+            subscriptionPlan: subscriptionMap[drop.creator.walletAddress] || 'free'
+          } : null,
           collection: drop.collection,
           totalSupply: drop.totalSupply
         },

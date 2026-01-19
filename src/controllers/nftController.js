@@ -4,6 +4,10 @@ const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions
+} = require('../utils/userHelpers');
 
 /**
  * Get single NFT detail with sale info and transaction history
@@ -102,6 +106,14 @@ exports.getNFTDetail = async (req, res) => {
       })
     ]);
 
+    // Fetch subscription plans for all relevant users
+    const walletAddresses = [
+      ownerAddress,
+      nftData.Issuer,
+      collection?.creator?.walletAddress
+    ].filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
     // Step 4: Get transaction history for this NFT
     const transactionHistory = await xrplService.getNFTTransactionHistory(
       ownerAddress,
@@ -135,7 +147,8 @@ exports.getNFTDetail = async (req, res) => {
         walletAddress: issuerUser.walletAddress,
         username: issuerUser.username,
         profileImage: issuerUser.profileImage,
-        isVerified: issuerUser.isVerified
+        isVerified: issuerUser.isVerified,
+        subscriptionPlan: subscriptionMap[issuerUser.walletAddress] || 'free'
       } : null,
       collection: collection ? {
         id: collection.id,
@@ -153,7 +166,8 @@ exports.getNFTDetail = async (req, res) => {
           walletAddress: collection.creator.walletAddress,
           username: collection.creator.username,
           profileImage: collection.creator.profileImage,
-          isVerified: collection.creator.isVerified
+          isVerified: collection.creator.isVerified,
+          subscriptionPlan: subscriptionMap[collection.creator.walletAddress] || 'free'
         } : null
       } : null,
       owner: ownerAddress,
@@ -162,7 +176,8 @@ exports.getNFTDetail = async (req, res) => {
         username: ownerUser.username,
         profileImage: ownerUser.profileImage,
         isVerified: ownerUser.isVerified,
-        bio: ownerUser.bio
+        bio: ownerUser.bio,
+        subscriptionPlan: subscriptionMap[ownerUser.walletAddress] || 'free'
       } : null,
 
       // Sale information
@@ -456,6 +471,10 @@ exports.getIncomingOffers = async (req, res, next) => {
     // Get incoming offers from XRPL service
     const incomingOffers = await xrplService.getDetailedIncomingOffers(walletAddress);
 
+    // Fetch subscription plans for all offerers
+    const offererWalletAddresses = incomingOffers.buyOffers.map(offer => offer.offerer).filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(offererWalletAddresses);
+
     // Enrich with user data from database
     const enrichedBuyOffers = await Promise.all(
       incomingOffers.buyOffers.map(async (offer) => {
@@ -471,7 +490,8 @@ exports.getIncomingOffers = async (req, res, next) => {
               walletAddress: offerer.walletAddress,
               username: offerer.username,
               profileImage: offerer.profileImage,
-              isVerified: offerer.isVerified
+              isVerified: offerer.isVerified,
+              subscriptionPlan: subscriptionMap[offerer.walletAddress] || 'free'
             };
           }
         } catch (e) {
