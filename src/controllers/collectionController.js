@@ -1721,27 +1721,38 @@ const getCollectionHistory = async (req, res, next) => {
       };
     });
 
+    // Helper function to get user info with fallback for unknown wallets
+    const getUserInfo = (walletAddress) => {
+      if (!walletAddress) return null;
+      return userMap[walletAddress] || {
+        walletAddress: walletAddress,
+        username: walletAddress,
+        profileImage: null,
+        isVerified: false
+      };
+    };
+
     // Enrich history with user information
     const enrichedHistory = history.map(entry => {
       const enriched = { ...entry };
 
       if (entry.issuer) {
-        enriched.issuerInfo = userMap[entry.issuer] || null;
+        enriched.issuerInfo = getUserInfo(entry.issuer);
       }
       if (entry.offerer) {
-        enriched.offererInfo = userMap[entry.offerer] || null;
+        enriched.offererInfo = getUserInfo(entry.offerer);
       }
       if (entry.seller) {
-        enriched.sellerInfo = userMap[entry.seller] || null;
+        enriched.sellerInfo = getUserInfo(entry.seller);
       }
       if (entry.buyer) {
-        enriched.buyerInfo = userMap[entry.buyer] || null;
+        enriched.buyerInfo = getUserInfo(entry.buyer);
       }
       if (entry.burner) {
-        enriched.burnerInfo = userMap[entry.burner] || null;
+        enriched.burnerInfo = getUserInfo(entry.burner);
       }
       if (entry.owner) {
-        enriched.ownerInfo = userMap[entry.owner] || null;
+        enriched.ownerInfo = getUserInfo(entry.owner);
       }
 
       return enriched;
