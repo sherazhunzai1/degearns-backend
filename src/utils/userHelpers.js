@@ -3,9 +3,16 @@
  * Provides functions to enrich user data with subscription information
  */
 
-const { Subscription } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('./logger');
+
+/**
+ * Get Subscription model lazily to avoid circular dependency
+ */
+const getSubscriptionModel = () => {
+  const { Subscription } = require('../models');
+  return Subscription;
+};
 
 /**
  * Standard user attributes to include in queries
@@ -22,6 +29,8 @@ const getActiveSubscriptionPlan = async (walletAddress) => {
   if (!walletAddress) return 'free';
 
   try {
+    const Subscription = getSubscriptionModel();
+
     // First, find ANY subscription for this user to debug
     const anySubscription = await Subscription.findOne({
       where: { userWalletAddress: walletAddress },
@@ -71,6 +80,8 @@ const getActiveSubscriptionsForWallets = async (walletAddresses) => {
   if (uniqueAddresses.length === 0) return {};
 
   try {
+    const Subscription = getSubscriptionModel();
+
     const subscriptions = await Subscription.findAll({
       where: {
         userWalletAddress: uniqueAddresses,
