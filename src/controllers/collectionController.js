@@ -53,13 +53,19 @@ const listCollection = async (req, res, next) => {
       throw new ApiError(400, 'Creator wallet address is required');
     }
 
-    if (!taxon) {
+    // Check if taxon is provided (0 is a valid taxon value for the first collection)
+    if (taxon === undefined || taxon === null) {
       throw new ApiError(400, 'Taxon is required to identify the collection on XRPL');
+    }
+
+    const taxonNum = parseInt(taxon);
+    if (isNaN(taxonNum) || taxonNum < 0) {
+      throw new ApiError(400, 'Taxon must be a valid non-negative number');
     }
 
     // Check if collection with this taxon already exists
     const existingCollection = await Collection.findOne({
-      where: { taxon },
+      where: { taxon: taxonNum },
       include: [
         {
           association: 'creator',
@@ -69,7 +75,7 @@ const listCollection = async (req, res, next) => {
     });
 
     if (existingCollection) {
-      logger.info(`Collection with taxon ${taxon} already listed, returning existing collection`);
+      logger.info(`Collection with taxon ${taxonNum} already listed, returning existing collection`);
 
       // Return existing collection with 200 status
       return res.status(200).json(
@@ -94,13 +100,13 @@ const listCollection = async (req, res, next) => {
       image,
       bannerImage,
       creatorWalletAddress,
-      taxon,
+      taxon: taxonNum,
       category: category || 'other',
       royaltyPercentage: royaltyPercentage || 0,
       socialLinks
     });
 
-    logger.info(`Collection listed: ${collection.name} (taxon: ${taxon}) by ${creatorWalletAddress}`);
+    logger.info(`Collection listed: ${collection.name} (taxon: ${taxonNum}) by ${creatorWalletAddress}`);
 
     res.status(201).json(
       new ApiResponse(201, collection, 'Collection listed successfully')
