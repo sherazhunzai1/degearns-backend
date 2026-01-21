@@ -710,19 +710,26 @@ class NotificationService {
       });
 
       // Get sender info for all notifications
-      const senderAddresses = [...new Set(notifications.map(n => n.senderWalletAddress))];
-      const senders = await this.User.findAll({
-        where: { walletAddress: senderAddresses },
-        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-      });
+      const senderAddresses = [...new Set(notifications.map(n => n.senderWalletAddress).filter(Boolean))];
 
-      // Enrich senders with subscription data
-      const sendersPlain = senders.map(s => s.get({ plain: true }));
-      const enrichedSenders = await getActiveSubscriptionsForWallets(sendersPlain);
+      const [senders, subscriptionMap] = await Promise.all([
+        this.User.findAll({
+          where: { walletAddress: senderAddresses },
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }),
+        getActiveSubscriptionsForWallets(senderAddresses)
+      ]);
 
+      // Create sender map with subscription plans
       const senderMap = {};
-      enrichedSenders.forEach(sender => {
-        senderMap[sender.walletAddress] = sender;
+      senders.forEach(sender => {
+        senderMap[sender.walletAddress] = {
+          walletAddress: sender.walletAddress,
+          username: sender.username,
+          profileImage: sender.profileImage,
+          isVerified: sender.isVerified,
+          subscriptionPlan: subscriptionMap[sender.walletAddress] || 'free'
+        };
       });
 
       // Format notifications with sender info
@@ -733,19 +740,13 @@ class NotificationService {
           type: notification.type,
           title: notification.title,
           message: notification.message,
-          sender: sender ? {
-            walletAddress: sender.walletAddress,
-            username: sender.username,
-            profileImage: sender.profileImage,
-            isVerified: sender.isVerified,
-            subscriptionPlan: sender.subscriptionPlan
-          } : {
+          sender: sender ? sender : (notification.senderWalletAddress ? {
             walletAddress: notification.senderWalletAddress,
             username: null,
             profileImage: null,
             isVerified: false,
-            subscriptionPlan: null
-          },
+            subscriptionPlan: subscriptionMap[notification.senderWalletAddress] || 'free'
+          } : null),
           relatedEntityId: notification.relatedEntityId,
           relatedEntityType: notification.relatedEntityType,
           metadata: notification.metadata,
