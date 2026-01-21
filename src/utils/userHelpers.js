@@ -31,19 +31,6 @@ const getActiveSubscriptionPlan = async (walletAddress) => {
   try {
     const Subscription = getSubscriptionModel();
 
-    // First, find ANY subscription for this user to debug
-    const anySubscription = await Subscription.findOne({
-      where: { userWalletAddress: walletAddress },
-      order: [['createdAt', 'DESC']]
-    });
-
-    if (anySubscription) {
-      logger.info(`Found subscription for ${walletAddress}: planType=${anySubscription.planType}, isActive=${anySubscription.isActive}, endDate=${anySubscription.endDate}, now=${new Date()}`);
-    } else {
-      logger.info(`No subscription found for ${walletAddress}`);
-    }
-
-    // Now find active subscription
     const subscription = await Subscription.findOne({
       where: {
         userWalletAddress: walletAddress,
@@ -53,13 +40,7 @@ const getActiveSubscriptionPlan = async (walletAddress) => {
       order: [['createdAt', 'DESC']]
     });
 
-    if (subscription) {
-      logger.info(`Active subscription found for ${walletAddress}: ${subscription.planType}`);
-      return subscription.planType;
-    } else {
-      logger.info(`No ACTIVE subscription found for ${walletAddress} (isActive must be true AND endDate must be > now)`);
-      return 'free';
-    }
+    return subscription ? subscription.planType : 'free';
   } catch (error) {
     logger.error(`Error getting subscription for ${walletAddress}:`, error);
     return 'free';
