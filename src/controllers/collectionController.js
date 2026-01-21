@@ -42,7 +42,8 @@ const convertToIpfsHash = (url) => {
 
 /**
  * List/Register a collection on the marketplace
- * If collection with same taxon already exists, returns the existing collection
+ * If collection with same taxon AND creatorWalletAddress already exists, returns the existing collection
+ * Same taxon with different creator is allowed (different wallets can have same taxon numbers)
  * This makes the endpoint idempotent - safe to call multiple times
  */
 const listCollection = async (req, res, next) => {
@@ -63,9 +64,13 @@ const listCollection = async (req, res, next) => {
       throw new ApiError(400, 'Taxon must be a valid non-negative number');
     }
 
-    // Check if collection with this taxon already exists
+    // Check if collection with this taxon AND creatorWalletAddress already exists
+    // Same taxon with different creator is allowed (each wallet has its own taxon sequence)
     const existingCollection = await Collection.findOne({
-      where: { taxon: taxonNum },
+      where: {
+        taxon: taxonNum,
+        creatorWalletAddress: creatorWalletAddress
+      },
       include: [
         {
           association: 'creator',
@@ -75,7 +80,7 @@ const listCollection = async (req, res, next) => {
     });
 
     if (existingCollection) {
-      logger.info(`Collection with taxon ${taxonNum} already listed, returning existing collection`);
+      logger.info(`Collection with taxon ${taxonNum} by ${creatorWalletAddress} already listed, returning existing collection`);
 
       // Return existing collection with 200 status
       return res.status(200).json(
@@ -83,13 +88,14 @@ const listCollection = async (req, res, next) => {
       );
     }
 
-    // Generate slug from name
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    // Generate slug from name (make it unique by appending creator wallet prefix if needed)
+    let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-    // Check if slug already exists (for new collections)
+    // Check if slug already exists, if so append wallet prefix to make it unique
     const existingSlug = await Collection.findOne({ where: { slug } });
     if (existingSlug) {
-      throw new ApiError(400, 'Collection with this name already exists');
+      // Append first 8 chars of wallet address to make slug unique
+      slug = `${slug}-${creatorWalletAddress.substring(0, 8).toLowerCase()}`;
     }
 
     // Create new collection
