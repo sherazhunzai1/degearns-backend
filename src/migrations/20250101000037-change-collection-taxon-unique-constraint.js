@@ -4,24 +4,22 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     // Remove the old unique constraint on taxon alone
-    // First, try to find and remove any existing unique index on taxon
-    try {
-      await queryInterface.removeIndex('Collections', 'collections_taxon');
-    } catch (error) {
-      console.log('Index collections_taxon does not exist, skipping removal');
-    }
+    // Try all possible index name patterns
+    const possibleIndexNames = [
+      'idx_collections_taxon',
+      'collections_taxon',
+      'taxon',
+      'Collections_taxon_unique',
+      'Collections_taxon_key'
+    ];
 
-    try {
-      await queryInterface.removeIndex('Collections', 'taxon');
-    } catch (error) {
-      console.log('Index taxon does not exist, skipping removal');
-    }
-
-    // Try removing by unique constraint name patterns
-    try {
-      await queryInterface.removeIndex('Collections', 'Collections_taxon_unique');
-    } catch (error) {
-      console.log('Index Collections_taxon_unique does not exist, skipping removal');
+    for (const indexName of possibleIndexNames) {
+      try {
+        await queryInterface.removeIndex('Collections', indexName);
+        console.log(`Successfully removed index: ${indexName}`);
+      } catch (error) {
+        console.log(`Index ${indexName} does not exist, skipping removal`);
+      }
     }
 
     // Add new composite unique constraint on taxon + creatorWalletAddress
@@ -40,7 +38,7 @@ module.exports = {
     // Restore the original unique constraint on taxon alone
     await queryInterface.addIndex('Collections', ['taxon'], {
       unique: true,
-      name: 'collections_taxon'
+      name: 'idx_collections_taxon'
     });
 
     console.log('Reverted to original taxon-only unique constraint');
