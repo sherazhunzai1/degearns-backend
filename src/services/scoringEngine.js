@@ -496,8 +496,8 @@ class ScoringEngine {
     // Build leaderboard with enriched user data
     const leaderboard = stats.map((stat, index) => {
       const user = userMap.get(stat.userWalletAddress);
-      const subscription = subscriptionsMap.get(stat.userWalletAddress);
-      const planType = subscription?.planType || 'free';
+      // subscriptionsMap is a plain object with string values (planType)
+      const planType = subscriptionsMap[stat.userWalletAddress] || 'free';
 
       // Enrich user with subscription plan
       const enrichedUser = user ? { ...user, subscriptionPlan: planType } : null;
@@ -624,16 +624,16 @@ class ScoringEngine {
     }
 
     // Fetch subscription and enrich user data
+    // subscriptionsMap is a plain object with string values (planType)
     const subscriptionsMap = await getActiveSubscriptionsForWallets([walletAddress]);
-    const subscription = subscriptionsMap.get(walletAddress);
-    const planType = subscription?.planType || 'free';
+    const planType = subscriptionsMap[walletAddress] || 'free';
 
     // Enrich user with subscription plan
     const enrichedUser = user ? { ...user.toJSON(), subscriptionPlan: planType } : null;
 
     return {
       user: enrichedUser,
-      subscription: subscription ? subscription.toJSON() : { planType: 'free', boostMultiplier: 1.0 },
+      subscription: { planType, boostMultiplier: this.config.boostMultipliers[planType] || 1.0 },
       stats: userStats.toJSON(),
       ranks,
       period: { month: targetMonth, year: targetYear },

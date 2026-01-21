@@ -2,6 +2,7 @@ const { Op } = require('sequelize');
 const { User, Follow, Post, Collection, Drop, DropMint, AdminActivity, sequelize } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
+const { getActiveSubscriptionsForWallets, getActiveSubscriptionPlan } = require('../../utils/userHelpers');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -80,6 +81,10 @@ const getUsers = async (req, res) => {
     attributes: { exclude: [] }
   });
 
+  // Get subscription plans for all users in one batch query
+  const walletAddresses = users.map(u => u.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
   // Get additional stats for each user
   const usersWithStats = await Promise.all(users.map(async (user) => {
     const [followersCount, followingCount, postsCount, collectionsCount, dropsCount, mintsCount] = await Promise.all([
@@ -93,6 +98,7 @@ const getUsers = async (req, res) => {
 
     return {
       ...user.toJSON(),
+      subscriptionPlan: subscriptionMap[user.walletAddress] || 'free',
       stats: {
         followersCount,
         followingCount,
@@ -162,8 +168,11 @@ const getUserByWallet = async (req, res) => {
     limit: 5
   });
 
+  // Get subscription plan
+  const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+
   res.status(200).json(new ApiResponse(200, {
-    user: user.toJSON(),
+    user: { ...user.toJSON(), subscriptionPlan },
     stats: {
       followersCount,
       followingCount,
@@ -215,8 +224,10 @@ const updateUserRole = async (req, res) => {
     }
   );
 
+  const subscriptionPlan = await getActiveSubscriptionPlan(user.walletAddress);
+
   res.status(200).json(new ApiResponse(200, {
-    user: user.toJSON()
+    user: { ...user.toJSON(), subscriptionPlan }
   }, `User role updated to ${role}`));
 };
 
@@ -253,8 +264,10 @@ const updateUserVerification = async (req, res) => {
     }
   );
 
+  const subscriptionPlan = await getActiveSubscriptionPlan(user.walletAddress);
+
   res.status(200).json(new ApiResponse(200, {
-    user: user.toJSON()
+    user: { ...user.toJSON(), subscriptionPlan }
   }, isVerified ? 'User verified successfully' : 'User unverified successfully'));
 };
 
@@ -300,8 +313,10 @@ const banUser = async (req, res) => {
     }
   );
 
+  const subscriptionPlan = await getActiveSubscriptionPlan(user.walletAddress);
+
   res.status(200).json(new ApiResponse(200, {
-    user: user.toJSON()
+    user: { ...user.toJSON(), subscriptionPlan }
   }, 'User banned successfully'));
 };
 
@@ -347,8 +362,10 @@ const unbanUser = async (req, res) => {
     }
   );
 
+  const subscriptionPlan = await getActiveSubscriptionPlan(user.walletAddress);
+
   res.status(200).json(new ApiResponse(200, {
-    user: user.toJSON()
+    user: { ...user.toJSON(), subscriptionPlan }
   }, 'User unbanned successfully'));
 };
 
