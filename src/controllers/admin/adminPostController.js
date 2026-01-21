@@ -2,6 +2,9 @@ const { Op } = require('sequelize');
 const { Post, PostMedia, PostComment, PostLike, User, AdminActivity, sequelize } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../../utils/userHelpers');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -92,8 +95,20 @@ const getPosts = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = posts.filter(p => p.author).map(p => p.author.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedPosts = posts.map(post => {
+    const postData = post.toJSON();
+    if (postData.author) {
+      postData.author.subscriptionPlan = subscriptionMap[postData.author.walletAddress] || 'free';
+    }
+    return postData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    posts,
+    posts: enrichedPosts,
     pagination: {
       total: count,
       page: parseInt(page),
@@ -143,8 +158,35 @@ const getPostById = async (req, res) => {
   // Get total comment count
   const totalComments = await PostComment.count({ where: { postId } });
 
+  // Enrich with subscription plans
+  const postData = post.toJSON();
+  const walletAddresses = [];
+  if (postData.author) {
+    walletAddresses.push(postData.author.walletAddress);
+  }
+  if (postData.comments) {
+    postData.comments.forEach(comment => {
+      if (comment.author) {
+        walletAddresses.push(comment.author.walletAddress);
+      }
+    });
+  }
+
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  if (postData.author) {
+    postData.author.subscriptionPlan = subscriptionMap[postData.author.walletAddress] || 'free';
+  }
+  if (postData.comments) {
+    postData.comments.forEach(comment => {
+      if (comment.author) {
+        comment.author.subscriptionPlan = subscriptionMap[comment.author.walletAddress] || 'free';
+      }
+    });
+  }
+
   res.status(200).json(new ApiResponse(200, {
-    post: post.toJSON(),
+    post: postData,
     totalComments
   }, 'Post details retrieved successfully'));
 };
@@ -288,8 +330,20 @@ const getComments = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = comments.filter(c => c.author).map(c => c.author.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedComments = comments.map(comment => {
+    const commentData = comment.toJSON();
+    if (commentData.author) {
+      commentData.author.subscriptionPlan = subscriptionMap[commentData.author.walletAddress] || 'free';
+    }
+    return commentData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    comments,
+    comments: enrichedComments,
     pagination: {
       total: count,
       page: parseInt(page),
@@ -441,8 +495,20 @@ const getFlaggedContent = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = posts.filter(p => p.author).map(p => p.author.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedPosts = posts.map(post => {
+    const postData = post.toJSON();
+    if (postData.author) {
+      postData.author.subscriptionPlan = subscriptionMap[postData.author.walletAddress] || 'free';
+    }
+    return postData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    posts,
+    posts: enrichedPosts,
     pagination: {
       total: count,
       page: parseInt(page),

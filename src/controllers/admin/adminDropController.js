@@ -2,6 +2,9 @@ const { Op } = require('sequelize');
 const { Drop, DropNft, DropMint, DropAllowedWallet, User, Collection, AdminActivity, sequelize } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../../utils/userHelpers');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -99,8 +102,19 @@ const getDrops = async (req, res) => {
     feesBreakdown: drop.getFeesBreakdown()
   }));
 
+  // Enrich with subscription plans
+  const walletAddresses = dropsWithStats.filter(d => d.creator).map(d => d.creator.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedDrops = dropsWithStats.map(drop => {
+    if (drop.creator) {
+      drop.creator.subscriptionPlan = subscriptionMap[drop.creator.walletAddress] || 'free';
+    }
+    return drop;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    drops: dropsWithStats,
+    drops: enrichedDrops,
     pagination: {
       total: count,
       page: parseInt(page),
@@ -153,12 +167,19 @@ const getDropById = async (req, res) => {
     group: ['status']
   });
 
+  // Enrich with subscription plan
+  const dropData = {
+    ...drop.toJSON(),
+    remainingSupply: drop.getRemainingSupply(),
+    feesBreakdown: drop.getFeesBreakdown()
+  };
+  if (dropData.creator) {
+    const subscriptionMap = await getActiveSubscriptionsForWallets([dropData.creator.walletAddress]);
+    dropData.creator.subscriptionPlan = subscriptionMap[dropData.creator.walletAddress] || 'free';
+  }
+
   res.status(200).json(new ApiResponse(200, {
-    drop: {
-      ...drop.toJSON(),
-      remainingSupply: drop.getRemainingSupply(),
-      feesBreakdown: drop.getFeesBreakdown()
-    },
+    drop: dropData,
     stats: {
       nftCount,
       mintCount,
@@ -576,8 +597,19 @@ const getDropsWithPendingFees = async (req, res) => {
     feesBreakdown: drop.getFeesBreakdown()
   }));
 
+  // Enrich with subscription plans
+  const walletAddresses = dropsWithFees.filter(d => d.creator).map(d => d.creator.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedDrops = dropsWithFees.map(drop => {
+    if (drop.creator) {
+      drop.creator.subscriptionPlan = subscriptionMap[drop.creator.walletAddress] || 'free';
+    }
+    return drop;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    drops: dropsWithFees,
+    drops: enrichedDrops,
     pagination: {
       total: count,
       page: parseInt(page),
@@ -614,6 +646,18 @@ const getDropMints = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = mints.filter(m => m.minter).map(m => m.minter.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedMints = mints.map(mint => {
+    const mintData = mint.toJSON();
+    if (mintData.minter) {
+      mintData.minter.subscriptionPlan = subscriptionMap[mintData.minter.walletAddress] || 'free';
+    }
+    return mintData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
     drop: {
       id: drop.id,
@@ -621,7 +665,7 @@ const getDropMints = async (req, res) => {
       totalSupply: drop.totalSupply,
       mintedCount: drop.mintedCount
     },
-    mints,
+    mints: enrichedMints,
     pagination: {
       total: count,
       page: parseInt(page),

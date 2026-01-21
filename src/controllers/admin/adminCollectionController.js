@@ -2,6 +2,9 @@ const { Op } = require('sequelize');
 const { Collection, User, Drop, AdminActivity, sequelize } = require('../../models');
 const ApiError = require('../../utils/ApiError');
 const ApiResponse = require('../../utils/ApiResponse');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../../utils/userHelpers');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -96,8 +99,19 @@ const getCollections = async (req, res) => {
     };
   }));
 
+  // Enrich with subscription plans
+  const walletAddresses = collectionsWithStats.filter(c => c.creator).map(c => c.creator.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedCollections = collectionsWithStats.map(collection => {
+    if (collection.creator) {
+      collection.creator.subscriptionPlan = subscriptionMap[collection.creator.walletAddress] || 'free';
+    }
+    return collection;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    collections: collectionsWithStats,
+    collections: enrichedCollections,
     pagination: {
       total: count,
       page: parseInt(page),
@@ -134,8 +148,15 @@ const getCollectionById = async (req, res) => {
     order: [['createdAt', 'DESC']]
   });
 
+  // Enrich with subscription plan
+  const collectionData = collection.toJSON();
+  if (collectionData.creator) {
+    const subscriptionMap = await getActiveSubscriptionsForWallets([collectionData.creator.walletAddress]);
+    collectionData.creator.subscriptionPlan = subscriptionMap[collectionData.creator.walletAddress] || 'free';
+  }
+
   res.status(200).json(new ApiResponse(200, {
-    collection: collection.toJSON(),
+    collection: collectionData,
     drops
   }, 'Collection details retrieved successfully'));
 };
@@ -398,8 +419,20 @@ const getPendingVerificationCollections = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = collections.filter(c => c.creator).map(c => c.creator.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedCollections = collections.map(collection => {
+    const collectionData = collection.toJSON();
+    if (collectionData.creator) {
+      collectionData.creator.subscriptionPlan = subscriptionMap[collectionData.creator.walletAddress] || 'free';
+    }
+    return collectionData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    collections,
+    collections: enrichedCollections,
     pagination: {
       total: count,
       page: parseInt(page),

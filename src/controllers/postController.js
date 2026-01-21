@@ -5,6 +5,10 @@ const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
 const { initBoostEngine } = require('../services/boostEngine');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions
+} = require('../utils/userHelpers');
 
 /**
  * Helper function to log activity (async, non-blocking)
@@ -86,6 +90,9 @@ const getRecentComments = async (postId, limit = 3) => {
   const authorMap = {};
   authors.forEach(a => { authorMap[a.walletAddress] = a; });
 
+  // Fetch subscription plans for comment authors
+  const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
+
   return comments.map(comment => {
     const author = authorMap[comment.authorWalletAddress];
     return {
@@ -95,7 +102,8 @@ const getRecentComments = async (postId, limit = 3) => {
         walletAddress: author.walletAddress,
         username: author.username,
         profileImage: author.profileImage,
-        isVerified: author.isVerified
+        isVerified: author.isVerified,
+        subscriptionPlan: subscriptionMap[author.walletAddress] || 'free'
       } : null,
       content: comment.content,
       likesCount: comment.likesCount,
@@ -108,7 +116,7 @@ const getRecentComments = async (postId, limit = 3) => {
 /**
  * Helper function to format post with likes/comments info
  */
-const formatPostWithEngagement = async (post, author, userWalletAddress = null, includeRecentComments = true) => {
+const formatPostWithEngagement = async (post, author, userWalletAddress = null, includeRecentComments = true, subscriptionPlan = null) => {
   const isLiked = await checkUserLiked(post.id, userWalletAddress);
   const recentComments = includeRecentComments ? await getRecentComments(post.id, 3) : [];
 
@@ -120,6 +128,7 @@ const formatPostWithEngagement = async (post, author, userWalletAddress = null, 
       username: author.username,
       profileImage: author.profileImage,
       isVerified: author.isVerified,
+      subscriptionPlan: subscriptionPlan || 'free',
       ...(author.bio !== undefined && { bio: author.bio })
     } : null,
     content: post.content,
@@ -249,7 +258,11 @@ const createPost = async (req, res, next) => {
 
     logger.info(`New post created by ${authorWalletAddress}, type: ${postType}`);
 
-    const formattedPost = await formatPostWithEngagement(post, author, authorWalletAddress, false);
+    // Fetch subscription plan for author
+    const subscriptionMap = await getActiveSubscriptionsForWallets([authorWalletAddress]);
+    const subscriptionPlan = subscriptionMap[authorWalletAddress] || 'free';
+
+    const formattedPost = await formatPostWithEngagement(post, author, authorWalletAddress, false, subscriptionPlan);
 
     res.status(201).json(
       new ApiResponse(201, { post: formattedPost }, 'Post created successfully')
@@ -298,9 +311,13 @@ const getUserPosts = async (req, res, next) => {
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
     });
 
+    // Fetch subscription plan for author
+    const subscriptionMap = await getActiveSubscriptionsForWallets([walletAddress]);
+    const subscriptionPlan = subscriptionMap[walletAddress] || 'free';
+
     // Format posts with engagement data
     const formattedPosts = await Promise.all(
-      posts.map(post => formatPostWithEngagement(post, author, viewerWalletAddress))
+      posts.map(post => formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan))
     );
 
     logger.info(`Posts fetched for wallet: ${walletAddress}`);
@@ -389,6 +406,9 @@ const getAllPosts = async (req, res, next) => {
       authorMap[author.walletAddress] = author;
     });
 
+    // Fetch subscription plans for all authors
+    const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
+
     // Always apply boost scoring
     let processedPosts = posts;
     if (posts.length > 0) {
@@ -418,10 +438,13 @@ const getAllPosts = async (req, res, next) => {
     const formattedPosts = await Promise.all(
       processedPosts.map(async (post) => {
         const author = authorMap[post.authorWalletAddress];
+        const subscriptionPlan = subscriptionMap[post.authorWalletAddress] || 'free';
         const formatted = await formatPostWithEngagement(
           post.toJSON ? post : { ...post, toJSON: () => post },
           author,
-          viewerWalletAddress
+          viewerWalletAddress,
+          true,
+          subscriptionPlan
         );
 
         // Always include boost info
@@ -490,9 +513,13 @@ const getPostById = async (req, res, next) => {
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
     });
 
+    // Fetch subscription plan for author
+    const subscriptionMap = await getActiveSubscriptionsForWallets([post.authorWalletAddress]);
+    const subscriptionPlan = subscriptionMap[post.authorWalletAddress] || 'free';
+
     logger.info(`Post fetched: ${postId}`);
 
-    const formattedPost = await formatPostWithEngagement(post, author, viewerWalletAddress);
+    const formattedPost = await formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan);
 
     res.status(200).json(
       new ApiResponse(200, { post: formattedPost }, 'Post retrieved successfully')
@@ -628,9 +655,13 @@ const updatePost = async (req, res, next) => {
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
     });
 
+    // Fetch subscription plan for author
+    const subscriptionMap = await getActiveSubscriptionsForWallets([post.authorWalletAddress]);
+    const subscriptionPlan = subscriptionMap[post.authorWalletAddress] || 'free';
+
     logger.info(`Post updated: ${postId} by ${authorWalletAddress}`);
 
-    const formattedPost = await formatPostWithEngagement(updatedPost, author, authorWalletAddress);
+    const formattedPost = await formatPostWithEngagement(updatedPost, author, authorWalletAddress, true, subscriptionPlan);
 
     res.status(200).json(
       new ApiResponse(200, { post: formattedPost }, 'Post updated successfully')
@@ -892,6 +923,9 @@ const getPostLikes = async (req, res, next) => {
     const userMap = {};
     users.forEach(u => { userMap[u.walletAddress] = u; });
 
+    // Fetch subscription plans for all users who liked
+    const subscriptionMap = await getActiveSubscriptionsForWallets(userAddresses);
+
     const formattedLikes = likes.map(like => {
       const user = userMap[like.userWalletAddress];
       return {
@@ -900,7 +934,8 @@ const getPostLikes = async (req, res, next) => {
           walletAddress: user.walletAddress,
           username: user.username,
           profileImage: user.profileImage,
-          isVerified: user.isVerified
+          isVerified: user.isVerified,
+          subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
         } : null,
         likedAt: like.createdAt
       };
@@ -1056,6 +1091,10 @@ const addComment = async (req, res, next) => {
 
     await post.reload();
 
+    // Fetch subscription plan for comment author
+    const subscriptionMap = await getActiveSubscriptionsForWallets([authorWalletAddress]);
+    const subscriptionPlan = subscriptionMap[authorWalletAddress] || 'free';
+
     logger.info(`Comment added to post ${postId} by ${authorWalletAddress}`);
 
     res.status(201).json(
@@ -1068,7 +1107,8 @@ const addComment = async (req, res, next) => {
             walletAddress: author.walletAddress,
             username: author.username,
             profileImage: author.profileImage,
-            isVerified: author.isVerified
+            isVerified: author.isVerified,
+            subscriptionPlan: subscriptionPlan
           },
           content: comment.content,
           parentCommentId: comment.parentCommentId,
@@ -1138,6 +1178,9 @@ const getPostComments = async (req, res, next) => {
     const authorMap = {};
     authors.forEach(a => { authorMap[a.walletAddress] = a; });
 
+    // Fetch subscription plans for all comment authors
+    const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
+
     const formattedComments = comments.map(comment => {
       const author = authorMap[comment.authorWalletAddress];
       return {
@@ -1148,7 +1191,8 @@ const getPostComments = async (req, res, next) => {
           walletAddress: author.walletAddress,
           username: author.username,
           profileImage: author.profileImage,
-          isVerified: author.isVerified
+          isVerified: author.isVerified,
+          subscriptionPlan: subscriptionMap[author.walletAddress] || 'free'
         } : null,
         content: comment.content,
         parentCommentId: comment.parentCommentId,
@@ -1223,6 +1267,10 @@ const updateComment = async (req, res, next) => {
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
     });
 
+    // Fetch subscription plan for comment author
+    const subscriptionMap = await getActiveSubscriptionsForWallets([authorWalletAddress]);
+    const subscriptionPlan = subscriptionMap[authorWalletAddress] || 'free';
+
     logger.info(`Comment ${commentId} updated by ${authorWalletAddress}`);
 
     res.status(200).json(
@@ -1235,7 +1283,8 @@ const updateComment = async (req, res, next) => {
             walletAddress: author.walletAddress,
             username: author.username,
             profileImage: author.profileImage,
-            isVerified: author.isVerified
+            isVerified: author.isVerified,
+            subscriptionPlan: subscriptionPlan
           } : null,
           content: comment.content,
           parentCommentId: comment.parentCommentId,
@@ -1386,10 +1435,14 @@ const getFollowingPosts = async (req, res, next) => {
       });
     }
 
+    // Fetch subscription plans for all authors
+    const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
+
     // Format posts with engagement data
     const formattedPosts = await Promise.all(posts.map(async (post) => {
       const author = authorMap[post.authorWalletAddress];
-      return await formatPostWithEngagement(post, author, viewerWallet, true);
+      const subscriptionPlan = subscriptionMap[post.authorWalletAddress] || 'free';
+      return await formatPostWithEngagement(post, author, viewerWallet, true, subscriptionPlan);
     }));
 
     logger.info(`Following feed fetched for wallet: ${walletAddress}, following ${followingAddresses.length} users`);

@@ -1,4 +1,7 @@
 const logger = require('../utils/logger');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../utils/userHelpers');
 
 /**
  * Notification Service
@@ -713,8 +716,12 @@ class NotificationService {
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
       });
 
+      // Enrich senders with subscription data
+      const sendersPlain = senders.map(s => s.get({ plain: true }));
+      const enrichedSenders = await getActiveSubscriptionsForWallets(sendersPlain);
+
       const senderMap = {};
-      senders.forEach(sender => {
+      enrichedSenders.forEach(sender => {
         senderMap[sender.walletAddress] = sender;
       });
 
@@ -730,12 +737,14 @@ class NotificationService {
             walletAddress: sender.walletAddress,
             username: sender.username,
             profileImage: sender.profileImage,
-            isVerified: sender.isVerified
+            isVerified: sender.isVerified,
+            subscriptionPlan: sender.subscriptionPlan
           } : {
             walletAddress: notification.senderWalletAddress,
             username: null,
             profileImage: null,
-            isVerified: false
+            isVerified: false,
+            subscriptionPlan: null
           },
           relatedEntityId: notification.relatedEntityId,
           relatedEntityType: notification.relatedEntityType,

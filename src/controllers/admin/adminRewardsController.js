@@ -21,6 +21,9 @@ const ApiResponse = require('../../utils/ApiResponse');
 const xrplService = require('../../services/xrplService');
 const xrplConfig = require('../../config/xrpl');
 const { initBoostEngine } = require('../../services/boostEngine');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../../utils/userHelpers');
 
 // Helper to get admin wallet (fallback for dev mode)
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -95,13 +98,24 @@ const getTopTraders = async (req, res) => {
     };
   }));
 
+  // Enrich with subscription plans
+  const walletAddresses = tradersWithDetails.filter(t => t.user).map(t => t.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedTraders = tradersWithDetails.map(trader => {
+    if (trader.user) {
+      trader.user.subscriptionPlan = subscriptionMap[trader.walletAddress] || 'free';
+    }
+    return trader;
+  });
+
   res.status(200).json(new ApiResponse(200, {
     category: 'trader',
     period: {
       month: targetMonth,
       year: targetYear
     },
-    topPerformers: tradersWithDetails
+    topPerformers: enrichedTraders
   }, 'Top traders retrieved successfully'));
 };
 
@@ -175,13 +189,24 @@ const getTopCreators = async (req, res) => {
     };
   }));
 
+  // Enrich with subscription plans
+  const walletAddresses = creatorsWithDetails.filter(c => c.user).map(c => c.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedCreators = creatorsWithDetails.map(creator => {
+    if (creator.user) {
+      creator.user.subscriptionPlan = subscriptionMap[creator.walletAddress] || 'free';
+    }
+    return creator;
+  });
+
   res.status(200).json(new ApiResponse(200, {
     category: 'creator',
     period: {
       month: targetMonth,
       year: targetYear
     },
-    topPerformers: creatorsWithDetails
+    topPerformers: enrichedCreators
   }, 'Top creators retrieved successfully'));
 };
 
@@ -290,13 +315,24 @@ const getTopInfluencers = async (req, res) => {
       ...inf
     }));
 
+  // Enrich with subscription plans
+  const walletAddresses = sortedInfluencers.filter(i => i.user).map(i => i.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedInfluencers = sortedInfluencers.map(influencer => {
+    if (influencer.user) {
+      influencer.user.subscriptionPlan = subscriptionMap[influencer.walletAddress] || 'free';
+    }
+    return influencer;
+  });
+
   res.status(200).json(new ApiResponse(200, {
     category: 'influencer',
     period: {
       month: targetMonth,
       year: targetYear
     },
-    topPerformers: sortedInfluencers
+    topPerformers: enrichedInfluencers
   }, 'Top influencers retrieved successfully'));
 };
 
@@ -714,8 +750,20 @@ const getRewardHistory = async (req, res) => {
     raw: true
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = rewards.filter(r => r.recipient).map(r => r.recipient.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedRewards = rewards.map(reward => {
+    const rewardData = reward.toJSON();
+    if (rewardData.recipient) {
+      rewardData.recipient.subscriptionPlan = subscriptionMap[rewardData.recipient.walletAddress] || 'free';
+    }
+    return rewardData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    rewards,
+    rewards: enrichedRewards,
     totals: {
       totalDistributed: totals[0]?.totalAmount || '0',
       totalDistributedXrp: ((parseFloat(totals[0]?.totalAmount) || 0) / 1000000).toFixed(6),
@@ -1280,6 +1328,10 @@ const getTreasuryWalletStatistics = async (req, res) => {
     where: { transactionStatus: 'failed' }
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = recentDistributions.filter(d => d.recipient).map(d => d.recipientWalletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
   res.status(200).json(new ApiResponse(200, {
     walletAddress,
     balance: {
@@ -1293,19 +1345,25 @@ const getTreasuryWalletStatistics = async (req, res) => {
       amountXrp: (Number(yearTotal) / 1000000).toFixed(6),
       count: yearCount
     },
-    recentDistributions: recentDistributions.map(d => ({
-      id: d.id,
-      category: d.category,
-      rank: d.rank,
-      recipientWallet: d.recipientWalletAddress,
-      recipient: d.recipient,
-      amount: d.rewardAmount,
-      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
-      transactionHash: d.transactionHash,
-      paidAt: d.paidAt,
-      periodMonth: d.periodMonth,
-      periodYear: d.periodYear
-    })),
+    recentDistributions: recentDistributions.map(d => {
+      const recipientData = d.recipient ? d.recipient.toJSON() : null;
+      if (recipientData) {
+        recipientData.subscriptionPlan = subscriptionMap[d.recipientWalletAddress] || 'free';
+      }
+      return {
+        id: d.id,
+        category: d.category,
+        rank: d.rank,
+        recipientWallet: d.recipientWalletAddress,
+        recipient: recipientData,
+        amount: d.rewardAmount,
+        amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+        transactionHash: d.transactionHash,
+        paidAt: d.paidAt,
+        periodMonth: d.periodMonth,
+        periodYear: d.periodYear
+      };
+    }),
     pendingDistributions: pendingCount,
     failedDistributions: failedCount
   }, 'Treasury wallet statistics retrieved successfully'));
@@ -1430,26 +1488,36 @@ const getTreasuryDistributionHistory = async (req, res) => {
     raw: true
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = distributions.filter(d => d.recipient).map(d => d.recipientWalletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
   res.status(200).json(new ApiResponse(200, {
-    distributions: distributions.map(d => ({
-      id: d.id,
-      periodMonth: d.periodMonth,
-      periodYear: d.periodYear,
-      category: d.category,
-      rank: d.rank,
-      recipientWallet: d.recipientWalletAddress,
-      recipient: d.recipient,
-      amount: d.rewardAmount,
-      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
-      metricValue: d.metricValue,
-      metricType: d.metricType,
-      transactionHash: d.transactionHash,
-      transactionStatus: d.transactionStatus,
-      transactionError: d.transactionError,
-      paidAt: d.paidAt,
-      initiatedBy: d.initiatedBy,
-      createdAt: d.createdAt
-    })),
+    distributions: distributions.map(d => {
+      const recipientData = d.recipient ? d.recipient.toJSON() : null;
+      if (recipientData) {
+        recipientData.subscriptionPlan = subscriptionMap[d.recipientWalletAddress] || 'free';
+      }
+      return {
+        id: d.id,
+        periodMonth: d.periodMonth,
+        periodYear: d.periodYear,
+        category: d.category,
+        rank: d.rank,
+        recipientWallet: d.recipientWalletAddress,
+        recipient: recipientData,
+        amount: d.rewardAmount,
+        amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+        metricValue: d.metricValue,
+        metricType: d.metricType,
+        transactionHash: d.transactionHash,
+        transactionStatus: d.transactionStatus,
+        transactionError: d.transactionError,
+        paidAt: d.paidAt,
+        initiatedBy: d.initiatedBy,
+        createdAt: d.createdAt
+      };
+    }),
     summary: {
       totalDistributed: summaryStats?.totalAmount || '0',
       totalDistributedXrp: ((parseFloat(summaryStats?.totalAmount) || 0) / 1000000).toFixed(6),
@@ -1646,6 +1714,14 @@ const setMonthlyRanking = async (req, res) => {
       isVerified: user?.isVerified || false
     };
   }));
+
+  // Enrich with subscription plans
+  const walletAddresses = enrichedRankings.map(r => r.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  enrichedRankings.forEach(ranking => {
+    ranking.subscriptionPlan = subscriptionMap[ranking.walletAddress] || 'free';
+  });
 
   // Sort by rank
   enrichedRankings.sort((a, b) => a.rank - b.rank);
@@ -2324,6 +2400,10 @@ const getDistributionBatch = async (req, res) => {
   }
   summary.totalAmount = summary.totalAmount.toString();
 
+  // Enrich with subscription plans
+  const walletAddresses = distributions.filter(d => d.recipient).map(d => d.recipientWalletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
   res.status(200).json(new ApiResponse(200, {
     batchId,
     period: {
@@ -2332,19 +2412,25 @@ const getDistributionBatch = async (req, res) => {
     },
     initiatedBy: distributions[0].initiatedBy,
     createdAt: distributions[0].createdAt,
-    distributions: distributions.map(d => ({
-      id: d.id,
-      category: d.category,
-      rank: d.rank,
-      recipientWallet: d.recipientWalletAddress,
-      recipient: d.recipient,
-      amount: d.rewardAmount,
-      amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
-      transactionHash: d.transactionHash,
-      transactionStatus: d.transactionStatus,
-      transactionError: d.transactionError,
-      paidAt: d.paidAt
-    })),
+    distributions: distributions.map(d => {
+      const recipientData = d.recipient ? d.recipient.toJSON() : null;
+      if (recipientData) {
+        recipientData.subscriptionPlan = subscriptionMap[d.recipientWalletAddress] || 'free';
+      }
+      return {
+        id: d.id,
+        category: d.category,
+        rank: d.rank,
+        recipientWallet: d.recipientWalletAddress,
+        recipient: recipientData,
+        amount: d.rewardAmount,
+        amountXrp: (parseInt(d.rewardAmount) / 1000000).toFixed(6),
+        transactionHash: d.transactionHash,
+        transactionStatus: d.transactionStatus,
+        transactionError: d.transactionError,
+        paidAt: d.paidAt
+      };
+    }),
     summary
   }, 'Distribution batch retrieved successfully'));
 };
@@ -2651,33 +2737,43 @@ const getRewardTransactionHistory = async (req, res) => {
   // Get network info for explorer URLs
   const networkInfo = xrplConfig.getNetworkInfo();
 
+  // Enrich with subscription plans
+  const walletAddresses = transactions.filter(t => t.recipient).map(t => t.recipientWalletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
   res.status(200).json(new ApiResponse(200, {
     network: {
       name: networkInfo.network,
       isTestnet: networkInfo.isTestnet,
       explorerUrl: networkInfo.explorerUrl
     },
-    transactions: transactions.map(t => ({
-      id: t.id,
-      periodMonth: t.periodMonth,
-      periodYear: t.periodYear,
-      category: t.category,
-      rank: t.rank,
-      recipientWallet: t.recipientWalletAddress,
-      recipientWalletUrl: xrplConfig.getAccountUrl(t.recipientWalletAddress),
-      recipient: t.recipient,
-      rewardAmount: t.rewardAmount,
-      rewardAmountXrp: (parseInt(t.rewardAmount) / 1000000).toFixed(6),
-      metricType: t.metricType,
-      metricValue: t.metricValue,
-      transactionHash: t.transactionHash,
-      transactionUrl: t.transactionHash ? xrplConfig.getTransactionUrl(t.transactionHash) : null,
-      transactionStatus: t.transactionStatus,
-      transactionError: t.transactionError,
-      paidAt: t.paidAt,
-      initiatedBy: t.initiatedBy,
-      createdAt: t.createdAt
-    })),
+    transactions: transactions.map(t => {
+      const recipientData = t.recipient ? t.recipient.toJSON() : null;
+      if (recipientData) {
+        recipientData.subscriptionPlan = subscriptionMap[t.recipientWalletAddress] || 'free';
+      }
+      return {
+        id: t.id,
+        periodMonth: t.periodMonth,
+        periodYear: t.periodYear,
+        category: t.category,
+        rank: t.rank,
+        recipientWallet: t.recipientWalletAddress,
+        recipientWalletUrl: xrplConfig.getAccountUrl(t.recipientWalletAddress),
+        recipient: recipientData,
+        rewardAmount: t.rewardAmount,
+        rewardAmountXrp: (parseInt(t.rewardAmount) / 1000000).toFixed(6),
+        metricType: t.metricType,
+        metricValue: t.metricValue,
+        transactionHash: t.transactionHash,
+        transactionUrl: t.transactionHash ? xrplConfig.getTransactionUrl(t.transactionHash) : null,
+        transactionStatus: t.transactionStatus,
+        transactionError: t.transactionError,
+        paidAt: t.paidAt,
+        initiatedBy: t.initiatedBy,
+        createdAt: t.createdAt
+      };
+    }),
     summary: {
       totalAmount: filteredSummary?.totalAmount || '0',
       totalAmountXrp: ((parseFloat(filteredSummary?.totalAmount) || 0) / 1000000).toFixed(6),

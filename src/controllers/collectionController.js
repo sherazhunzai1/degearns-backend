@@ -7,6 +7,11 @@ const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const crypto = require('crypto');
 const { initBoostEngine } = require('../services/boostEngine');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions,
+  createUserInfoWithSubscription
+} = require('../utils/userHelpers');
 
 /**
  * Helper function to convert gateway URLs to IPFS hash format
@@ -283,6 +288,20 @@ const getCollections = async (req, res, next) => {
       collectionsWithStats = boostedCollections;
     }
 
+    // Add subscription plans to creator data
+    const creatorWallets = collectionsWithStats
+      .map(c => c.creator?.walletAddress)
+      .filter(Boolean);
+    const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
+
+    collectionsWithStats = collectionsWithStats.map(collection => ({
+      ...collection,
+      creator: collection.creator ? {
+        ...collection.creator,
+        subscriptionPlan: subscriptionMap[collection.creator.walletAddress] || 'free'
+      } : null
+    }));
+
     res.status(200).json(
       new ApiResponse(200, {
         collections: collectionsWithStats,
@@ -421,19 +440,23 @@ const getCollection = async (req, res, next) => {
       const issuerAddresses = [...new Set(nftsWithOffers.map(item => item.nft.Issuer))];
       const allAddresses = [...new Set([...ownerAddresses, ...issuerAddresses])];
 
-      const users = await User.findAll({
-        where: { walletAddress: allAddresses },
-        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-      });
+      const [users, subscriptionMap] = await Promise.all([
+        User.findAll({
+          where: { walletAddress: allAddresses },
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }),
+        getActiveSubscriptionsForWallets(allAddresses)
+      ]);
 
-      // Create a map for quick lookup
+      // Create a map for quick lookup with subscription plans
       const userMap = {};
       users.forEach(user => {
         userMap[user.walletAddress] = {
           walletAddress: user.walletAddress,
           username: user.username,
           profileImage: user.profileImage,
-          isVerified: user.isVerified
+          isVerified: user.isVerified,
+          subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
         };
       });
 
@@ -706,10 +729,15 @@ const getUserCollections = async (req, res, next) => {
 
     // Get all unique issuer addresses to fetch user info
     const issuerAddresses = [...new Set(accountNFTs.map(nft => nft.Issuer))];
-    const users = await User.findAll({
-      where: { walletAddress: issuerAddresses },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-    });
+    const allUserAddresses = [...new Set([...issuerAddresses, walletAddress])];
+
+    const [users, subscriptionMap] = await Promise.all([
+      User.findAll({
+        where: { walletAddress: allUserAddresses },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      getActiveSubscriptionsForWallets(allUserAddresses)
+    ]);
 
     const userMap = {};
     users.forEach(user => {
@@ -717,7 +745,8 @@ const getUserCollections = async (req, res, next) => {
         walletAddress: user.walletAddress,
         username: user.username,
         profileImage: user.profileImage,
-        isVerified: user.isVerified
+        isVerified: user.isVerified,
+        subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
       };
     });
 
@@ -794,6 +823,23 @@ const getUserCollections = async (req, res, next) => {
           collectionTitle = `Collection #${taxonNum}`;
         }
 
+        // Build creator object with subscription plan
+        let creatorData;
+        if (dbCollection && dbCollection.creator) {
+          creatorData = {
+            ...dbCollection.creator.toJSON ? dbCollection.creator.toJSON() : dbCollection.creator,
+            subscriptionPlan: subscriptionMap[dbCollection.creator.walletAddress] || 'free'
+          };
+        } else {
+          creatorData = userMap[issuer] || {
+            walletAddress: issuer,
+            username: issuer,
+            profileImage: null,
+            isVerified: false,
+            subscriptionPlan: subscriptionMap[issuer] || 'free'
+          };
+        }
+
         // Build collection object
         return {
           id: dbCollection ? dbCollection.id : crypto.randomUUID(),
@@ -805,17 +851,13 @@ const getUserCollections = async (req, res, next) => {
           listedCount: listedCount,
           listedPercentage: listedPercentage,
           volume: dbCollection ? dbCollection.totalVolume : '0',
-          creator: dbCollection ? dbCollection.creator : (userMap[issuer] || {
-            walletAddress: issuer,
-            username: issuer,
-            profileImage: null,
-            isVerified: false
-          }),
+          creator: creatorData,
           owner: userMap[walletAddress] || {
             walletAddress: walletAddress,
             username: walletAddress,
             profileImage: null,
-            isVerified: false
+            isVerified: false,
+            subscriptionPlan: subscriptionMap[walletAddress] || 'free'
           },
           // Include DB collection data if available
           collectionId: dbCollection ? dbCollection.id : null,
@@ -1706,10 +1748,14 @@ const getCollectionHistory = async (req, res, next) => {
       if (entry.owner) allAddresses.add(entry.owner);
     });
 
-    const users = await User.findAll({
-      where: { walletAddress: Array.from(allAddresses) },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-    });
+    const addressArray = Array.from(allAddresses);
+    const [users, subscriptionMap] = await Promise.all([
+      User.findAll({
+        where: { walletAddress: addressArray },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      getActiveSubscriptionsForWallets(addressArray)
+    ]);
 
     const userMap = {};
     users.forEach(user => {
@@ -1717,7 +1763,8 @@ const getCollectionHistory = async (req, res, next) => {
         walletAddress: user.walletAddress,
         username: user.username,
         profileImage: user.profileImage,
-        isVerified: user.isVerified
+        isVerified: user.isVerified,
+        subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
       };
     });
 
@@ -1728,7 +1775,8 @@ const getCollectionHistory = async (req, res, next) => {
         walletAddress: walletAddress,
         username: walletAddress,
         profileImage: null,
-        isVerified: false
+        isVerified: false,
+        subscriptionPlan: subscriptionMap[walletAddress] || 'free'
       };
     };
 

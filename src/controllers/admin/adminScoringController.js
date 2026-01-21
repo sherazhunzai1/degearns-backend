@@ -18,6 +18,9 @@ const ApiResponse = require('../../utils/ApiResponse');
 const ScoringEngine = require('../../services/scoringEngine');
 const { getScoringJobs } = require('../../jobs/scoringJobs');
 const scoringConfig = require('../../config/scoring');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../../utils/userHelpers');
 
 // Helper to get admin wallet
 const getAdminWallet = (req) => req.user?.walletAddress || 'dev-admin';
@@ -158,8 +161,20 @@ const getAllSubscriptions = async (req, res) => {
     offset
   });
 
+  // Enrich with subscription plans
+  const walletAddresses = rows.filter(s => s.user).map(s => s.user.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedRows = rows.map(subscription => {
+    const subscriptionData = subscription.toJSON();
+    if (subscriptionData.user) {
+      subscriptionData.user.subscriptionPlan = subscriptionMap[subscriptionData.user.walletAddress] || 'free';
+    }
+    return subscriptionData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    subscriptions: rows,
+    subscriptions: enrichedRows,
     pagination: {
       page: parsedPage,
       limit: parsedLimit,
@@ -389,6 +404,18 @@ const getSubscriptionStats = async (req, res) => {
     })
   ]);
 
+  // Enrich with subscription plans
+  const walletAddresses = recentSubscriptions.filter(s => s.user).map(s => s.user.walletAddress);
+  const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+  const enrichedRecentSubscriptions = recentSubscriptions.map(subscription => {
+    const subscriptionData = subscription.toJSON();
+    if (subscriptionData.user) {
+      subscriptionData.user.subscriptionPlan = subscriptionMap[subscriptionData.user.walletAddress] || 'free';
+    }
+    return subscriptionData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
     totalByPlan: totalByPlan.reduce((acc, item) => {
       acc[item.planType] = parseInt(item.total);
@@ -398,7 +425,7 @@ const getSubscriptionStats = async (req, res) => {
       acc[item.planType] = parseInt(item.active);
       return acc;
     }, {}),
-    recentSubscriptions
+    recentSubscriptions: enrichedRecentSubscriptions
   }, 'Subscription statistics retrieved'));
 };
 

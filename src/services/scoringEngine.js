@@ -7,6 +7,9 @@
 
 const { Op } = require('sequelize');
 const scoringConfig = require('../config/scoring');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../utils/userHelpers');
 
 class ScoringEngine {
   constructor(models) {
@@ -475,14 +478,29 @@ class ScoringEngine {
     });
 
     // Enrich with user details
-    const leaderboard = await Promise.all(stats.map(async (stat, index) => {
-      const [user, subscription] = await Promise.all([
-        User.findOne({
-          where: { walletAddress: stat.userWalletAddress },
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }),
-        Subscription.getActiveSubscription(stat.userWalletAddress)
-      ]);
+    const users = await User.findAll({
+      where: {
+        walletAddress: { [Op.in]: stats.map(s => s.userWalletAddress) }
+      },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'],
+      raw: true
+    });
+
+    // Create user lookup map
+    const userMap = new Map(users.map(u => [u.walletAddress, u]));
+
+    // Batch fetch subscriptions for all wallets
+    const walletAddresses = stats.map(s => s.userWalletAddress);
+    const subscriptionsMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+    // Build leaderboard with enriched user data
+    const leaderboard = stats.map((stat, index) => {
+      const user = userMap.get(stat.userWalletAddress);
+      const subscription = subscriptionsMap.get(stat.userWalletAddress);
+      const planType = subscription?.planType || 'free';
+
+      // Enrich user with subscription plan
+      const enrichedUser = user ? { ...user, subscriptionPlan: planType } : null;
 
       return {
         rank: offset + index + 1,
@@ -490,11 +508,11 @@ class ScoringEngine {
         score: parseFloat(stat[scoreField]),
         baseScore: parseFloat(stat[`${category}Score`]),
         boostMultiplier: parseFloat(stat.currentBoostMultiplier),
-        planType: subscription?.planType || 'free',
-        user: user ? user.toJSON() : null,
+        planType,
+        user: enrichedUser,
         metrics: this.getCategoryMetrics(stat, category)
       };
-    }));
+    });
 
     return leaderboard;
   }
@@ -592,9 +610,8 @@ class ScoringEngine {
     const targetMonth = month || period.month;
     const targetYear = year || period.year;
 
-    const [userStats, subscription, user, ranks] = await Promise.all([
+    const [userStats, user, ranks] = await Promise.all([
       UserStats.findOne({ where: { userWalletAddress: walletAddress } }),
-      Subscription.getActiveSubscription(walletAddress),
       User.findOne({
         where: { walletAddress },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
@@ -606,8 +623,16 @@ class ScoringEngine {
       return null;
     }
 
+    // Fetch subscription and enrich user data
+    const subscriptionsMap = await getActiveSubscriptionsForWallets([walletAddress]);
+    const subscription = subscriptionsMap.get(walletAddress);
+    const planType = subscription?.planType || 'free';
+
+    // Enrich user with subscription plan
+    const enrichedUser = user ? { ...user.toJSON(), subscriptionPlan: planType } : null;
+
     return {
-      user: user ? user.toJSON() : null,
+      user: enrichedUser,
       subscription: subscription ? subscription.toJSON() : { planType: 'free', boostMultiplier: 1.0 },
       stats: userStats.toJSON(),
       ranks,

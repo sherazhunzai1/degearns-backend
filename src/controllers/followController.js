@@ -4,6 +4,10 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
+const {
+  getActiveSubscriptionsForWallets,
+  enrichItemsWithSubscriptions
+} = require('../utils/userHelpers');
 
 /**
  * Helper function to log activity (async, non-blocking)
@@ -211,6 +215,9 @@ const getFollowers = async (req, res, next) => {
         viewerFollowingSet = new Set(viewerFollows.map(f => f.followingWalletAddress));
       }
 
+      // Get subscription plans for all followers
+      const subscriptionMap = await getActiveSubscriptionsForWallets(followerAddresses);
+
       followers = follows.map(follow => {
         const user = userMap[follow.followerWalletAddress];
         return {
@@ -219,6 +226,7 @@ const getFollowers = async (req, res, next) => {
           profileImage: user ? user.profileImage : null,
           isVerified: user ? user.isVerified : false,
           bio: user ? user.bio : null,
+          subscriptionPlan: subscriptionMap[follow.followerWalletAddress] || 'free',
           followedAt: follow.createdAt,
           isFollowing: viewerWalletAddress ? viewerFollowingSet.has(follow.followerWalletAddress) : undefined
         };
@@ -289,6 +297,9 @@ const getFollowing = async (req, res, next) => {
         viewerFollowingSet = new Set(viewerFollows.map(f => f.followingWalletAddress));
       }
 
+      // Get subscription plans for all following users
+      const subscriptionMap = await getActiveSubscriptionsForWallets(followingAddresses);
+
       following = follows.map(follow => {
         const user = userMap[follow.followingWalletAddress];
         return {
@@ -297,6 +308,7 @@ const getFollowing = async (req, res, next) => {
           profileImage: user ? user.profileImage : null,
           isVerified: user ? user.isVerified : false,
           bio: user ? user.bio : null,
+          subscriptionPlan: subscriptionMap[follow.followingWalletAddress] || 'free',
           followedAt: follow.createdAt,
           isFollowing: viewerWalletAddress ? (viewerWalletAddress === walletAddress ? true : viewerFollowingSet.has(follow.followingWalletAddress)) : undefined
         };

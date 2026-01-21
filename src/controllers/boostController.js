@@ -11,6 +11,9 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const { initBoostEngine } = require('../services/boostEngine');
+const {
+  getActiveSubscriptionsForWallets
+} = require('../utils/userHelpers');
 
 /**
  * Get user's current boost status
@@ -182,7 +185,7 @@ const getBoostLeaderboard = async (req, res, next) => {
     });
 
     // Get user details for each subscription
-    const leaderboard = await Promise.all(
+    const leaderboardData = await Promise.all(
       subscriptions.map(async (sub, index) => {
         const user = await User.findOne({
           where: { walletAddress: sub.userWalletAddress },
@@ -223,6 +226,18 @@ const getBoostLeaderboard = async (req, res, next) => {
         };
       })
     );
+
+    // Enrich user data with subscription plans
+    const walletAddresses = leaderboardData.map(item => item.user.walletAddress);
+    const subscriptionPlans = await getActiveSubscriptionsForWallets(walletAddresses);
+
+    const leaderboard = leaderboardData.map(item => ({
+      ...item,
+      user: {
+        ...item.user,
+        subscriptionPlan: subscriptionPlans[item.user.walletAddress] || null
+      }
+    }));
 
     res.status(200).json(
       new ApiResponse(200, {
