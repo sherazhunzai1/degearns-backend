@@ -158,9 +158,8 @@ const getCollections = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
-    // Check each collection for at least one NFT for sale on XRPL and calculate accurate stats
-    const validCollections = [];
-    const collectionsToDelete = [];
+    // Calculate stats from XRPL for each collection
+    const collectionsWithStats = [];
 
     for (const collection of collections) {
       try {
@@ -180,12 +179,10 @@ const getCollections = async (req, res, next) => {
         const prices = [];
 
         // Check each NFT for sell offers to calculate floor price and listed count
-        let hasListedNFT = false;
         for (const nft of collectionNFTs) {
           try {
             const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
             if (sellOffers && sellOffers.length > 0) {
-              hasListedNFT = true;
               listedCount++;
 
               // Collect prices for floor price calculation
@@ -201,42 +198,34 @@ const getCollections = async (req, res, next) => {
           }
         }
 
-        if (hasListedNFT) {
-          // Calculate floor price
-          const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
+        // Calculate floor price
+        const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
 
-          // Calculate listing percentage
-          const listingPercentage = totalSupply > 0
-            ? ((listedCount / totalSupply) * 100).toFixed(2)
-            : '0.00';
+        // Calculate listing percentage
+        const listingPercentage = totalSupply > 0
+          ? ((listedCount / totalSupply) * 100).toFixed(2)
+          : '0.00';
 
-          // Collection has at least one NFT for sale, keep it with accurate stats
-          validCollections.push({
-            collection,
-            stats: {
-              totalSupply,
-              floorPrice,
-              totalVolume: collection.totalVolume || '0', // Keep from database
-              listedCount,
-              listingPercentage
-            }
-          });
+        collectionsWithStats.push({
+          collection,
+          stats: {
+            totalSupply,
+            floorPrice,
+            totalVolume: collection.totalVolume || '0',
+            listedCount,
+            listingPercentage
+          }
+        });
 
-          // Update collection stats in database
-          collection.totalSupply = totalSupply;
-          collection.floorPrice = floorPrice;
-          await collection.save();
-
-        } else {
-          // No NFTs for sale, mark for deletion
-          logger.info(`Collection ${collection.name} (taxon ${taxon}) has no NFTs for sale, marking for deletion`);
-          collectionsToDelete.push(collection);
-        }
+        // Update collection stats in database
+        collection.totalSupply = totalSupply;
+        collection.floorPrice = floorPrice;
+        await collection.save();
 
       } catch (error) {
         logger.error(`Error checking collection ${collection.name} on XRPL:`, error.message);
-        // On error, keep the collection with database stats to avoid accidental deletion
-        validCollections.push({
+        // On error, keep the collection with database stats
+        collectionsWithStats.push({
           collection,
           stats: {
             totalSupply: collection.totalSupply || 0,
@@ -249,25 +238,18 @@ const getCollections = async (req, res, next) => {
       }
     }
 
-    // Delete collections without listed NFTs
-    if (collectionsToDelete.length > 0) {
-      const idsToDelete = collectionsToDelete.map(c => c.id);
-      await Collection.destroy({ where: { id: idsToDelete } });
-      logger.info(`Deleted ${collectionsToDelete.length} collections without listed NFTs`);
-    }
-
-    // Format response with accurate stats from XRPL
-    let collectionsWithStats = validCollections.map(item => ({
+    // Format response with stats
+    let formattedCollections = collectionsWithStats.map(item => ({
       ...item.collection.toJSON(),
       stats: item.stats
     }));
 
     // Always apply boost scoring (boost is primary sort)
-    if (collectionsWithStats.length > 0) {
+    if (formattedCollections.length > 0) {
       const db = require('../models');
       const boostEngine = initBoostEngine(db);
       const boostedCollections = await boostEngine.boostCollections(
-        collectionsWithStats.map(c => ({
+        formattedCollections.map(c => ({
           ...c,
           creatorWalletAddress: c.creatorWalletAddress
         }))
@@ -291,16 +273,16 @@ const getCollections = async (req, res, next) => {
         return new Date(b.createdAt) - new Date(a.createdAt);
       });
 
-      collectionsWithStats = boostedCollections;
+      formattedCollections = boostedCollections;
     }
 
     // Add subscription plans to creator data
-    const creatorWallets = collectionsWithStats
+    const creatorWallets = formattedCollections
       .map(c => c.creator?.walletAddress)
       .filter(Boolean);
     const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
 
-    collectionsWithStats = collectionsWithStats.map(collection => ({
+    formattedCollections = formattedCollections.map(collection => ({
       ...collection,
       creator: collection.creator ? {
         ...collection.creator,
@@ -310,12 +292,12 @@ const getCollections = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        collections: collectionsWithStats,
+        collections: formattedCollections,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: validCollections.length,
-          pages: Math.ceil(validCollections.length / limit)
+          total: count,
+          pages: Math.ceil(count / limit)
         },
         sorting: {
           primary: 'boost',
