@@ -508,7 +508,7 @@ const getUpgradeOptions = async (req, res, next) => {
     const currentSubscription = await Subscription.getActiveSubscription(walletAddress);
     const currentPlan = currentSubscription?.planType || 'free';
 
-    // Get all active tiers
+    // Get all active tiers (sorted by sortOrder)
     const allTiers = await SubscriptionTier.getActiveTiers();
 
     // Get the subscription payment wallet
@@ -520,27 +520,36 @@ const getUpgradeOptions = async (req, res, next) => {
       attributes: ['walletAddress', 'label']
     });
 
-    // Determine which tiers are upgrades
-    const tierOrder = { free: 0, basic: 1, pro: 2, premium: 3 };
-    const currentTierOrder = tierOrder[currentPlan];
+    // Build tier order map from database (using sortOrder field)
+    const tierOrderMap = {};
+    allTiers.forEach(tier => {
+      tierOrderMap[tier.name] = tier.sortOrder;
+    });
 
+    // Get current tier's order (default to 0 for free if not in database)
+    const currentTierOrder = tierOrderMap[currentPlan] !== undefined ? tierOrderMap[currentPlan] : 0;
+
+    // Find current tier details
+    const currentTier = allTiers.find(t => t.name === currentPlan);
+    const currentBoostPercentage = currentTier ? currentTier.boostPercentage : 0;
+
+    // Filter tiers that are upgrades (higher sortOrder than current)
     const upgradeOptions = allTiers
-      .filter(tier => tierOrder[tier.name] > currentTierOrder)
+      .filter(tier => tier.sortOrder > currentTierOrder && tier.name !== 'free')
       .map(tier => ({
         ...tier.toJSON(),
         isUpgrade: true,
         upgradeFrom: currentPlan,
-        boostIncrease: `+${tier.boostPercentage - (currentSubscription ? Subscription.DEFAULT_BOOST_MULTIPLIERS[currentPlan] * 100 - 100 : 0)}%`
+        boostIncrease: `+${tier.boostPercentage - currentBoostPercentage}%`
       }));
-
-    const currentTier = allTiers.find(t => t.name === currentPlan);
 
     res.status(200).json(
       new ApiResponse(200, {
         currentPlan: {
           name: currentPlan,
           displayName: currentTier?.displayName || 'Free',
-          boostMultiplier: Subscription.DEFAULT_BOOST_MULTIPLIERS[currentPlan] || 1.0,
+          boostMultiplier: currentTier?.boostMultiplier || 1.0,
+          boostPercentage: currentBoostPercentage,
           expiresAt: currentSubscription?.endDate || null,
           remainingDays: currentSubscription?.getRemainingDays() || null
         },
