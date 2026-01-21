@@ -102,7 +102,7 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: true,
     indexes: [
       { unique: true, fields: ['slug'] },
-      { unique: true, fields: ['taxon'] },
+      { unique: true, fields: ['taxon', 'creatorWalletAddress'], name: 'unique_taxon_creator' },
       { fields: ['creatorWalletAddress'] },
       { fields: ['category'] },
       { fields: ['createdAt'] }
