@@ -12,10 +12,10 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'User wallet address'
     },
     planType: {
-      type: DataTypes.ENUM('free', 'basic', 'pro', 'premium'),
+      type: DataTypes.STRING(50),
       defaultValue: 'free',
       allowNull: false,
-      comment: 'Subscription tier: free (1.0x), basic (1.10x), pro (1.20x), premium (1.30x)'
+      comment: 'Subscription tier name from SubscriptionTiers table'
     },
     startDate: {
       type: DataTypes.DATE,
@@ -73,17 +73,31 @@ module.exports = (sequelize, DataTypes) => {
     ]
   });
 
-  // Boost multipliers for each plan type
-  Subscription.BOOST_MULTIPLIERS = {
+  // Default boost multipliers (fallback if SubscriptionTiers not available)
+  Subscription.DEFAULT_BOOST_MULTIPLIERS = {
     free: 1.0,
     basic: 1.10,    // 10% boost
     pro: 1.20,      // 20% boost
     premium: 1.30   // 30% boost
   };
 
-  // Get boost multiplier for a plan type
-  Subscription.getBoostMultiplier = function(planType) {
-    return this.BOOST_MULTIPLIERS[planType] || 1.0;
+  // Get boost multiplier for a plan type (async - fetches from SubscriptionTiers)
+  Subscription.getBoostMultiplier = async function(planType) {
+    try {
+      const { SubscriptionTier } = require('./index');
+      const tier = await SubscriptionTier.findOne({ where: { name: planType } });
+      if (tier) {
+        return parseFloat(tier.boostMultiplier) || 1.0;
+      }
+    } catch (error) {
+      console.warn('Failed to fetch tier from database, using default:', error.message);
+    }
+    return this.DEFAULT_BOOST_MULTIPLIERS[planType] || 1.0;
+  };
+
+  // Sync version for backward compatibility (uses defaults)
+  Subscription.getBoostMultiplierSync = function(planType) {
+    return this.DEFAULT_BOOST_MULTIPLIERS[planType] || 1.0;
   };
 
   // Static method to get active subscription for a user
@@ -104,9 +118,9 @@ module.exports = (sequelize, DataTypes) => {
   Subscription.getUserBoostMultiplier = async function(walletAddress) {
     const subscription = await this.getActiveSubscription(walletAddress);
     if (!subscription) {
-      return this.BOOST_MULTIPLIERS.free;
+      return 1.0; // Free tier default
     }
-    return this.BOOST_MULTIPLIERS[subscription.planType] || 1.0;
+    return await this.getBoostMultiplier(subscription.planType);
   };
 
   // Instance method to check if subscription is currently active
@@ -124,7 +138,8 @@ module.exports = (sequelize, DataTypes) => {
 
   Subscription.prototype.toJSON = function() {
     const values = Object.assign({}, this.get());
-    values.boostMultiplier = Subscription.BOOST_MULTIPLIERS[this.planType];
+    // Use default multipliers for sync JSON serialization
+    values.boostMultiplier = Subscription.DEFAULT_BOOST_MULTIPLIERS[this.planType] || 1.0;
     values.remainingDays = this.getRemainingDays();
     return values;
   };
