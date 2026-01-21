@@ -1,7 +1,8 @@
-const { User } = require('../models');
+const { User, Subscription } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { getActiveSubscriptionPlan } = require('../utils/userHelpers');
 
 /**
  * Get or create user by wallet address (XAMAN wallet connection)
@@ -46,9 +47,18 @@ const getOrCreateUser = async (req, res, next) => {
 
     logger.info(`User authenticated: ${walletAddress}`);
 
+    // Get user's subscription plan
+    const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+
+    // Build response with subscription plan
+    const userData = {
+      ...user.toJSON(),
+      subscriptionPlan
+    };
+
     res.status(200).json(
       new ApiResponse(200, {
-        user,
+        user: userData,
         isNewUser
       }, 'User authenticated successfully')
     );
@@ -82,8 +92,17 @@ const getMe = async (req, res, next) => {
       throw new ApiError(404, 'User not found');
     }
 
+    // Get user's subscription plan
+    const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+
+    // Build response with subscription plan
+    const userData = {
+      ...user.toJSON(),
+      subscriptionPlan
+    };
+
     res.status(200).json(
-      new ApiResponse(200, user, 'User profile retrieved successfully')
+      new ApiResponse(200, userData, 'User profile retrieved successfully')
     );
   } catch (error) {
     next(error);
@@ -158,8 +177,17 @@ const updateProfile = async (req, res, next) => {
 
     logger.info(`User profile updated: ${user.walletAddress}`);
 
+    // Get user's subscription plan
+    const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+
+    // Build response with subscription plan
+    const userData = {
+      ...user.toJSON(),
+      subscriptionPlan
+    };
+
     res.status(200).json(
-      new ApiResponse(200, user, 'Profile updated successfully')
+      new ApiResponse(200, userData, 'Profile updated successfully')
     );
   } catch (error) {
     next(error);
