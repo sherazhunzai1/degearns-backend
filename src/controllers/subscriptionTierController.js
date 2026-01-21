@@ -266,15 +266,29 @@ const subscribeToPlan = async (req, res, next) => {
       throw new ApiError(400, 'Wallet address is required');
     }
 
-    // Validate plan type
-    if (!planType || !['basic', 'pro', 'premium'].includes(planType)) {
-      throw new ApiError(400, 'Invalid plan type. Must be basic, pro, or premium');
+    if (!planType) {
+      throw new ApiError(400, 'Plan type is required');
     }
 
-    // Get tier details to validate pricing
+    // Validate plan type against SubscriptionTiers table
     const tier = await SubscriptionTier.getTierByName(planType);
-    if (!tier || !tier.isActive) {
+    if (!tier) {
+      // Get available tier names for error message
+      const availableTiers = await SubscriptionTier.findAll({
+        where: { isActive: true },
+        attributes: ['name']
+      });
+      const tierNames = availableTiers.map(t => t.name).filter(n => n !== 'free');
+      throw new ApiError(400, `Invalid plan type '${planType}'. Available plans: ${tierNames.join(', ')}`);
+    }
+
+    if (!tier.isActive) {
       throw new ApiError(400, 'Selected plan is not available');
+    }
+
+    // Free plan cannot be subscribed to (it's the default)
+    if (tier.name === 'free') {
+      throw new ApiError(400, 'Cannot subscribe to free plan. Free plan is the default tier.');
     }
 
     // Determine duration based on billing cycle
@@ -360,7 +374,7 @@ const subscribeToPlan = async (req, res, next) => {
     try {
       const previousPlan = existingSubscription?.planType || 'free';
       const previousBoost = existingSubscription
-        ? (Subscription.BOOST_MULTIPLIERS[previousPlan] * 100 - 100)
+        ? (Subscription.DEFAULT_BOOST_MULTIPLIERS[previousPlan] * 100 - 100)
         : 0;
 
       if (existingSubscription && previousPlan !== 'free') {
@@ -516,7 +530,7 @@ const getUpgradeOptions = async (req, res, next) => {
         ...tier.toJSON(),
         isUpgrade: true,
         upgradeFrom: currentPlan,
-        boostIncrease: `+${tier.boostPercentage - (currentSubscription ? Subscription.BOOST_MULTIPLIERS[currentPlan] * 100 - 100 : 0)}%`
+        boostIncrease: `+${tier.boostPercentage - (currentSubscription ? Subscription.DEFAULT_BOOST_MULTIPLIERS[currentPlan] * 100 - 100 : 0)}%`
       }));
 
     const currentTier = allTiers.find(t => t.name === currentPlan);
@@ -526,7 +540,7 @@ const getUpgradeOptions = async (req, res, next) => {
         currentPlan: {
           name: currentPlan,
           displayName: currentTier?.displayName || 'Free',
-          boostMultiplier: Subscription.BOOST_MULTIPLIERS[currentPlan] || 1.0,
+          boostMultiplier: Subscription.DEFAULT_BOOST_MULTIPLIERS[currentPlan] || 1.0,
           expiresAt: currentSubscription?.endDate || null,
           remainingDays: currentSubscription?.getRemainingDays() || null
         },
