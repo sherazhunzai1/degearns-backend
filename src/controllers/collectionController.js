@@ -88,14 +88,19 @@ const listCollection = async (req, res, next) => {
       );
     }
 
-    // Generate slug from name (make it unique by appending creator wallet prefix if needed)
-    let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    // Generate unique slug from name
+    let baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    let slug = baseSlug;
+    let slugSuffix = 0;
 
-    // Check if slug already exists, if so append wallet prefix to make it unique
-    const existingSlug = await Collection.findOne({ where: { slug } });
-    if (existingSlug) {
-      // Append first 8 chars of wallet address to make slug unique
-      slug = `${slug}-${creatorWalletAddress.substring(0, 8).toLowerCase()}`;
+    // Keep checking until we find a unique slug
+    while (true) {
+      const existingSlug = await Collection.findOne({ where: { slug } });
+      if (!existingSlug) break;
+
+      slugSuffix++;
+      // Append wallet prefix and counter to make slug unique
+      slug = `${baseSlug}-${creatorWalletAddress.substring(0, 6).toLowerCase()}${slugSuffix > 1 ? '-' + slugSuffix : ''}`;
     }
 
     // Create new collection
@@ -118,6 +123,12 @@ const listCollection = async (req, res, next) => {
       new ApiResponse(201, collection, 'Collection listed successfully')
     );
   } catch (error) {
+    // Log more details about the error
+    logger.error('Error creating collection:', {
+      message: error.message,
+      name: error.name,
+      errors: error.errors?.map(e => ({ message: e.message, path: e.path, value: e.value }))
+    });
     next(error);
   }
 };
