@@ -28,6 +28,13 @@ class XRPLConfig {
     this.treasuryWallet = null;
     this.network = process.env.XRPL_NETWORK || 'testnet';
 
+    // Reconnection settings
+    this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 10;
+    this.baseReconnectDelay = 1000; // 1 second
+    this.maxReconnectDelay = 60000; // 60 seconds
+
     // Get network config based on XRPL_NETWORK environment variable
     const networkConfig = NETWORK_CONFIGS[this.network] || NETWORK_CONFIGS.testnet;
 
@@ -181,6 +188,10 @@ class XRPLConfig {
       this.client = new Client(this.wssUrl);
       await this.client.connect();
 
+      // Reset reconnection state on successful connect
+      this.reconnectAttempts = 0;
+      this.isReconnecting = false;
+
       logger.info(`Connected to XRPL ${this.network} network`);
 
       // Initialize admin wallet
@@ -192,6 +203,7 @@ class XRPLConfig {
       // Handle connection events
       this.client.on('disconnected', (code) => {
         logger.warn(`XRPL disconnected with code: ${code}`);
+        this.handleDisconnect();
       });
 
       this.client.on('error', (errorCode, errorMessage) => {
@@ -205,6 +217,91 @@ class XRPLConfig {
     }
   }
 
+  /**
+   * Handle disconnection with automatic reconnection
+   */
+  async handleDisconnect() {
+    if (this.isReconnecting) {
+      return; // Already trying to reconnect
+    }
+
+    this.isReconnecting = true;
+
+    while (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+
+      // Calculate delay with exponential backoff
+      const delay = Math.min(
+        this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+        this.maxReconnectDelay
+      );
+
+      logger.info(`XRPL reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms...`);
+
+      await this.sleep(delay);
+
+      try {
+        // Create new client for reconnection
+        this.client = new Client(this.wssUrl);
+        await this.client.connect();
+
+        // Re-attach event handlers
+        this.client.on('disconnected', (code) => {
+          logger.warn(`XRPL disconnected with code: ${code}`);
+          this.handleDisconnect();
+        });
+
+        this.client.on('error', (errorCode, errorMessage) => {
+          logger.error(`XRPL error ${errorCode}: ${errorMessage}`);
+        });
+
+        this.reconnectAttempts = 0;
+        this.isReconnecting = false;
+        logger.info(`XRPL reconnected successfully to ${this.network} network`);
+        return;
+      } catch (error) {
+        logger.error(`XRPL reconnection attempt ${this.reconnectAttempts} failed:`, error.message);
+      }
+    }
+
+    this.isReconnecting = false;
+    logger.error(`XRPL failed to reconnect after ${this.maxReconnectAttempts} attempts. Manual intervention required.`);
+  }
+
+  /**
+   * Helper sleep function
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Ensure client is connected, attempt reconnect if not
+   */
+  async ensureConnected() {
+    if (this.client && this.client.isConnected()) {
+      return true;
+    }
+
+    if (this.isReconnecting) {
+      // Wait for ongoing reconnection
+      let waitCount = 0;
+      while (this.isReconnecting && waitCount < 30) {
+        await this.sleep(1000);
+        waitCount++;
+      }
+      return this.client && this.client.isConnected();
+    }
+
+    // Try to connect
+    try {
+      await this.connect();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async disconnect() {
     if (this.client && this.client.isConnected()) {
       await this.client.disconnect();
@@ -214,9 +311,46 @@ class XRPLConfig {
 
   getClient() {
     if (!this.client || !this.client.isConnected()) {
-      throw new Error('XRPL client is not connected');
+      // Trigger reconnection in background
+      if (!this.isReconnecting) {
+        this.handleDisconnect();
+      }
+      throw new Error('XRPL client is not connected. Reconnection in progress...');
     }
     return this.client;
+  }
+
+  /**
+   * Get client with automatic reconnection (async version)
+   * Waits for reconnection if needed
+   */
+  async getClientAsync() {
+    const connected = await this.ensureConnected();
+    if (!connected) {
+      throw new Error('XRPL client could not connect');
+    }
+    return this.client;
+  }
+
+  /**
+   * Check if XRPL is currently connected
+   */
+  isConnected() {
+    return this.client && this.client.isConnected();
+  }
+
+  /**
+   * Get connection status
+   */
+  getConnectionStatus() {
+    return {
+      connected: this.isConnected(),
+      reconnecting: this.isReconnecting,
+      reconnectAttempts: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
+      network: this.network,
+      wssUrl: this.wssUrl
+    };
   }
 
   getAdminWallet() {
