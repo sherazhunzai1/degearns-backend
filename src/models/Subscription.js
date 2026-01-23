@@ -84,13 +84,16 @@ module.exports = (sequelize, DataTypes) => {
   // Get boost multiplier for a plan type (async - fetches from SubscriptionTiers)
   Subscription.getBoostMultiplier = async function(planType) {
     try {
+      // Lazy load to avoid circular dependency
       const { SubscriptionTier } = require('./index');
-      const tier = await SubscriptionTier.findOne({ where: { name: planType } });
-      if (tier) {
-        return parseFloat(tier.boostMultiplier) || 1.0;
+      if (SubscriptionTier) {
+        const tier = await SubscriptionTier.findOne({ where: { name: planType } });
+        if (tier) {
+          return parseFloat(tier.boostMultiplier) || 1.0;
+        }
       }
     } catch (error) {
-      console.warn('Failed to fetch tier from database, using default:', error.message);
+      // Silently fall back to defaults during initialization
     }
     return this.DEFAULT_BOOST_MULTIPLIERS[planType] || 1.0;
   };
