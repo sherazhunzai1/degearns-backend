@@ -231,9 +231,9 @@ const updateProfilePicture = async (req, res, next) => {
 /**
  * Update user cover picture
  * Rate limited based on subscription plan:
- * - free/basic: once per month
- * - pro: once per week
- * - premium: unlimited
+ * - free/BASIC: once per month
+ * - DEGEN: once per week
+ * - DEGEN+: unlimited
  */
 const updateCoverPicture = async (req, res, next) => {
   try {

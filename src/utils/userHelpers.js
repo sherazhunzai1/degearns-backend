@@ -220,15 +220,16 @@ const createUserInfoWithSubscription = (walletAddress, subscriptionMap = {}) => 
 
 /**
  * Cover image update intervals based on subscription plan (in milliseconds)
- * - free/basic: once per month (30 days)
- * - pro: once per week (7 days)
- * - premium: unlimited (no restriction)
+ * - free (no subscription): once per month (30 days)
+ * - BASIC: once per month (30 days)
+ * - DEGEN: once per week (7 days)
+ * - DEGEN+: unlimited (no restriction)
  */
 const COVER_IMAGE_UPDATE_INTERVALS = {
-  free: 30 * 24 * 60 * 60 * 1000,    // 30 days in milliseconds
-  basic: 30 * 24 * 60 * 60 * 1000,   // 30 days in milliseconds
-  pro: 7 * 24 * 60 * 60 * 1000,      // 7 days in milliseconds
-  premium: 0                          // No restriction (unlimited)
+  free: 30 * 24 * 60 * 60 * 1000,      // 30 days in milliseconds (no subscription)
+  'BASIC': 30 * 24 * 60 * 60 * 1000,   // 30 days in milliseconds
+  'DEGEN': 7 * 24 * 60 * 60 * 1000,    // 7 days in milliseconds
+  'DEGEN+': 0                           // No restriction (unlimited)
 };
 
 /**
@@ -244,13 +245,13 @@ const checkCoverImageUpdateEligibility = async (walletAddress, lastCoverImageUpd
   // Get the update interval for this plan
   const updateInterval = COVER_IMAGE_UPDATE_INTERVALS[subscriptionPlan] ?? COVER_IMAGE_UPDATE_INTERVALS.free;
 
-  // Premium users can always update (interval is 0)
+  // DEGEN+ users can always update (interval is 0)
   if (updateInterval === 0) {
     return {
       canUpdate: true,
       nextUpdateTime: null,
       subscriptionPlan,
-      message: 'You can update your cover image anytime with your premium subscription.'
+      message: 'You can update your cover image anytime with your DEGEN+ subscription.'
     };
   }
 
@@ -284,7 +285,7 @@ const checkCoverImageUpdateEligibility = async (walletAddress, lastCoverImageUpd
   const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
 
   // Determine restriction message based on plan
-  const planRestriction = subscriptionPlan === 'pro' ? 'once per week' : 'once per month';
+  const planRestriction = subscriptionPlan === 'DEGEN' ? 'once per week' : 'once per month';
 
   let timeMessage;
   if (remainingDays > 1) {
@@ -296,13 +297,16 @@ const checkCoverImageUpdateEligibility = async (walletAddress, lastCoverImageUpd
     timeMessage = `${remainingMinutes} minutes`;
   }
 
+  // Determine display name for the plan
+  const planDisplayName = subscriptionPlan === 'free' ? 'free' : subscriptionPlan;
+
   return {
     canUpdate: false,
     nextUpdateTime: nextUpdateTime.toISOString(),
     subscriptionPlan,
-    message: `Your ${subscriptionPlan} plan allows cover image updates ${planRestriction}. You can update again in ${timeMessage}.`,
-    upgradeMessage: subscriptionPlan !== 'premium'
-      ? 'Upgrade to premium for unlimited cover image updates.'
+    message: `Your ${planDisplayName} plan allows cover image updates ${planRestriction}. You can update again in ${timeMessage}.`,
+    upgradeMessage: subscriptionPlan !== 'DEGEN+'
+      ? 'Upgrade to DEGEN+ for unlimited cover image updates.'
       : null
   };
 };
