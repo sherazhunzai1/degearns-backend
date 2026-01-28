@@ -5,7 +5,8 @@ const {
   getMe,
   updateProfile,
   updateProfilePicture,
-  updateCoverPicture
+  updateCoverPicture,
+  canUpdateCoverImage
 } = require('../controllers/authController');
 // const { authLimiter } = require('../middleware/rateLimiter'); // Rate limiting disabled
 
@@ -39,9 +40,16 @@ router.put('/profile-picture', updateProfilePicture);
 
 /**
  * @route   PUT /api/v1/auth/cover-picture
- * @desc    Update user cover picture
+ * @desc    Update user cover picture (rate limited by subscription plan)
  * @access  Public
  */
 router.put('/cover-picture', updateCoverPicture);
+
+/**
+ * @route   GET /api/v1/auth/can-update-cover-image
+ * @desc    Check if user can update cover image based on subscription plan
+ * @access  Public
+ */
+router.get('/can-update-cover-image', canUpdateCoverImage);
 
 module.exports = router;
