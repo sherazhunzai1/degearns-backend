@@ -218,6 +218,95 @@ const createUserInfoWithSubscription = (walletAddress, subscriptionMap = {}) => 
   };
 };
 
+/**
+ * Cover image update intervals based on subscription plan (in milliseconds)
+ * - free/basic: once per month (30 days)
+ * - pro: once per week (7 days)
+ * - premium: unlimited (no restriction)
+ */
+const COVER_IMAGE_UPDATE_INTERVALS = {
+  free: 30 * 24 * 60 * 60 * 1000,    // 30 days in milliseconds
+  basic: 30 * 24 * 60 * 60 * 1000,   // 30 days in milliseconds
+  pro: 7 * 24 * 60 * 60 * 1000,      // 7 days in milliseconds
+  premium: 0                          // No restriction (unlimited)
+};
+
+/**
+ * Check if a user can update their cover image based on subscription plan
+ * @param {string} walletAddress - User's wallet address
+ * @param {Date|null} lastCoverImageUpdate - Timestamp of last cover image update
+ * @returns {Promise<Object>} - Object with canUpdate, nextUpdateTime, and subscriptionPlan
+ */
+const checkCoverImageUpdateEligibility = async (walletAddress, lastCoverImageUpdate) => {
+  // Get user's subscription plan
+  const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+
+  // Get the update interval for this plan
+  const updateInterval = COVER_IMAGE_UPDATE_INTERVALS[subscriptionPlan] ?? COVER_IMAGE_UPDATE_INTERVALS.free;
+
+  // Premium users can always update (interval is 0)
+  if (updateInterval === 0) {
+    return {
+      canUpdate: true,
+      nextUpdateTime: null,
+      subscriptionPlan,
+      message: 'You can update your cover image anytime with your premium subscription.'
+    };
+  }
+
+  // If user has never updated cover image, they can update
+  if (!lastCoverImageUpdate) {
+    return {
+      canUpdate: true,
+      nextUpdateTime: null,
+      subscriptionPlan,
+      message: 'You can update your cover image.'
+    };
+  }
+
+  // Calculate when the user can next update
+  const lastUpdate = new Date(lastCoverImageUpdate);
+  const nextUpdateTime = new Date(lastUpdate.getTime() + updateInterval);
+  const now = new Date();
+
+  if (now >= nextUpdateTime) {
+    return {
+      canUpdate: true,
+      nextUpdateTime: null,
+      subscriptionPlan,
+      message: 'You can update your cover image.'
+    };
+  }
+
+  // Calculate remaining time
+  const remainingMs = nextUpdateTime.getTime() - now.getTime();
+  const remainingDays = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+  const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+
+  // Determine restriction message based on plan
+  const planRestriction = subscriptionPlan === 'pro' ? 'once per week' : 'once per month';
+
+  let timeMessage;
+  if (remainingDays > 1) {
+    timeMessage = `${remainingDays} days`;
+  } else if (remainingHours > 1) {
+    timeMessage = `${remainingHours} hours`;
+  } else {
+    const remainingMinutes = Math.ceil(remainingMs / (60 * 1000));
+    timeMessage = `${remainingMinutes} minutes`;
+  }
+
+  return {
+    canUpdate: false,
+    nextUpdateTime: nextUpdateTime.toISOString(),
+    subscriptionPlan,
+    message: `Your ${subscriptionPlan} plan allows cover image updates ${planRestriction}. You can update again in ${timeMessage}.`,
+    upgradeMessage: subscriptionPlan !== 'premium'
+      ? 'Upgrade to premium for unlimited cover image updates.'
+      : null
+  };
+};
+
 module.exports = {
   USER_ATTRIBUTES,
   USER_ATTRIBUTES_WITH_BIO,
@@ -227,5 +316,7 @@ module.exports = {
   addSubscriptionToUsers,
   enrichItemWithSubscriptions,
   enrichItemsWithSubscriptions,
-  createUserInfoWithSubscription
+  createUserInfoWithSubscription,
+  COVER_IMAGE_UPDATE_INTERVALS,
+  checkCoverImageUpdateEligibility
 };

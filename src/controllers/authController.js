@@ -2,7 +2,7 @@ const { User, Subscription } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
-const { getActiveSubscriptionPlan } = require('../utils/userHelpers');
+const { getActiveSubscriptionPlan, checkCoverImageUpdateEligibility } = require('../utils/userHelpers');
 
 /**
  * Get or create user by wallet address (XAMAN wallet connection)
@@ -230,6 +230,10 @@ const updateProfilePicture = async (req, res, next) => {
 
 /**
  * Update user cover picture
+ * Rate limited based on subscription plan:
+ * - free/basic: once per month
+ * - pro: once per week
+ * - premium: unlimited
  */
 const updateCoverPicture = async (req, res, next) => {
   try {
@@ -249,13 +253,66 @@ const updateCoverPicture = async (req, res, next) => {
       throw new ApiError(404, 'User not found');
     }
 
+    // Check if user is eligible to update cover image based on subscription
+    const eligibility = await checkCoverImageUpdateEligibility(walletAddress, user.lastCoverImageUpdate);
+
+    if (!eligibility.canUpdate) {
+      throw new ApiError(403, eligibility.message, {
+        nextUpdateTime: eligibility.nextUpdateTime,
+        subscriptionPlan: eligibility.subscriptionPlan,
+        upgradeMessage: eligibility.upgradeMessage
+      });
+    }
+
+    // Update cover image and track the update time
     user.coverImage = coverImage;
+    user.lastCoverImageUpdate = new Date();
     await user.save();
 
-    logger.info(`Cover picture updated for: ${user.walletAddress}`);
+    logger.info(`Cover picture updated for: ${user.walletAddress} (subscription: ${eligibility.subscriptionPlan})`);
 
     res.status(200).json(
-      new ApiResponse(200, { coverImage: user.coverImage }, 'Cover picture updated successfully')
+      new ApiResponse(200, {
+        coverImage: user.coverImage,
+        lastCoverImageUpdate: user.lastCoverImageUpdate,
+        subscriptionPlan: eligibility.subscriptionPlan
+      }, 'Cover picture updated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Check if user can update cover image
+ * Returns eligibility status based on subscription plan
+ */
+const canUpdateCoverImage = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const user = await User.findOne({ where: { walletAddress } });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    // Check eligibility based on subscription
+    const eligibility = await checkCoverImageUpdateEligibility(walletAddress, user.lastCoverImageUpdate);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        canUpdate: eligibility.canUpdate,
+        nextUpdateTime: eligibility.nextUpdateTime,
+        subscriptionPlan: eligibility.subscriptionPlan,
+        message: eligibility.message,
+        upgradeMessage: eligibility.upgradeMessage,
+        lastCoverImageUpdate: user.lastCoverImageUpdate
+      }, 'Cover image update eligibility retrieved successfully')
     );
   } catch (error) {
     next(error);
@@ -267,5 +324,6 @@ module.exports = {
   getMe,
   updateProfile,
   updateProfilePicture,
-  updateCoverPicture
+  updateCoverPicture,
+  canUpdateCoverImage
 };

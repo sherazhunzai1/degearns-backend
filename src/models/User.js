@@ -77,6 +77,11 @@ module.exports = (sequelize, DataTypes) => {
         const rawValue = this.getDataValue('socialLinks');
         return rawValue ? JSON.parse(JSON.stringify(rawValue)) : null;
       }
+    },
+    lastCoverImageUpdate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Timestamp of the last cover image update for subscription-based rate limiting'
     }
   }, {
     tableName: 'Users',
