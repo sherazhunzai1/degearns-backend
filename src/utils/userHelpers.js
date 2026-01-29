@@ -311,6 +311,66 @@ const checkCoverImageUpdateEligibility = async (walletAddress, lastCoverImageUpd
   };
 };
 
+/**
+ * Pin post limits based on subscription plan
+ * - free (no subscription): 0 pinned posts
+ * - BASIC: 1 pinned post
+ * - DEGEN: 3 pinned posts
+ * - DEGEN+: 3 pinned posts
+ */
+const PIN_POST_LIMITS = {
+  free: 0,
+  'BASIC': 1,
+  'DEGEN': 3,
+  'DEGEN+': 3
+};
+
+/**
+ * Check if a user can pin more posts based on their subscription plan
+ * @param {string} walletAddress - User's wallet address
+ * @param {number} currentPinnedCount - Current number of pinned posts
+ * @returns {Promise<Object>} - Object with canPin, limit, currentCount, and subscriptionPlan
+ */
+const checkPinPostEligibility = async (walletAddress, currentPinnedCount) => {
+  // Get user's subscription plan
+  const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+
+  // Get the pin limit for this plan
+  const pinLimit = PIN_POST_LIMITS[subscriptionPlan] ?? PIN_POST_LIMITS.free;
+
+  // Check if user can pin more posts
+  const canPin = currentPinnedCount < pinLimit;
+
+  if (canPin) {
+    return {
+      canPin: true,
+      limit: pinLimit,
+      currentCount: currentPinnedCount,
+      remaining: pinLimit - currentPinnedCount,
+      subscriptionPlan,
+      message: `You can pin ${pinLimit - currentPinnedCount} more post(s).`
+    };
+  }
+
+  // Determine upgrade message based on plan
+  let upgradeMessage = null;
+  if (subscriptionPlan === 'free') {
+    upgradeMessage = 'Subscribe to BASIC to pin 1 post, or DEGEN/DEGEN+ to pin up to 3 posts.';
+  } else if (subscriptionPlan === 'BASIC') {
+    upgradeMessage = 'Upgrade to DEGEN or DEGEN+ to pin up to 3 posts.';
+  }
+
+  return {
+    canPin: false,
+    limit: pinLimit,
+    currentCount: currentPinnedCount,
+    remaining: 0,
+    subscriptionPlan,
+    message: `You have reached your pin limit of ${pinLimit} post(s) for your ${subscriptionPlan === 'free' ? 'free' : subscriptionPlan} plan.`,
+    upgradeMessage
+  };
+};
+
 module.exports = {
   USER_ATTRIBUTES,
   USER_ATTRIBUTES_WITH_BIO,
@@ -322,5 +382,7 @@ module.exports = {
   enrichItemsWithSubscriptions,
   createUserInfoWithSubscription,
   COVER_IMAGE_UPDATE_INTERVALS,
-  checkCoverImageUpdateEligibility
+  checkCoverImageUpdateEligibility,
+  PIN_POST_LIMITS,
+  checkPinPostEligibility
 };
