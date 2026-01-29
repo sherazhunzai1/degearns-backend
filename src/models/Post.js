@@ -59,6 +59,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
       comment: 'Soft delete flag'
+    },
+    isPinned: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: 'Whether the post is pinned to the top of user timeline'
+    },
+    pinnedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Timestamp when the post was pinned'
     }
   }, {
     tableName: 'Posts',
@@ -87,6 +97,10 @@ module.exports = (sequelize, DataTypes) => {
       {
         fields: ['authorWalletAddress', 'createdAt'],
         name: 'idx_post_author_created'
+      },
+      {
+        fields: ['authorWalletAddress', 'isPinned', 'pinnedAt'],
+        name: 'idx_post_author_pinned'
       }
     ]
   });

@@ -16,7 +16,10 @@ const {
   deleteComment,
   getFollowingPosts,
   recordPostView,
-  getPostViews
+  getPostViews,
+  pinPost,
+  unpinPost,
+  getPinStatus
 } = require('../controllers/postController');
 
 /**
@@ -42,10 +45,17 @@ router.get('/following/:walletAddress', getFollowingPosts);
 
 /**
  * @route   GET /api/v1/posts/user/:walletAddress
- * @desc    Get all posts by a specific user
+ * @desc    Get all posts by a specific user (pinned posts first)
  * @access  Public
  */
 router.get('/user/:walletAddress', getUserPosts);
+
+/**
+ * @route   GET /api/v1/posts/pin-status/:walletAddress
+ * @desc    Get user's pin status (count, limit, remaining)
+ * @access  Public
+ */
+router.get('/pin-status/:walletAddress', getPinStatus);
 
 /**
  * @route   GET /api/v1/posts/:postId
@@ -106,6 +116,22 @@ router.post('/:postId/view', recordPostView);
  * @access  Public
  */
 router.get('/:postId/views', getPostViews);
+
+// ==================== PIN ROUTES ====================
+
+/**
+ * @route   POST /api/v1/posts/:postId/pin
+ * @desc    Pin a post to user's timeline (limited by subscription)
+ * @access  Public
+ */
+router.post('/:postId/pin', pinPost);
+
+/**
+ * @route   DELETE /api/v1/posts/:postId/pin
+ * @desc    Unpin a post from user's timeline
+ * @access  Public
+ */
+router.delete('/:postId/pin', unpinPost);
 
 // ==================== COMMENT ROUTES ====================
 

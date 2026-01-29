@@ -7,7 +7,8 @@ const notificationService = require('../services/notificationService');
 const { initBoostEngine } = require('../services/boostEngine');
 const {
   getActiveSubscriptionsForWallets,
-  enrichItemsWithSubscriptions
+  enrichItemsWithSubscriptions,
+  checkPinPostEligibility
 } = require('../utils/userHelpers');
 
 /**
@@ -151,6 +152,8 @@ const formatPostWithEngagement = async (post, author, userWalletAddress = null, 
     commentsCount: post.commentsCount,
     sharesCount: post.sharesCount,
     viewsCount: post.viewsCount || 0,
+    isPinned: post.isPinned || false,
+    pinnedAt: post.pinnedAt || null,
     isLiked,
     recentComments,
     metadata: post.metadata,
@@ -275,6 +278,8 @@ const createPost = async (req, res, next) => {
 
 /**
  * Get posts by wallet address (user's posts)
+ * Pinned posts appear first, sorted by pinnedAt DESC
+ * Then regular posts sorted by createdAt DESC
  * Supports pagination
  */
 const getUserPosts = async (req, res, next) => {
@@ -288,13 +293,17 @@ const getUserPosts = async (req, res, next) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get posts with pagination
+    // Get posts with pagination, pinned posts first
     const { count, rows: posts } = await Post.findAndCountAll({
       where: {
         authorWalletAddress: walletAddress,
         isActive: true
       },
-      order: [['createdAt', 'DESC']],
+      order: [
+        ['isPinned', 'DESC'],      // Pinned posts first
+        ['pinnedAt', 'DESC'],      // Most recently pinned first among pinned
+        ['createdAt', 'DESC']      // Then by creation date
+      ],
       limit: parseInt(limit),
       offset,
       include: [
@@ -321,11 +330,21 @@ const getUserPosts = async (req, res, next) => {
       posts.map(post => formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan))
     );
 
+    // Count pinned posts for this user
+    const pinnedCount = await Post.count({
+      where: {
+        authorWalletAddress: walletAddress,
+        isPinned: true,
+        isActive: true
+      }
+    });
+
     logger.info(`Posts fetched for wallet: ${walletAddress}`);
 
     res.status(200).json(
       new ApiResponse(200, {
         posts: formattedPosts,
+        pinnedCount,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -1606,6 +1625,196 @@ const getPostViews = async (req, res, next) => {
   }
 };
 
+/**
+ * Pin a post to user's timeline
+ * Limited by subscription plan:
+ * - free: 0 pins
+ * - BASIC: 1 pin
+ * - DEGEN/DEGEN+: 3 pins
+ */
+const pinPost = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { userWalletAddress } = req.body;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    if (!userWalletAddress) {
+      throw new ApiError(400, 'User wallet address is required');
+    }
+
+    // Check if post exists and belongs to user
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Verify ownership
+    if (post.authorWalletAddress !== userWalletAddress) {
+      throw new ApiError(403, 'You can only pin your own posts');
+    }
+
+    // Check if post is already pinned
+    if (post.isPinned) {
+      throw new ApiError(400, 'Post is already pinned');
+    }
+
+    // Count current pinned posts for this user
+    const currentPinnedCount = await Post.count({
+      where: {
+        authorWalletAddress: userWalletAddress,
+        isPinned: true,
+        isActive: true
+      }
+    });
+
+    // Check if user can pin more posts based on subscription
+    const eligibility = await checkPinPostEligibility(userWalletAddress, currentPinnedCount);
+
+    if (!eligibility.canPin) {
+      throw new ApiError(403, eligibility.message, {
+        limit: eligibility.limit,
+        currentCount: eligibility.currentCount,
+        subscriptionPlan: eligibility.subscriptionPlan,
+        upgradeMessage: eligibility.upgradeMessage
+      });
+    }
+
+    // Pin the post
+    post.isPinned = true;
+    post.pinnedAt = new Date();
+    await post.save();
+
+    logger.info(`Post ${postId} pinned by ${userWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        isPinned: true,
+        pinnedAt: post.pinnedAt,
+        pinnedCount: currentPinnedCount + 1,
+        pinLimit: eligibility.limit,
+        remaining: eligibility.limit - (currentPinnedCount + 1)
+      }, 'Post pinned successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Unpin a post from user's timeline
+ */
+const unpinPost = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { userWalletAddress } = req.body;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    if (!userWalletAddress) {
+      throw new ApiError(400, 'User wallet address is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Verify ownership
+    if (post.authorWalletAddress !== userWalletAddress) {
+      throw new ApiError(403, 'You can only unpin your own posts');
+    }
+
+    // Check if post is pinned
+    if (!post.isPinned) {
+      throw new ApiError(400, 'Post is not pinned');
+    }
+
+    // Unpin the post
+    post.isPinned = false;
+    post.pinnedAt = null;
+    await post.save();
+
+    // Get updated pinned count
+    const currentPinnedCount = await Post.count({
+      where: {
+        authorWalletAddress: userWalletAddress,
+        isPinned: true,
+        isActive: true
+      }
+    });
+
+    // Get pin limit for response
+    const eligibility = await checkPinPostEligibility(userWalletAddress, currentPinnedCount);
+
+    logger.info(`Post ${postId} unpinned by ${userWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        isPinned: false,
+        pinnedCount: currentPinnedCount,
+        pinLimit: eligibility.limit,
+        remaining: eligibility.limit - currentPinnedCount
+      }, 'Post unpinned successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get user's pinned posts count and limit
+ */
+const getPinStatus = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Count current pinned posts for this user
+    const currentPinnedCount = await Post.count({
+      where: {
+        authorWalletAddress: walletAddress,
+        isPinned: true,
+        isActive: true
+      }
+    });
+
+    // Get eligibility info
+    const eligibility = await checkPinPostEligibility(walletAddress, currentPinnedCount);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        walletAddress,
+        pinnedCount: currentPinnedCount,
+        pinLimit: eligibility.limit,
+        remaining: eligibility.remaining,
+        canPin: eligibility.canPin,
+        subscriptionPlan: eligibility.subscriptionPlan,
+        message: eligibility.message,
+        upgradeMessage: eligibility.upgradeMessage
+      }, 'Pin status retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createPost,
   getUserPosts,
@@ -1622,5 +1831,8 @@ module.exports = {
   deleteComment,
   getFollowingPosts,
   recordPostView,
-  getPostViews
+  getPostViews,
+  pinPost,
+  unpinPost,
+  getPinStatus
 };
