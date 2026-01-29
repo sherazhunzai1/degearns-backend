@@ -29,6 +29,7 @@ const Subscription = require('./Subscription')(sequelize, DataTypes);
 const SubscriptionTier = require('./SubscriptionTier')(sequelize, DataTypes);
 const UserStats = require('./UserStats')(sequelize, DataTypes);
 const ActivityLog = require('./ActivityLog')(sequelize, DataTypes);
+const PostView = require('./PostView')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -136,6 +137,28 @@ User.hasMany(PostLike, {
   as: 'postLikes'
 });
 PostLike.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// Post and PostView associations
+Post.hasMany(PostView, {
+  foreignKey: 'postId',
+  as: 'views'
+});
+PostView.belongsTo(Post, {
+  foreignKey: 'postId',
+  as: 'post'
+});
+
+// User and PostView associations
+User.hasMany(PostView, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'postViews'
+});
+PostView.belongsTo(User, {
   foreignKey: 'userWalletAddress',
   targetKey: 'walletAddress',
   as: 'user'
@@ -439,6 +462,7 @@ module.exports = {
   PostMedia,
   PostLike,
   PostComment,
+  PostView,
   Follow,
   Notification,
   Drop,

@@ -14,7 +14,9 @@ const {
   getPostComments,
   updateComment,
   deleteComment,
-  getFollowingPosts
+  getFollowingPosts,
+  recordPostView,
+  getPostViews
 } = require('../controllers/postController');
 
 /**
@@ -88,6 +90,22 @@ router.delete('/:postId/like', unlikePost);
  * @access  Public
  */
 router.get('/:postId/likes', getPostLikes);
+
+// ==================== VIEW ROUTES ====================
+
+/**
+ * @route   POST /api/v1/posts/:postId/view
+ * @desc    Record a view for a post (unique per user)
+ * @access  Public
+ */
+router.post('/:postId/view', recordPostView);
+
+/**
+ * @route   GET /api/v1/posts/:postId/views
+ * @desc    Get all users who viewed a post
+ * @access  Public
+ */
+router.get('/:postId/views', getPostViews);
 
 // ==================== COMMENT ROUTES ====================
 
