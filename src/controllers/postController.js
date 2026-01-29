@@ -1,4 +1,4 @@
-const { User, Post, PostMedia, PostLike, PostComment, Follow, ActivityLog, Subscription } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment, PostView, Follow, ActivityLog, Subscription } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -150,6 +150,7 @@ const formatPostWithEngagement = async (post, author, userWalletAddress = null, 
     likesCount: post.likesCount,
     commentsCount: post.commentsCount,
     sharesCount: post.sharesCount,
+    viewsCount: post.viewsCount || 0,
     isLiked,
     recentComments,
     metadata: post.metadata,
@@ -1463,6 +1464,148 @@ const getFollowingPosts = async (req, res, next) => {
   }
 };
 
+/**
+ * Record a view for a post
+ * Only counts unique views per user
+ */
+const recordPostView = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { userWalletAddress } = req.body;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    if (!userWalletAddress) {
+      throw new ApiError(400, 'User wallet address is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Check if user has already viewed this post
+    const existingView = await PostView.findOne({
+      where: { postId, userWalletAddress }
+    });
+
+    if (existingView) {
+      // User has already viewed this post, return current count
+      return res.status(200).json(
+        new ApiResponse(200, {
+          postId,
+          viewsCount: post.viewsCount,
+          isNewView: false
+        }, 'Post already viewed')
+      );
+    }
+
+    // Create view record
+    await PostView.create({ postId, userWalletAddress });
+
+    // Increment views count on post
+    await post.increment('viewsCount');
+    await post.reload();
+
+    logger.info(`Post ${postId} viewed by ${userWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        viewsCount: post.viewsCount,
+        isNewView: true
+      }, 'Post view recorded successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get users who viewed a post
+ */
+const getPostViews = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    if (!postId) {
+      throw new ApiError(400, 'Post ID is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findOne({
+      where: { id: postId, isActive: true }
+    });
+
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Get views with pagination
+    const { count, rows: views } = await PostView.findAndCountAll({
+      where: { postId },
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset
+    });
+
+    // Get user details
+    const userAddresses = views.map(v => v.userWalletAddress);
+    const users = await User.findAll({
+      where: { walletAddress: { [Op.in]: userAddresses } },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    const userMap = {};
+    users.forEach(u => { userMap[u.walletAddress] = u; });
+
+    // Fetch subscription plans for all users who viewed
+    const subscriptionMap = await getActiveSubscriptionsForWallets(userAddresses);
+
+    const formattedViews = views.map(view => {
+      const user = userMap[view.userWalletAddress];
+      return {
+        userWalletAddress: view.userWalletAddress,
+        user: user ? {
+          walletAddress: user.walletAddress,
+          username: user.username,
+          profileImage: user.profileImage,
+          isVerified: user.isVerified,
+          subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
+        } : null,
+        viewedAt: view.createdAt
+      };
+    });
+
+    logger.info(`Views fetched for post: ${postId}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        postId,
+        viewsCount: post.viewsCount,
+        views: formattedViews,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Views retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createPost,
   getUserPosts,
@@ -1477,5 +1620,7 @@ module.exports = {
   getPostComments,
   updateComment,
   deleteComment,
-  getFollowingPosts
+  getFollowingPosts,
+  recordPostView,
+  getPostViews
 };

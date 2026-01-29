@@ -41,6 +41,11 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 0,
       comment: 'Number of shares of the post'
     },
+    viewsCount: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Number of unique views on the post'
+    },
     metadata: {
       type: DataTypes.JSON,
       allowNull: true,
