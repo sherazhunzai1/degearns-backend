@@ -30,6 +30,9 @@ const SubscriptionTier = require('./SubscriptionTier')(sequelize, DataTypes);
 const UserStats = require('./UserStats')(sequelize, DataTypes);
 const ActivityLog = require('./ActivityLog')(sequelize, DataTypes);
 const PostView = require('./PostView')(sequelize, DataTypes);
+const PostBoost = require('./PostBoost')(sequelize, DataTypes);
+const NftBoost = require('./NftBoost')(sequelize, DataTypes);
+const CollectionBoost = require('./CollectionBoost')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -444,6 +447,62 @@ ActivityLog.belongsTo(Collection, {
   as: 'collection'
 });
 
+// Post and PostBoost associations
+Post.hasMany(PostBoost, {
+  foreignKey: 'postId',
+  as: 'boosts'
+});
+PostBoost.belongsTo(Post, {
+  foreignKey: 'postId',
+  as: 'post'
+});
+
+// User and PostBoost associations
+User.hasMany(PostBoost, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'postBoosts'
+});
+PostBoost.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// User and NftBoost associations
+User.hasMany(NftBoost, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'nftBoosts'
+});
+NftBoost.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// Collection and CollectionBoost associations
+Collection.hasMany(CollectionBoost, {
+  foreignKey: 'collectionId',
+  as: 'boosts'
+});
+CollectionBoost.belongsTo(Collection, {
+  foreignKey: 'collectionId',
+  as: 'collection'
+});
+
+// User and CollectionBoost associations
+User.hasMany(CollectionBoost, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'collectionBoosts'
+});
+CollectionBoost.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -463,6 +522,9 @@ module.exports = {
   PostLike,
   PostComment,
   PostView,
+  PostBoost,
+  NftBoost,
+  CollectionBoost,
   Follow,
   Notification,
   Drop,
