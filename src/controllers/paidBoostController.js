@@ -70,7 +70,7 @@ const createPostBoost = async (req, res, next) => {
   try {
     const {
       postId,
-      userWalletAddress,
+      walletAddress,
       boostPercentage,
       durationDays = DEFAULT_BOOST_DURATION_DAYS,
       paymentTransactionHash,
@@ -79,7 +79,7 @@ const createPostBoost = async (req, res, next) => {
 
     // Validate required fields
     if (!postId) throw new ApiError(400, 'Post ID is required');
-    if (!userWalletAddress) throw new ApiError(400, 'Wallet address is required');
+    if (!walletAddress) throw new ApiError(400, 'Wallet address is required');
     if (!boostPercentage) throw new ApiError(400, 'Boost percentage is required');
     if (![20, 40, 60, 80, 100].includes(boostPercentage)) {
       throw new ApiError(400, 'Boost percentage must be 20, 40, 60, 80, or 100');
@@ -95,7 +95,7 @@ const createPostBoost = async (req, res, next) => {
     }
 
     // Verify ownership
-    if (post.authorWalletAddress !== userWalletAddress) {
+    if (post.authorWalletAddress !== walletAddress) {
       throw new ApiError(403, 'You can only boost your own posts');
     }
 
@@ -123,7 +123,7 @@ const createPostBoost = async (req, res, next) => {
     // Create boost record
     const boost = await PostBoost.create({
       postId,
-      userWalletAddress,
+      userWalletAddress: walletAddress,
       boostPercentage,
       paymentAmount: expectedPayment,
       paymentTransactionHash,
@@ -297,7 +297,7 @@ const createNftBoost = async (req, res, next) => {
   try {
     const {
       nftTokenId,
-      userWalletAddress,
+      walletAddress,
       boostPercentage,
       durationDays = DEFAULT_BOOST_DURATION_DAYS,
       paymentTransactionHash,
@@ -307,7 +307,7 @@ const createNftBoost = async (req, res, next) => {
 
     // Validate required fields
     if (!nftTokenId) throw new ApiError(400, 'NFT token ID is required');
-    if (!userWalletAddress) throw new ApiError(400, 'Wallet address is required');
+    if (!walletAddress) throw new ApiError(400, 'Wallet address is required');
     if (!boostPercentage) throw new ApiError(400, 'Boost percentage is required');
     if (![20, 40, 60, 80, 100].includes(boostPercentage)) {
       throw new ApiError(400, 'Boost percentage must be 20, 40, 60, 80, or 100');
@@ -337,7 +337,7 @@ const createNftBoost = async (req, res, next) => {
     // Create boost record
     const boost = await NftBoost.create({
       nftTokenId,
-      userWalletAddress,
+      userWalletAddress: walletAddress,
       boostPercentage,
       paymentAmount: expectedPayment,
       paymentTransactionHash,
@@ -486,7 +486,7 @@ const createCollectionBoost = async (req, res, next) => {
   try {
     const {
       collectionId,
-      userWalletAddress,
+      walletAddress,
       boostPercentage,
       durationDays = DEFAULT_BOOST_DURATION_DAYS,
       paymentTransactionHash,
@@ -495,7 +495,7 @@ const createCollectionBoost = async (req, res, next) => {
 
     // Validate required fields
     if (!collectionId) throw new ApiError(400, 'Collection ID is required');
-    if (!userWalletAddress) throw new ApiError(400, 'Wallet address is required');
+    if (!walletAddress) throw new ApiError(400, 'Wallet address is required');
     if (!boostPercentage) throw new ApiError(400, 'Boost percentage is required');
     if (![20, 40, 60, 80, 100].includes(boostPercentage)) {
       throw new ApiError(400, 'Boost percentage must be 20, 40, 60, 80, or 100');
@@ -508,7 +508,7 @@ const createCollectionBoost = async (req, res, next) => {
     }
 
     // Verify ownership
-    if (collection.creatorWalletAddress !== userWalletAddress) {
+    if (collection.creatorWalletAddress !== walletAddress) {
       throw new ApiError(403, 'You can only boost your own collections');
     }
 
@@ -536,7 +536,7 @@ const createCollectionBoost = async (req, res, next) => {
     // Create boost record
     const boost = await CollectionBoost.create({
       collectionId,
-      userWalletAddress,
+      userWalletAddress: walletAddress,
       boostPercentage,
       paymentAmount: expectedPayment,
       paymentTransactionHash,
