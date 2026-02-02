@@ -501,21 +501,6 @@ const createCollectionBoost = async (req, res, next) => {
       throw new ApiError(400, 'Boost percentage must be 20, 40, 60, 80, or 100');
     }
 
-    // Check if collection exists (try by ID first, then by slug)
-    let collection = await Collection.findByPk(collectionId);
-    if (!collection) {
-      // Try finding by slug as fallback
-      collection = await Collection.findOne({ where: { slug: collectionId } });
-    }
-    if (!collection) {
-      throw new ApiError(404, `Collection not found with ID or slug: ${collectionId}`);
-    }
-
-    // Verify ownership
-    if (collection.creatorWalletAddress !== walletAddress) {
-      throw new ApiError(403, 'You can only boost your own collections');
-    }
-
     // Check for existing active boost on this collection
     const existingBoost = await CollectionBoost.findOne({
       where: {
