@@ -1360,47 +1360,19 @@ const getNewNFTs = async (req, res, next) => {
 
     logger.info(`Fetching boosted NFTs from NftBoosts table, sortBy: ${sortBy}`);
 
-    // Fetch active boosts from NftBoosts table
+    // Fetch active boosts from NftBoosts table (only where endDate not crossed)
     const activeBoosts = await NftBoost.findAll({
       where: {
         isActive: true,
-        endDate: { [Op.gt]: new Date() }
+        endDate: { [Op.gt]: new Date() } // Only fetch boosts whose endDate has not passed
       },
-      order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']]
+      order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']] // Higher boost percentage = more visibility (sorted first)
     });
 
     logger.info(`Found ${activeBoosts.length} active NFT boosts`);
 
-    // Apply weighted shuffle for fair distribution based on boost percentage
-    const weightedShuffle = (items) => {
-      const weighted = [];
-      items.forEach(item => {
-        // Weight factor: 20% = 1x, 40% = 2x, 60% = 3x, 80% = 4x, 100% = 5x
-        const weight = Math.floor(item.boostPercentage / 20);
-        for (let i = 0; i < weight; i++) {
-          weighted.push(item);
-        }
-      });
-
-      // Fisher-Yates shuffle
-      for (let i = weighted.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [weighted[i], weighted[j]] = [weighted[j], weighted[i]];
-      }
-
-      // Remove duplicates while preserving shuffled order
-      const seen = new Set();
-      return weighted.filter(item => {
-        if (seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-      });
-    };
-
-    const shuffledBoosts = weightedShuffle(activeBoosts);
-
     // Collect all user wallet addresses for batch lookup
-    const userAddresses = [...new Set(shuffledBoosts.map(b => b.userWalletAddress))];
+    const userAddresses = [...new Set(activeBoosts.map(b => b.userWalletAddress))];
 
     // Fetch user info for all boost owners
     let userMap = {};
@@ -1420,7 +1392,7 @@ const getNewNFTs = async (req, res, next) => {
     // Fetch NFT details from XRPL for each boosted NFT
     const allNFTs = [];
 
-    for (const boost of shuffledBoosts) {
+    for (const boost of activeBoosts) {
       try {
         const nftTokenId = boost.nftTokenId;
         const metadata = boost.metadata || {};
@@ -1496,37 +1468,6 @@ const getNewNFTs = async (req, res, next) => {
           }
         }
 
-        // Get collection info if taxon is available
-        let collectionInfo = metadata.collection || null;
-        if (!collectionInfo && nftTaxon !== null && nftIssuer) {
-          const collection = await Collection.findOne({
-            where: {
-              taxon: nftTaxon,
-              creatorWalletAddress: nftIssuer
-            },
-            include: [{
-              association: 'creator',
-              attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-            }]
-          });
-
-          if (collection) {
-            collectionInfo = {
-              id: collection.id,
-              name: collection.name,
-              slug: collection.slug,
-              image: collection.image,
-              taxon: collection.taxon,
-              creator: {
-                walletAddress: collection.creator?.walletAddress || collection.creatorWalletAddress,
-                username: collection.creator?.username || collection.creatorWalletAddress,
-                profileImage: collection.creator?.profileImage || null,
-                isVerified: collection.creator?.isVerified || false
-              }
-            };
-          }
-        }
-
         // Get owner user info
         const ownerUser = userMap[boost.userWalletAddress];
         const ownerInfo = {
@@ -1538,16 +1479,20 @@ const getNewNFTs = async (req, res, next) => {
         };
 
         allNFTs.push({
+          // NFT Details
           nftTokenId,
           name: nftName,
           image: imageUrl,
           description,
-          price,
+          uri: nftUri,
+          // Owner Details
           ownerWalletAddress: owner,
           owner: ownerInfo,
+          // Listing Details
+          price,
+          isListed: price !== null,
           listedDate: boost.startDate.toISOString(),
-          collection: collectionInfo,
-          uri: nftUri,
+          // Boost Details
           boostId: boost.id,
           boostPercentage: boost.boostPercentage,
           boostEndDate: boost.endDate,
