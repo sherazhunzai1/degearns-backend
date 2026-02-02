@@ -1496,37 +1496,6 @@ const getNewNFTs = async (req, res, next) => {
           }
         }
 
-        // Get collection info if taxon is available
-        let collectionInfo = metadata.collection || null;
-        if (!collectionInfo && nftTaxon !== null && nftIssuer) {
-          const collection = await Collection.findOne({
-            where: {
-              taxon: nftTaxon,
-              creatorWalletAddress: nftIssuer
-            },
-            include: [{
-              association: 'creator',
-              attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-            }]
-          });
-
-          if (collection) {
-            collectionInfo = {
-              id: collection.id,
-              name: collection.name,
-              slug: collection.slug,
-              image: collection.image,
-              taxon: collection.taxon,
-              creator: {
-                walletAddress: collection.creator?.walletAddress || collection.creatorWalletAddress,
-                username: collection.creator?.username || collection.creatorWalletAddress,
-                profileImage: collection.creator?.profileImage || null,
-                isVerified: collection.creator?.isVerified || false
-              }
-            };
-          }
-        }
-
         // Get owner user info
         const ownerUser = userMap[boost.userWalletAddress];
         const ownerInfo = {
@@ -1538,16 +1507,20 @@ const getNewNFTs = async (req, res, next) => {
         };
 
         allNFTs.push({
+          // NFT Details
           nftTokenId,
           name: nftName,
           image: imageUrl,
           description,
-          price,
+          uri: nftUri,
+          // Owner Details
           ownerWalletAddress: owner,
           owner: ownerInfo,
+          // Listing Details
+          price,
+          isListed: price !== null,
           listedDate: boost.startDate.toISOString(),
-          collection: collectionInfo,
-          uri: nftUri,
+          // Boost Details
           boostId: boost.id,
           boostPercentage: boost.boostPercentage,
           boostEndDate: boost.endDate,
