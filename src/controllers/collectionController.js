@@ -1696,20 +1696,22 @@ const getPopularCollections = async (req, res, next) => {
         // Get mintedCount from metadata or default to totalSupply
         const mintedCount = metadata.totalSupply || 0;
 
-        // Fetch up to 4 NFTs from the booster's wallet (userWalletAddress)
+        // Fetch up to 4 NFTs from the booster's wallet filtered by taxon
         let recentNFTs = [];
         const ownerWallet = boost.userWalletAddress; // The wallet that boosted (owns NFTs)
+        const taxon = metadata.taxon;
 
-        if (ownerWallet) {
+        // Check taxon is not undefined/null (0 is a valid taxon)
+        if (ownerWallet && taxon !== undefined && taxon !== null) {
           try {
-            logger.info(`Fetching NFTs for wallet: ${ownerWallet}`);
+            logger.info(`Fetching NFTs for wallet: ${ownerWallet}, taxon: ${taxon}`);
 
-            // Get all NFTs owned by the booster's wallet
-            const allNFTs = await xrplService.getAccountNFTs(ownerWallet);
-            logger.info(`Found ${allNFTs.length} total NFTs owned by ${ownerWallet}`);
+            // Get NFTs from the booster's wallet filtered by taxon
+            const collectionNFTs = await xrplService.getCollectionNFTs(ownerWallet, parseInt(taxon));
+            logger.info(`Found ${collectionNFTs.length} NFTs matching taxon ${taxon}`);
 
             // Take up to 4 NFTs
-            const nftsToProcess = allNFTs.slice(0, 4);
+            const nftsToProcess = collectionNFTs.slice(0, 4);
 
             // Fetch metadata and sell offers for each NFT
             const nftPromises = nftsToProcess.map(async (nft) => {
