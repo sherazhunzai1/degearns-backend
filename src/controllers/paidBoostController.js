@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const { getActiveSubscriptionsForWallets } = require('../utils/userHelpers');
+const xrplService = require('../services/xrplService');
 
 /**
  * Boost pricing configuration (XRP per day)
@@ -302,7 +303,7 @@ const createNftBoost = async (req, res, next) => {
       durationDays = DEFAULT_BOOST_DURATION_DAYS,
       paymentTransactionHash,
       paymentAmount,
-      metadata // NFT details from frontend
+      metadata // NFT details from frontend (optional)
     } = req.body;
 
     // Validate required fields
@@ -326,6 +327,67 @@ const createNftBoost = async (req, res, next) => {
       throw new ApiError(400, 'This NFT already has an active boost. Wait for it to expire or cancel it first.');
     }
 
+    // Fetch NFT details from XRPL if not provided in metadata
+    let nftMetadata = metadata || {};
+
+    try {
+      // Try to get NFT info from XRPL
+      const nftInfo = await xrplService.getNFTInfo(nftTokenId);
+
+      if (nftInfo) {
+        nftMetadata.uri = nftInfo.uri || nftMetadata.uri;
+        nftMetadata.owner = nftInfo.owner || walletAddress;
+        nftMetadata.issuer = nftInfo.issuer || nftMetadata.issuer;
+        nftMetadata.taxon = nftInfo.nft_taxon || nftMetadata.taxon;
+
+        // Fetch metadata from URI if available
+        if (nftInfo.uri && !nftMetadata.name) {
+          try {
+            const uriMetadata = await xrplService.fetchNFTMetadata(nftInfo.uri);
+            if (uriMetadata) {
+              nftMetadata.name = uriMetadata.name || nftMetadata.name;
+              nftMetadata.image = uriMetadata.image || uriMetadata.image_url || uriMetadata.imageUrl || nftMetadata.image;
+              nftMetadata.description = uriMetadata.description || nftMetadata.description;
+            }
+          } catch (err) {
+            logger.warn(`Could not fetch metadata from URI for NFT ${nftTokenId}`);
+          }
+        }
+
+        // Try to find collection info
+        if (nftInfo.nft_taxon !== undefined && nftInfo.issuer) {
+          const collection = await Collection.findOne({
+            where: {
+              taxon: nftInfo.nft_taxon,
+              creatorWalletAddress: nftInfo.issuer
+            },
+            include: [{
+              association: 'creator',
+              attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+            }]
+          });
+
+          if (collection) {
+            nftMetadata.collection = {
+              id: collection.id,
+              name: collection.name,
+              slug: collection.slug,
+              image: collection.image,
+              taxon: collection.taxon,
+              creator: {
+                walletAddress: collection.creator?.walletAddress || collection.creatorWalletAddress,
+                username: collection.creator?.username || collection.creatorWalletAddress,
+                profileImage: collection.creator?.profileImage || null,
+                isVerified: collection.creator?.isVerified || false
+              }
+            };
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(`Could not fetch NFT info from XRPL for ${nftTokenId}: ${err.message}`);
+    }
+
     // Calculate dates
     const startDate = new Date();
     const endDate = new Date();
@@ -334,7 +396,7 @@ const createNftBoost = async (req, res, next) => {
     // Calculate expected payment
     const expectedPayment = paymentAmount || calculateBoostPrice(boostPercentage, durationDays);
 
-    // Create boost record
+    // Create boost record with fetched metadata
     const boost = await NftBoost.create({
       nftTokenId,
       userWalletAddress: walletAddress,
@@ -345,7 +407,7 @@ const createNftBoost = async (req, res, next) => {
       endDate,
       isActive: true,
       metadata: {
-        ...metadata,
+        ...nftMetadata,
         durationDays,
         dailyRate: BOOST_PRICING[boostPercentage]
       }
@@ -490,7 +552,8 @@ const createCollectionBoost = async (req, res, next) => {
       boostPercentage,
       durationDays = DEFAULT_BOOST_DURATION_DAYS,
       paymentTransactionHash,
-      paymentAmount
+      paymentAmount,
+      metadata // Collection details from frontend (optional)
     } = req.body;
 
     // Validate required fields
@@ -514,6 +577,61 @@ const createCollectionBoost = async (req, res, next) => {
       throw new ApiError(400, 'This collection already has an active boost. Wait for it to expire or cancel it first.');
     }
 
+    // Try to fetch collection details from database if not provided in metadata
+    let collectionMetadata = metadata || {};
+
+    try {
+      // Try to find collection by ID first, then by slug
+      let collection = await Collection.findByPk(collectionId, {
+        include: [{
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }]
+      });
+
+      if (!collection) {
+        // Try finding by slug as fallback
+        collection = await Collection.findOne({
+          where: { slug: collectionId },
+          include: [{
+            association: 'creator',
+            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+          }]
+        });
+      }
+
+      if (collection) {
+        // Store collection details in metadata
+        collectionMetadata = {
+          ...collectionMetadata,
+          id: collection.id,
+          name: collectionMetadata.name || collection.name,
+          slug: collection.slug,
+          description: collectionMetadata.description || collection.description,
+          image: collectionMetadata.image || collection.image,
+          bannerImage: collection.bannerImage,
+          taxon: collection.taxon,
+          category: collection.category,
+          floorPrice: collection.floorPrice,
+          totalVolume: collection.totalVolume,
+          totalSupply: collection.totalSupply,
+          isVerified: collection.isVerified,
+          creatorWalletAddress: collection.creatorWalletAddress,
+          creator: collection.creator ? {
+            walletAddress: collection.creator.walletAddress,
+            username: collection.creator.username,
+            profileImage: collection.creator.profileImage,
+            isVerified: collection.creator.isVerified
+          } : null
+        };
+        logger.info(`Collection found in database: ${collection.name}`);
+      } else {
+        logger.info(`Collection not found in database, using provided metadata for ${collectionId}`);
+      }
+    } catch (err) {
+      logger.warn(`Could not fetch collection from database for ${collectionId}: ${err.message}`);
+    }
+
     // Calculate dates
     const startDate = new Date();
     const endDate = new Date();
@@ -522,7 +640,7 @@ const createCollectionBoost = async (req, res, next) => {
     // Calculate expected payment
     const expectedPayment = paymentAmount || calculateBoostPrice(boostPercentage, durationDays);
 
-    // Create boost record
+    // Create boost record with fetched metadata
     const boost = await CollectionBoost.create({
       collectionId,
       userWalletAddress: walletAddress,
@@ -533,6 +651,7 @@ const createCollectionBoost = async (req, res, next) => {
       endDate,
       isActive: true,
       metadata: {
+        ...collectionMetadata,
         durationDays,
         dailyRate: BOOST_PRICING[boostPercentage]
       }
@@ -605,7 +724,31 @@ const getBoostedCollections = async (req, res, next) => {
         boostId: boost.id,
         boostPercentage: boost.boostPercentage,
         boostEndDate: boost.endDate,
+        boostScore: boost.boostPercentage / 20, // Convert to score (1-5)
+        boostDetails: {
+          percentage: boost.boostPercentage,
+          remainingDays: boost.getRemainingDays(),
+          impressions: boost.impressions,
+          clicks: boost.clicks
+        },
         collectionId: boost.collectionId,
+        // Formatted collection data from metadata
+        collection: {
+          id: metadata.id || boost.collectionId,
+          name: metadata.name || null,
+          slug: metadata.slug || null,
+          description: metadata.description || null,
+          image: metadata.image || null,
+          bannerImage: metadata.bannerImage || null,
+          taxon: metadata.taxon || null,
+          category: metadata.category || null,
+          floorPrice: metadata.floorPrice || null,
+          totalVolume: metadata.totalVolume || null,
+          totalSupply: metadata.totalSupply || null,
+          isVerified: metadata.isVerified || false,
+          creatorWalletAddress: metadata.creatorWalletAddress || null,
+          creator: metadata.creator || null
+        },
         userWalletAddress: boost.userWalletAddress,
         user: user ? {
           walletAddress: user.walletAddress,
@@ -613,8 +756,7 @@ const getBoostedCollections = async (req, res, next) => {
           profileImage: user.profileImage,
           isVerified: user.isVerified,
           subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
-        } : null,
-        metadata
+        } : null
       };
     });
 
