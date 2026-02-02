@@ -577,76 +577,25 @@ const createCollectionBoost = async (req, res, next) => {
       throw new ApiError(400, 'This collection already has an active boost. Wait for it to expire or cancel it first.');
     }
 
-    // Try to fetch collection details from database if not provided in metadata
-    let collectionMetadata = metadata || {};
-
-    try {
-      // Try to find collection by ID first, then by slug
-      let collection = await Collection.findByPk(collectionId, {
-        include: [{
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }]
-      });
-
-      if (!collection) {
-        // Try finding by slug as fallback
-        collection = await Collection.findOne({
-          where: { slug: collectionId },
-          include: [{
-            association: 'creator',
-            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-          }]
-        });
-      }
-
-      if (collection) {
-        // Store collection details in metadata
-        collectionMetadata = {
-          ...collectionMetadata,
-          id: collection.id,
-          name: collectionMetadata.name || collection.name,
-          slug: collection.slug,
-          description: collectionMetadata.description || collection.description,
-          image: collectionMetadata.image || collection.image,
-          bannerImage: collection.bannerImage,
-          taxon: collection.taxon,
-          category: collection.category,
-          floorPrice: collection.floorPrice,
-          totalVolume: collection.totalVolume,
-          totalSupply: collection.totalSupply,
-          isVerified: collection.isVerified,
-          creatorWalletAddress: collection.creatorWalletAddress,
-          creator: collection.creator ? {
-            walletAddress: collection.creator.walletAddress,
-            username: collection.creator.username,
-            profileImage: collection.creator.profileImage,
-            isVerified: collection.creator.isVerified
-          } : null
-        };
-        logger.info(`Collection found in database: ${collection.name}`);
-      } else {
-        // Collection not in database - metadata from frontend is required
-        if (!metadata || !metadata.name || !metadata.taxon || !metadata.creatorWalletAddress) {
-          throw new ApiError(400, 'Collection not found in database. Please provide metadata with name, taxon, and creatorWalletAddress');
-        }
-
-        // Ensure creator object is properly formatted
-        if (!collectionMetadata.creator && metadata.creatorWalletAddress) {
-          collectionMetadata.creator = {
-            walletAddress: metadata.creatorWalletAddress,
-            username: metadata.creatorUsername || metadata.creatorWalletAddress,
-            profileImage: metadata.creatorProfileImage || null,
-            isVerified: metadata.creatorIsVerified || false
-          };
-        }
-
-        logger.info(`Collection not found in database, using provided metadata for ${collectionId}: ${metadata.name}`);
-      }
-    } catch (err) {
-      if (err instanceof ApiError) throw err;
-      logger.warn(`Could not fetch collection from database for ${collectionId}: ${err.message}`);
+    // Collection boosts are independent from database - use metadata from frontend
+    // Validate required metadata fields (taxon can be 0 which is valid)
+    if (!metadata || !metadata.name || metadata.taxon === undefined || metadata.taxon === null || !metadata.creatorWalletAddress) {
+      throw new ApiError(400, 'Please provide metadata with name, taxon, and creatorWalletAddress');
     }
+
+    // Build collection metadata from frontend data
+    const collectionMetadata = {
+      ...metadata,
+      // Ensure creator object is properly formatted
+      creator: {
+        walletAddress: metadata.creatorWalletAddress,
+        username: metadata.creatorUsername || metadata.creatorWalletAddress,
+        profileImage: metadata.creatorProfileImage || null,
+        isVerified: metadata.creatorIsVerified || false
+      }
+    };
+
+    logger.info(`Creating collection boost for: ${metadata.name} (taxon: ${metadata.taxon})`);
 
     // Calculate dates
     const startDate = new Date();
@@ -656,7 +605,7 @@ const createCollectionBoost = async (req, res, next) => {
     // Calculate expected payment
     const expectedPayment = paymentAmount || calculateBoostPrice(boostPercentage, durationDays);
 
-    // Create boost record with fetched metadata
+    // Create boost record with metadata
     const boost = await CollectionBoost.create({
       collectionId,
       userWalletAddress: walletAddress,
