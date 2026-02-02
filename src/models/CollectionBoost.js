@@ -7,9 +7,9 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     collectionId: {
-      type: DataTypes.UUID,
+      type: DataTypes.STRING(100),
       allowNull: false,
-      comment: 'Reference to the boosted collection'
+      comment: 'Collection identifier (independent, no foreign key)'
     },
     userWalletAddress: {
       type: DataTypes.STRING(100),
