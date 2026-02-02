@@ -1706,8 +1706,14 @@ const getPopularCollections = async (req, res, next) => {
           try {
             logger.info(`Fetching NFTs for wallet: ${ownerWallet}, taxon: ${taxon}`);
 
-            // Get NFTs from the booster's wallet filtered by taxon
-            const collectionNFTs = await xrplService.getCollectionNFTs(ownerWallet, parseInt(taxon));
+            // Get all NFTs owned by the wallet from XRPL
+            const allNFTs = await xrplService.getAccountNFTs(ownerWallet);
+
+            // Filter by NFTokenTaxon (same approach as collections/:taxon API)
+            const collectionNFTs = allNFTs.filter(nft => {
+              const nftTaxon = nft.NFTokenTaxon || 0;
+              return nftTaxon === parseInt(taxon);
+            });
             logger.info(`Found ${collectionNFTs.length} NFTs matching taxon ${taxon}`);
 
             // Take up to 4 NFTs
