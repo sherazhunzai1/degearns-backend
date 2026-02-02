@@ -1696,15 +1696,15 @@ const getPopularCollections = async (req, res, next) => {
         // Get mintedCount from metadata or default to totalSupply
         const mintedCount = metadata.totalSupply || 0;
 
-        // Fetch up to 4 NFTs for this collection from XRPL
+        // Fetch up to 4 NFTs for this collection from XRPL using owner wallet and taxon
         let recentNFTs = [];
-        const creatorWallet = metadata.creator?.walletAddress || metadata.creatorWalletAddress;
+        const ownerWallet = boost.userWalletAddress; // The wallet that boosted (owns NFTs)
         const taxon = metadata.taxon;
 
-        if (creatorWallet && taxon) {
+        if (ownerWallet && taxon) {
           try {
-            // Get collection NFTs from XRPL
-            const collectionNFTs = await xrplService.getCollectionNFTs(creatorWallet, parseInt(taxon));
+            // Get NFTs owned by the booster from this collection (filtered by taxon)
+            const collectionNFTs = await xrplService.getCollectionNFTs(ownerWallet, parseInt(taxon));
 
             // Take up to 4 NFTs
             const nftsToProcess = collectionNFTs.slice(0, 4);

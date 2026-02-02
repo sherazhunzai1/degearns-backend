@@ -626,9 +626,25 @@ const createCollectionBoost = async (req, res, next) => {
         };
         logger.info(`Collection found in database: ${collection.name}`);
       } else {
-        logger.info(`Collection not found in database, using provided metadata for ${collectionId}`);
+        // Collection not in database - metadata from frontend is required
+        if (!metadata || !metadata.name || !metadata.taxon || !metadata.creatorWalletAddress) {
+          throw new ApiError(400, 'Collection not found in database. Please provide metadata with name, taxon, and creatorWalletAddress');
+        }
+
+        // Ensure creator object is properly formatted
+        if (!collectionMetadata.creator && metadata.creatorWalletAddress) {
+          collectionMetadata.creator = {
+            walletAddress: metadata.creatorWalletAddress,
+            username: metadata.creatorUsername || metadata.creatorWalletAddress,
+            profileImage: metadata.creatorProfileImage || null,
+            isVerified: metadata.creatorIsVerified || false
+          };
+        }
+
+        logger.info(`Collection not found in database, using provided metadata for ${collectionId}: ${metadata.name}`);
       }
     } catch (err) {
+      if (err instanceof ApiError) throw err;
       logger.warn(`Could not fetch collection from database for ${collectionId}: ${err.message}`);
     }
 
