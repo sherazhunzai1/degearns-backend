@@ -1399,6 +1399,24 @@ const getNewNFTs = async (req, res, next) => {
 
     const shuffledBoosts = weightedShuffle(activeBoosts);
 
+    // Collect all user wallet addresses for batch lookup
+    const userAddresses = [...new Set(shuffledBoosts.map(b => b.userWalletAddress))];
+
+    // Fetch user info for all boost owners
+    let userMap = {};
+    let subscriptionMap = {};
+
+    if (userAddresses.length > 0) {
+      const users = await User.findAll({
+        where: { walletAddress: { [Op.in]: userAddresses } },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+      users.forEach(u => { userMap[u.walletAddress] = u; });
+
+      // Get subscription plans
+      subscriptionMap = await getActiveSubscriptionsForWallets(userAddresses);
+    }
+
     // Fetch NFT details from XRPL for each boosted NFT
     const allNFTs = [];
 
@@ -1509,13 +1527,24 @@ const getNewNFTs = async (req, res, next) => {
           }
         }
 
+        // Get owner user info
+        const ownerUser = userMap[boost.userWalletAddress];
+        const ownerInfo = {
+          walletAddress: boost.userWalletAddress,
+          username: ownerUser?.username || boost.userWalletAddress,
+          profileImage: ownerUser?.profileImage || null,
+          isVerified: ownerUser?.isVerified || false,
+          subscriptionPlan: subscriptionMap[boost.userWalletAddress] || 'free'
+        };
+
         allNFTs.push({
           nftTokenId,
           name: nftName,
           image: imageUrl,
           description,
           price,
-          owner,
+          ownerWalletAddress: owner,
+          owner: ownerInfo,
           listedDate: boost.startDate.toISOString(),
           collection: collectionInfo,
           uri: nftUri,
