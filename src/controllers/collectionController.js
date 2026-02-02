@@ -1473,7 +1473,7 @@ const getNewNFTs = async (req, res, next) => {
         const ownerInfo = {
           walletAddress: boost.userWalletAddress,
           username: ownerUser?.username || boost.userWalletAddress,
-          profileImage: ownerUser?.profileImage || null,
+          profileImage: convertToIpfsHash(ownerUser?.profileImage) || null,
           isVerified: ownerUser?.isVerified || false,
           subscriptionPlan: subscriptionMap[boost.userWalletAddress] || 'free'
         };
