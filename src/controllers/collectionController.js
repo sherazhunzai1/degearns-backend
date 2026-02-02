@@ -1701,7 +1701,8 @@ const getPopularCollections = async (req, res, next) => {
         const ownerWallet = boost.userWalletAddress; // The wallet that boosted (owns NFTs)
         const taxon = metadata.taxon;
 
-        if (ownerWallet && taxon) {
+        // Check taxon is not undefined/null (0 is a valid taxon)
+        if (ownerWallet && taxon !== undefined && taxon !== null) {
           try {
             // Get NFTs owned by the booster from this collection (filtered by taxon)
             const collectionNFTs = await xrplService.getCollectionNFTs(ownerWallet, parseInt(taxon));
@@ -1777,7 +1778,7 @@ const getPopularCollections = async (req, res, next) => {
             slug: metadata.slug || null,
             image: metadata.image || null,
             description: metadata.description || null,
-            taxon: metadata.taxon || null,
+            taxon: metadata.taxon !== undefined && metadata.taxon !== null ? metadata.taxon : null,
             creator: creatorInfo,
             isVerified: metadata.isVerified || false,
             totalSupply: mintedCount,
