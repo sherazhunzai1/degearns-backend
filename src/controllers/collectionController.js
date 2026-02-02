@@ -1,4 +1,4 @@
-const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription } = require('../models');
+const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription, NftBoost } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
@@ -1358,158 +1358,212 @@ const getNewNFTs = async (req, res, next) => {
   try {
     const { limit = 20, sortBy = 'boost' } = req.query;
 
-    logger.info(`Fetching NFTs across all collections, sortBy: ${sortBy}`);
+    logger.info(`Fetching boosted NFTs from NftBoosts table, sortBy: ${sortBy}`);
 
-    // Fetch all collections from database
-    const collections = await Collection.findAll({
-      include: [
-        {
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }
-      ]
+    // Fetch active boosts from NftBoosts table
+    const activeBoosts = await NftBoost.findAll({
+      where: {
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      },
+      order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']]
     });
 
-    logger.info(`Processing ${collections.length} collections for newest NFTs`);
+    logger.info(`Found ${activeBoosts.length} active NFT boosts`);
 
-    // Fetch NFTs from XRPL for all collections
+    // Apply weighted shuffle for fair distribution based on boost percentage
+    const weightedShuffle = (items) => {
+      const weighted = [];
+      items.forEach(item => {
+        // Weight factor: 20% = 1x, 40% = 2x, 60% = 3x, 80% = 4x, 100% = 5x
+        const weight = Math.floor(item.boostPercentage / 20);
+        for (let i = 0; i < weight; i++) {
+          weighted.push(item);
+        }
+      });
+
+      // Fisher-Yates shuffle
+      for (let i = weighted.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [weighted[i], weighted[j]] = [weighted[j], weighted[i]];
+      }
+
+      // Remove duplicates while preserving shuffled order
+      const seen = new Set();
+      return weighted.filter(item => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+    };
+
+    const shuffledBoosts = weightedShuffle(activeBoosts);
+
+    // Fetch NFT details from XRPL for each boosted NFT
     const allNFTs = [];
 
-    for (const collection of collections) {
+    for (const boost of shuffledBoosts) {
       try {
-        const taxon = collection.taxon;
-        const creatorWallet = collection.creatorWalletAddress;
+        const nftTokenId = boost.nftTokenId;
+        const metadata = boost.metadata || {};
 
-        // Fetch NFTs from XRPL for this collection
-        const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
-        const collectionNFTs = accountNFTs.filter(nft => {
-          const nftTaxon = nft.NFTokenTaxon || 0;
-          return nftTaxon === taxon;
-        });
+        // Try to get NFT info from XRPL
+        let nftData = null;
+        let sellOffers = [];
+        let nftMetadata = null;
 
-        // Get NFTs with sell offers (listed NFTs)
-        for (const nft of collectionNFTs) {
+        try {
+          nftData = await xrplService.getNFTInfo(nftTokenId);
+        } catch (err) {
+          logger.warn(`Could not fetch NFT info for ${nftTokenId}`);
+        }
+
+        // Get sell offers
+        try {
+          sellOffers = await xrplService.getNFTSellOffers(nftTokenId) || [];
+        } catch (err) {
+          // No sell offers or error
+        }
+
+        // Get lowest price if listed
+        let price = null;
+        let owner = boost.userWalletAddress;
+
+        if (sellOffers.length > 0) {
+          const lowestOffer = sellOffers.reduce((min, offer) =>
+            parseInt(offer.amount) < parseInt(min.amount) ? offer : min
+          , sellOffers[0]);
+          price = lowestOffer.amount;
+          owner = lowestOffer.owner;
+        }
+
+        // Fetch NFT metadata from URI if available
+        let imageUrl = metadata.image || null;
+        let nftName = metadata.name || null;
+        let description = metadata.description || null;
+        let uri = metadata.uri || null;
+
+        if (nftData?.URI && !imageUrl) {
           try {
-            const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
-
-            if (sellOffers && sellOffers.length > 0) {
-              // NFT is listed for sale
-              const lowestOffer = sellOffers.reduce((min, offer) =>
-                parseInt(offer.amount) < parseInt(min.amount) ? offer : min
-              , sellOffers[0]);
-
-              // Fetch metadata
-              let metadata = null;
-              let imageUrl = null;
-              let nftName = null;
-
-              try {
-                metadata = await xrplService.fetchNFTMetadata(nft.URI);
-                if (metadata) {
-                  nftName = metadata.name || null;
-                  imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-                }
-              } catch (err) {
-                logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}`);
-              }
-
-              allNFTs.push({
-                nftTokenId: nft.NFTokenID,
-                name: nftName,
-                image: imageUrl,
-                description: metadata?.description || null,
-                price: lowestOffer.amount,
-                owner: lowestOffer.owner,
-                listedDate: lowestOffer.createdAt || new Date().toISOString(),
-                collection: {
-                  id: collection.id,
-                  name: collection.name,
-                  slug: collection.slug,
-                  image: collection.image,
-                  taxon: collection.taxon,
-                  creator: {
-                    walletAddress: collection.creator?.walletAddress || collection.creatorWalletAddress,
-                    username: collection.creator?.username || collection.creatorWalletAddress,
-                    profileImage: collection.creator?.profileImage || null,
-                    isVerified: collection.creator?.isVerified || false
-                  }
-                },
-                uri: nft.URI
-              });
+            nftMetadata = await xrplService.fetchNFTMetadata(nftData.URI);
+            if (nftMetadata) {
+              nftName = nftName || nftMetadata.name || null;
+              imageUrl = imageUrl || nftMetadata.image || nftMetadata.image_url || nftMetadata.imageUrl;
+              description = description || nftMetadata.description || null;
             }
+            uri = nftData.URI;
           } catch (err) {
-            // Skip NFTs we can't get offers for
+            logger.warn(`Could not fetch metadata for NFT ${nftTokenId}`);
           }
         }
+
+        // Get collection info if taxon is available
+        let collectionInfo = null;
+        if (nftData?.NFTokenTaxon !== undefined && nftData?.Issuer) {
+          const collection = await Collection.findOne({
+            where: {
+              taxon: nftData.NFTokenTaxon,
+              creatorWalletAddress: nftData.Issuer
+            },
+            include: [{
+              association: 'creator',
+              attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+            }]
+          });
+
+          if (collection) {
+            collectionInfo = {
+              id: collection.id,
+              name: collection.name,
+              slug: collection.slug,
+              image: collection.image,
+              taxon: collection.taxon,
+              creator: {
+                walletAddress: collection.creator?.walletAddress || collection.creatorWalletAddress,
+                username: collection.creator?.username || collection.creatorWalletAddress,
+                profileImage: collection.creator?.profileImage || null,
+                isVerified: collection.creator?.isVerified || false
+              }
+            };
+          }
+        }
+
+        // Use metadata collection info as fallback
+        if (!collectionInfo && metadata.collection) {
+          collectionInfo = metadata.collection;
+        }
+
+        allNFTs.push({
+          nftTokenId,
+          name: nftName,
+          image: imageUrl,
+          description,
+          price,
+          owner,
+          listedDate: boost.startDate.toISOString(),
+          collection: collectionInfo,
+          uri,
+          boostId: boost.id,
+          boostPercentage: boost.boostPercentage,
+          boostEndDate: boost.endDate,
+          boostScore: boost.boostPercentage / 20, // Convert to score (1-5)
+          boostDetails: {
+            percentage: boost.boostPercentage,
+            remainingDays: boost.getRemainingDays(),
+            impressions: boost.impressions,
+            clicks: boost.clicks
+          }
+        });
       } catch (error) {
-        logger.error(`Error fetching NFTs from collection ${collection.name}:`, error.message);
+        logger.error(`Error fetching NFT data for boost ${boost.id}:`, error.message);
       }
     }
 
-    // Always apply boost scoring (boost is primary sort)
-    let sortedNFTs = allNFTs;
+    // Apply secondary sort if needed
+    if (sortBy === 'price_low') {
+      allNFTs.sort((a, b) => {
+        if (!a.price && !b.price) return 0;
+        if (!a.price) return 1;
+        if (!b.price) return -1;
+        return parseInt(a.price) - parseInt(b.price);
+      });
+    } else if (sortBy === 'price_high') {
+      allNFTs.sort((a, b) => {
+        if (!a.price && !b.price) return 0;
+        if (!a.price) return 1;
+        if (!b.price) return -1;
+        return parseInt(b.price) - parseInt(a.price);
+      });
+    }
+    // Default sort is already by boost (weighted shuffle)
 
-    if (allNFTs.length > 0) {
-      const db = require('../models');
-      const boostEngine = initBoostEngine(db);
+    // Limit results
+    const limitedNFTs = allNFTs.slice(0, parseInt(limit));
 
-      // Calculate boost for each NFT based on collection creator
-      sortedNFTs = await Promise.all(
-        allNFTs.map(async (nft) => {
-          const creatorWallet = nft.collection.creator?.walletAddress;
-          if (creatorWallet) {
-            const boost = await boostEngine.calculateBoostScore({
-              walletAddress: creatorWallet,
-              createdAt: nft.listedDate,
-              likesCount: 0,
-              commentsCount: 0
-            });
-            return {
-              ...nft,
-              boostScore: boost.score,
-              boostDetails: boost.components
-            };
-          }
-          return { ...nft, boostScore: 1.0, boostDetails: null };
-        })
-      );
-
-      // Sort by boost score (primary), then by secondary sort
-      sortedNFTs.sort((a, b) => {
-        // Primary sort: boost score (descending)
-        const boostDiff = (b.boostScore || 0) - (a.boostScore || 0);
-        if (Math.abs(boostDiff) > 0.01) return boostDiff;
-
-        // Secondary sort based on sortBy parameter
-        if (sortBy === 'price_low') {
-          return parseInt(a.price) - parseInt(b.price);
-        } else if (sortBy === 'price_high') {
-          return parseInt(b.price) - parseInt(a.price);
-        }
-        // Default: recent (by listedDate)
-        return new Date(b.listedDate) - new Date(a.listedDate);
+    // Increment impressions for returned boosts (async, non-blocking)
+    if (limitedNFTs.length > 0) {
+      const boostIds = limitedNFTs.map(n => n.boostId).filter(Boolean);
+      NftBoost.increment('impressions', { where: { id: boostIds } }).catch(err => {
+        logger.error('Error incrementing NFT boost impressions:', err);
       });
     }
 
-    // Limit results
-    const limitedNFTs = sortedNFTs.slice(0, parseInt(limit));
-
-    logger.info(`Found ${allNFTs.length} listed NFTs, returning ${limitedNFTs.length}`);
+    logger.info(`Found ${activeBoosts.length} boosted NFTs, returning ${limitedNFTs.length}`);
 
     res.status(200).json(
       new ApiResponse(200, {
         nfts: limitedNFTs,
-        total: allNFTs.length,
+        total: activeBoosts.length,
         limit: parseInt(limit),
         sorting: {
           primary: 'boost',
           secondary: sortBy
         }
-      }, 'NFTs retrieved successfully')
+      }, 'Boosted NFTs retrieved successfully')
     );
 
   } catch (error) {
-    logger.error('Error fetching newest NFTs:', error);
+    logger.error('Error fetching boosted NFTs:', error);
     next(error);
   }
 };
