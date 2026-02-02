@@ -479,20 +479,20 @@ GET /api/v1/collections/new-nfts
 POST /api/v1/paid-boosts/collections
 ```
 
-Creates a paid boost for a collection. **Collection boosts are independent** - the collection does not need to exist in the Collections table.
+Creates a paid boost for a collection. **Collection metadata is automatically fetched** from the database if the collection exists (by ID or slug).
 
 **Request Body:**
 ```json
 {
-  "collectionId": "collection-identifier",
+  "collectionId": "uuid-or-slug",
   "walletAddress": "rXXXXXXXXXX",
   "boostPercentage": 100,
   "durationDays": 7,
   "paymentTransactionHash": "XXXXXXXX...",
   "metadata": {
-    "name": "Collection Name",
-    "image": "https://...",
-    "description": "Collection description"
+    "name": "Collection Name (optional override)",
+    "image": "https://... (optional override)",
+    "description": "Description (optional override)"
   }
 }
 ```
@@ -500,14 +500,19 @@ Creates a paid boost for a collection. **Collection boosts are independent** - t
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| collectionId | string | Yes | Collection identifier (any string, not FK) |
+| collectionId | string | Yes | Collection UUID or slug |
 | walletAddress | string | Yes | Payer's wallet address |
 | boostPercentage | integer | Yes | 20, 40, 60, 80, or 100 |
 | durationDays | integer | Yes | Number of days (1-30) |
 | paymentTransactionHash | string | No | XRPL transaction hash |
-| metadata | object | No | Collection details to display |
+| metadata | object | No | Optional overrides (auto-fetched from database if collection exists) |
 
-**Note:** Unlike NFT boosts, collection metadata is NOT auto-fetched. Pass collection details in the `metadata` field for proper display.
+**Auto-fetched Metadata:**
+When creating a collection boost, the system automatically:
+1. Tries to find collection by UUID (primary key)
+2. Falls back to finding by slug if UUID not found
+3. If found, fetches: name, description, image, bannerImage, taxon, category, floorPrice, totalVolume, totalSupply, isVerified, creator info
+4. Stores all data in the `metadata` field for fast retrieval
 
 **Response:**
 ```json
@@ -517,7 +522,7 @@ Creates a paid boost for a collection. **Collection boosts are independent** - t
   "data": {
     "boost": {
       "id": "uuid",
-      "collectionId": "collection-identifier",
+      "collectionId": "uuid-or-slug",
       "userWalletAddress": "rXXXXXXXXXX",
       "boostPercentage": 100,
       "paymentAmount": "350.000000",
@@ -525,9 +530,25 @@ Creates a paid boost for a collection. **Collection boosts are independent** - t
       "endDate": "2025-01-22T00:00:00.000Z",
       "isActive": true,
       "metadata": {
-        "name": "Collection Name",
+        "id": "uuid",
+        "name": "Cool Collection",
+        "slug": "cool-collection",
+        "description": "An amazing collection",
         "image": "https://...",
-        "description": "Collection description",
+        "bannerImage": "https://...",
+        "taxon": 12345,
+        "category": "art",
+        "floorPrice": "1000000",
+        "totalVolume": "50000000",
+        "totalSupply": 100,
+        "isVerified": true,
+        "creatorWalletAddress": "rYYYYYYYYYY",
+        "creator": {
+          "walletAddress": "rYYYYYYYYYY",
+          "username": "creator",
+          "profileImage": "https://...",
+          "isVerified": true
+        },
         "durationDays": 7,
         "dailyRate": 50
       }
@@ -567,19 +588,42 @@ Returns boosted collections sorted by weighted random selection.
         "boostId": "uuid",
         "boostPercentage": 100,
         "boostEndDate": "2025-01-22T00:00:00.000Z",
-        "collectionId": "collection-identifier",
+        "boostScore": 5,
+        "boostDetails": {
+          "percentage": 100,
+          "remainingDays": 5,
+          "impressions": 1500,
+          "clicks": 45
+        },
+        "collectionId": "uuid-or-slug",
+        "collection": {
+          "id": "uuid",
+          "name": "Cool Collection",
+          "slug": "cool-collection",
+          "description": "An amazing collection",
+          "image": "https://...",
+          "bannerImage": "https://...",
+          "taxon": 12345,
+          "category": "art",
+          "floorPrice": "1000000",
+          "totalVolume": "50000000",
+          "totalSupply": 100,
+          "isVerified": true,
+          "creatorWalletAddress": "rYYYYYYYYYY",
+          "creator": {
+            "walletAddress": "rYYYYYYYYYY",
+            "username": "creator",
+            "profileImage": "https://...",
+            "isVerified": true
+          }
+        },
         "userWalletAddress": "rXXXXXXXXXX",
         "user": {
           "walletAddress": "rXXXXXXXXXX",
-          "username": "user123",
+          "username": "booster123",
           "profileImage": "https://...",
           "isVerified": false,
           "subscriptionPlan": "DEGEN"
-        },
-        "metadata": {
-          "name": "Collection Name",
-          "image": "https://...",
-          "description": "Collection description"
         }
       }
     ],
@@ -702,9 +746,25 @@ This ensures higher-paying boosts appear more frequently while still giving expo
 ### Collection Boost Metadata
 ```json
 {
+  "id": "uuid",
   "name": "Collection Name",
-  "image": "https://...",
+  "slug": "collection-slug",
   "description": "Collection description",
+  "image": "https://...",
+  "bannerImage": "https://...",
+  "taxon": 12345,
+  "category": "art",
+  "floorPrice": "1000000",
+  "totalVolume": "50000000",
+  "totalSupply": 100,
+  "isVerified": true,
+  "creatorWalletAddress": "rYYYYYYYYYY",
+  "creator": {
+    "walletAddress": "rYYYYYYYYYY",
+    "username": "creator",
+    "profileImage": "https://...",
+    "isVerified": true
+  },
   "durationDays": 7,
   "dailyRate": 50
 }
@@ -719,5 +779,6 @@ This ensures higher-paying boosts appear more frequently while still giving expo
 3. **Click Tracking**: Call the click endpoints when users interact with boosted content
 4. **CTR Calculation**: Click-through rate is calculated as `(clicks / impressions) * 100`
 5. **NFT Auto-fetch**: NFT metadata is automatically fetched from XRPL when creating a boost
-6. **Collection Independence**: Collection boosts don't require collections to exist in the database
-7. **Metadata Fallback**: If XRPL fetch fails, stored metadata is used for display
+6. **Collection Auto-fetch**: Collection metadata is automatically fetched from database when creating a boost (by ID or slug)
+7. **Metadata Fallback**: If database/XRPL fetch fails, stored metadata or provided metadata is used for display
+8. **Collection Independence**: Collection boosts work even if collection doesn't exist in database (uses provided metadata)
