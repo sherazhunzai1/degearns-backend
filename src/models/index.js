@@ -481,17 +481,7 @@ NftBoost.belongsTo(User, {
   as: 'user'
 });
 
-// Collection and CollectionBoost associations
-Collection.hasMany(CollectionBoost, {
-  foreignKey: 'collectionId',
-  as: 'boosts'
-});
-CollectionBoost.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
-
-// User and CollectionBoost associations
+// User and CollectionBoost associations (CollectionBoost is independent, no Collection association)
 User.hasMany(CollectionBoost, {
   foreignKey: 'userWalletAddress',
   sourceKey: 'walletAddress',

@@ -563,18 +563,12 @@ const getBoostedCollections = async (req, res, next) => {
     const { page = 1, limit = 10 } = req.query;
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get active boosts
+    // Get active boosts (collection boosts are independent, no Collection association)
     const { count, rows: boosts } = await CollectionBoost.findAndCountAll({
       where: {
         isActive: true,
         endDate: { [Op.gt]: new Date() }
       },
-      include: [
-        {
-          model: Collection,
-          as: 'collection'
-        }
-      ],
       order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']]
     });
 
@@ -584,51 +578,43 @@ const getBoostedCollections = async (req, res, next) => {
     // Apply pagination after shuffle
     const paginatedBoosts = shuffledBoosts.slice(offset, offset + parseInt(limit));
 
-    // Get creator details
-    const creatorAddresses = [...new Set(paginatedBoosts.map(b => b.collection.creatorWalletAddress))];
+    // Get user details for boost creators
+    const userAddresses = [...new Set(paginatedBoosts.map(b => b.userWalletAddress))];
 
-    let creatorMap = {};
+    let userMap = {};
     let subscriptionMap = {};
 
-    if (creatorAddresses.length > 0) {
-      const creators = await User.findAll({
-        where: { walletAddress: { [Op.in]: creatorAddresses } },
+    if (userAddresses.length > 0) {
+      const users = await User.findAll({
+        where: { walletAddress: { [Op.in]: userAddresses } },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
       });
 
-      creators.forEach(c => { creatorMap[c.walletAddress] = c; });
+      users.forEach(u => { userMap[u.walletAddress] = u; });
 
       // Get subscription plans
-      subscriptionMap = await getActiveSubscriptionsForWallets(creatorAddresses);
+      subscriptionMap = await getActiveSubscriptionsForWallets(userAddresses);
     }
 
-    // Format response
+    // Format response (collection details come from metadata)
     const formattedCollections = paginatedBoosts.map(boost => {
-      const collection = boost.collection;
-      const creator = creatorMap[collection.creatorWalletAddress];
+      const user = userMap[boost.userWalletAddress];
+      const metadata = boost.metadata || {};
 
       return {
         boostId: boost.id,
         boostPercentage: boost.boostPercentage,
         boostEndDate: boost.endDate,
-        collection: {
-          id: collection.id,
-          name: collection.name,
-          description: collection.description,
-          imageUrl: collection.imageUrl,
-          bannerUrl: collection.bannerUrl,
-          creatorWalletAddress: collection.creatorWalletAddress,
-          creator: creator ? {
-            walletAddress: creator.walletAddress,
-            username: creator.username,
-            profileImage: creator.profileImage,
-            isVerified: creator.isVerified,
-            subscriptionPlan: subscriptionMap[creator.walletAddress] || 'free'
-          } : null,
-          floorPrice: collection.floorPrice,
-          totalVolume: collection.totalVolume,
-          itemCount: collection.itemCount
-        }
+        collectionId: boost.collectionId,
+        userWalletAddress: boost.userWalletAddress,
+        user: user ? {
+          walletAddress: user.walletAddress,
+          username: user.username,
+          profileImage: user.profileImage,
+          isVerified: user.isVerified,
+          subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
+        } : null,
+        metadata
       };
     });
 
@@ -745,11 +731,6 @@ const getUserPaidBoosts = async (req, res, next) => {
           isActive: true,
           endDate: { [Op.gt]: now }
         },
-        include: [{
-          model: Collection,
-          as: 'collection',
-          attributes: ['id', 'name', 'imageUrl']
-        }],
         order: [['endDate', 'ASC']]
       })
     ]);
