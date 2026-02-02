@@ -1,4 +1,4 @@
-const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription, NftBoost } = require('../models');
+const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
@@ -1656,101 +1656,131 @@ const getTopSellers = async (req, res, next) => {
 };
 
 /**
- * Get popular collections by minted count
- * Returns top 6 collections with most NFTs minted
+ * Get popular collections from CollectionBoosts table
+ * Returns boosted collections sorted by boost percentage (higher = more visibility)
  */
 const getPopularCollections = async (req, res, next) => {
   try {
-    logger.info('Fetching popular collections');
+    const { limit = 6 } = req.query;
 
-    // Get all collections
-    const collections = await Collection.findAll({
-      include: [
-        {
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }
-      ]
+    logger.info('Fetching popular collections from CollectionBoosts table');
+
+    // Fetch active boosts from CollectionBoosts table (only where endDate not crossed)
+    const activeBoosts = await CollectionBoost.findAll({
+      where: {
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      },
+      order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']]
     });
 
-    logger.info(`Processing ${collections.length} collections for popularity`);
+    logger.info(`Found ${activeBoosts.length} active collection boosts`);
 
-    // Process each collection to get minted count
+    // Collect user wallet addresses for batch lookup
+    const userAddresses = [...new Set(activeBoosts.map(b => b.userWalletAddress))];
+
+    let userMap = {};
+    let subscriptionMap = {};
+
+    if (userAddresses.length > 0) {
+      const users = await User.findAll({
+        where: { walletAddress: { [Op.in]: userAddresses } },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+      users.forEach(u => { userMap[u.walletAddress] = u; });
+
+      subscriptionMap = await getActiveSubscriptionsForWallets(userAddresses);
+    }
+
+    // Process each boost to build response
     const collectionsWithStats = [];
 
-    for (const collection of collections) {
+    for (const boost of activeBoosts) {
       try {
-        const taxon = collection.taxon;
-        const creatorWallet = collection.creatorWalletAddress;
+        const metadata = boost.metadata || {};
 
-        // Fetch NFTs from XRPL to get total minted count
-        const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
-        const collectionNFTs = accountNFTs.filter(nft => {
-          const nftTaxon = nft.NFTokenTaxon || 0;
-          return nftTaxon === taxon;
-        });
-
-        const mintedCount = collectionNFTs.length;
-
-        // Get recent 4 minted NFTs
-        const recentNFTs = [];
-        const nftsToFetch = collectionNFTs.slice(0, 4);
-
-        for (const nft of nftsToFetch) {
-          try {
-            const metadata = await xrplService.fetchNFTMetadata(nft.URI);
-            let imageUrl = null;
-
-            if (metadata) {
-              imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
-
-              recentNFTs.push({
-                nftTokenId: nft.NFTokenID,
-                name: metadata.name || null,
-                image: imageUrl,
-                description: metadata.description || null
-              });
-            }
-          } catch (err) {
-            logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}`);
+        // Get creator info from metadata or user map
+        let creatorInfo = metadata.creator || null;
+        if (!creatorInfo && metadata.creatorWalletAddress) {
+          const creatorUser = userMap[metadata.creatorWalletAddress];
+          if (creatorUser) {
+            creatorInfo = {
+              walletAddress: creatorUser.walletAddress,
+              username: creatorUser.username,
+              profileImage: convertToIpfsHash(creatorUser.profileImage),
+              isVerified: creatorUser.isVerified
+            };
           }
         }
 
+        // Convert creator profileImage to IPFS hash if exists
+        if (creatorInfo && creatorInfo.profileImage) {
+          creatorInfo.profileImage = convertToIpfsHash(creatorInfo.profileImage);
+        }
+
+        // Get owner (booster) info
+        const ownerUser = userMap[boost.userWalletAddress];
+        const ownerInfo = {
+          walletAddress: boost.userWalletAddress,
+          username: ownerUser?.username || boost.userWalletAddress,
+          profileImage: convertToIpfsHash(ownerUser?.profileImage) || null,
+          isVerified: ownerUser?.isVerified || false,
+          subscriptionPlan: subscriptionMap[boost.userWalletAddress] || 'free'
+        };
+
         collectionsWithStats.push({
-          category: collection.category,
+          category: metadata.category || 'other',
           collection: {
-            id: collection.id,
-            name: collection.name,
-            slug: collection.slug,
-            image: collection.image,
-            description: collection.description,
-            taxon: collection.taxon,
-            creator: collection.creator,
-            isVerified: collection.isVerified,
-            totalSupply: mintedCount,
-            floorPrice: collection.floorPrice,
-            totalVolume: collection.totalVolume
+            id: metadata.id || boost.collectionId,
+            name: metadata.name || null,
+            slug: metadata.slug || null,
+            image: metadata.image || null,
+            bannerImage: metadata.bannerImage || null,
+            description: metadata.description || null,
+            taxon: metadata.taxon || null,
+            creator: creatorInfo,
+            isVerified: metadata.isVerified || false,
+            totalSupply: metadata.totalSupply || 0,
+            floorPrice: metadata.floorPrice || null,
+            totalVolume: metadata.totalVolume || null
           },
-          mintedCount: mintedCount,
-          recentNFTs: recentNFTs
+          // Boost details
+          boostId: boost.id,
+          boostPercentage: boost.boostPercentage,
+          boostEndDate: boost.endDate,
+          boostScore: boost.boostPercentage / 20,
+          boostDetails: {
+            percentage: boost.boostPercentage,
+            remainingDays: boost.getRemainingDays(),
+            impressions: boost.impressions,
+            clicks: boost.clicks
+          },
+          // Owner (booster) info
+          owner: ownerInfo
         });
 
       } catch (error) {
-        logger.error(`Error processing collection ${collection.name}:`, error.message);
+        logger.error(`Error processing collection boost ${boost.id}:`, error.message);
       }
     }
 
-    // Sort by minted count and limit to 6
-    const popularCollections = collectionsWithStats
-      .sort((a, b) => b.mintedCount - a.mintedCount)
-      .slice(0, 6);
+    // Limit results
+    const popularCollections = collectionsWithStats.slice(0, parseInt(limit));
+
+    // Increment impressions for returned boosts (async, non-blocking)
+    if (popularCollections.length > 0) {
+      const boostIds = popularCollections.map(c => c.boostId).filter(Boolean);
+      CollectionBoost.increment('impressions', { where: { id: boostIds } }).catch(err => {
+        logger.error('Error incrementing collection boost impressions:', err);
+      });
+    }
 
     logger.info(`Returning ${popularCollections.length} popular collections`);
 
     res.status(200).json(
       new ApiResponse(200, {
         popularCollections: popularCollections,
-        total: popularCollections.length
+        total: activeBoosts.length
       }, 'Popular collections retrieved successfully')
     );
 
