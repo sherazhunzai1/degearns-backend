@@ -1696,7 +1696,7 @@ const getPopularCollections = async (req, res, next) => {
         // Get mintedCount from metadata or default to totalSupply
         const mintedCount = metadata.totalSupply || 0;
 
-        // Fetch up to 4 NFTs for this collection from XRPL using owner wallet and taxon
+        // Fetch up to 4 NFTs from the booster's wallet filtered by taxon
         let recentNFTs = [];
         const ownerWallet = boost.userWalletAddress; // The wallet that boosted (owns NFTs)
         const taxon = metadata.taxon;
@@ -1704,21 +1704,9 @@ const getPopularCollections = async (req, res, next) => {
         // Check taxon is not undefined/null (0 is a valid taxon)
         if (ownerWallet && taxon !== undefined && taxon !== null) {
           try {
-            logger.info(`Fetching NFTs for collection: wallet=${ownerWallet}, taxon=${taxon}`);
+            logger.info(`Fetching NFTs for wallet: ${ownerWallet}, taxon: ${taxon}`);
 
-            // First get all NFTs owned by this wallet
-            const allNFTs = await xrplService.getAccountNFTs(ownerWallet);
-            logger.info(`Found ${allNFTs.length} total NFTs owned by ${ownerWallet}`);
-
-            // Log taxon of each NFT for debugging
-            if (allNFTs.length > 0) {
-              allNFTs.slice(0, 10).forEach(nft => {
-                const nftTaxon = xrplService.extractTaxonFromNFTokenID(nft.NFTokenID);
-                logger.info(`NFT ${nft.NFTokenID.substring(0, 16)}... has taxon: ${nftTaxon}`);
-              });
-            }
-
-            // Get NFTs owned by the booster from this collection (filtered by taxon)
+            // Get NFTs from the booster's wallet filtered by taxon
             const collectionNFTs = await xrplService.getCollectionNFTs(ownerWallet, parseInt(taxon));
             logger.info(`Found ${collectionNFTs.length} NFTs matching taxon ${taxon}`);
 
