@@ -1407,15 +1407,38 @@ const getNewNFTs = async (req, res, next) => {
         const nftTokenId = boost.nftTokenId;
         const metadata = boost.metadata || {};
 
-        // Try to get NFT info from XRPL
+        // Initialize NFT data variables
         let nftData = null;
         let sellOffers = [];
-        let nftMetadata = null;
+        let nftUri = metadata.uri || null;
+        let nftTaxon = metadata.taxon || null;
+        let nftIssuer = metadata.issuer || null;
 
+        // Try to get NFT info from XRPL (nft_info command)
         try {
           nftData = await xrplService.getNFTInfo(nftTokenId);
+          if (nftData) {
+            nftUri = nftData.uri || nftUri;
+            nftTaxon = nftData.nft_taxon || nftTaxon;
+            nftIssuer = nftData.issuer || nftIssuer;
+          }
         } catch (err) {
-          logger.warn(`Could not fetch NFT info for ${nftTokenId}`);
+          logger.warn(`nft_info not available for ${nftTokenId}, trying getAccountNFTs`);
+        }
+
+        // Fallback: Try to find NFT in user's wallet using getAccountNFTs
+        if (!nftUri && boost.userWalletAddress) {
+          try {
+            const walletNFTs = await xrplService.getAccountNFTs(boost.userWalletAddress);
+            const foundNFT = walletNFTs.find(nft => nft.NFTokenID === nftTokenId);
+            if (foundNFT) {
+              nftUri = foundNFT.URI || nftUri;
+              nftTaxon = foundNFT.NFTokenTaxon || nftTaxon;
+              nftIssuer = foundNFT.Issuer || nftIssuer;
+            }
+          } catch (err) {
+            logger.warn(`Could not fetch wallet NFTs for ${boost.userWalletAddress}`);
+          }
         }
 
         // Get sell offers
@@ -1441,29 +1464,27 @@ const getNewNFTs = async (req, res, next) => {
         let imageUrl = metadata.image || null;
         let nftName = metadata.name || null;
         let description = metadata.description || null;
-        let uri = metadata.uri || null;
 
-        if (nftData?.URI && !imageUrl) {
+        if (nftUri && !imageUrl) {
           try {
-            nftMetadata = await xrplService.fetchNFTMetadata(nftData.URI);
+            const nftMetadata = await xrplService.fetchNFTMetadata(nftUri);
             if (nftMetadata) {
               nftName = nftName || nftMetadata.name || null;
               imageUrl = imageUrl || nftMetadata.image || nftMetadata.image_url || nftMetadata.imageUrl;
               description = description || nftMetadata.description || null;
             }
-            uri = nftData.URI;
           } catch (err) {
             logger.warn(`Could not fetch metadata for NFT ${nftTokenId}`);
           }
         }
 
         // Get collection info if taxon is available
-        let collectionInfo = null;
-        if (nftData?.NFTokenTaxon !== undefined && nftData?.Issuer) {
+        let collectionInfo = metadata.collection || null;
+        if (!collectionInfo && nftTaxon !== null && nftIssuer) {
           const collection = await Collection.findOne({
             where: {
-              taxon: nftData.NFTokenTaxon,
-              creatorWalletAddress: nftData.Issuer
+              taxon: nftTaxon,
+              creatorWalletAddress: nftIssuer
             },
             include: [{
               association: 'creator',
@@ -1488,11 +1509,6 @@ const getNewNFTs = async (req, res, next) => {
           }
         }
 
-        // Use metadata collection info as fallback
-        if (!collectionInfo && metadata.collection) {
-          collectionInfo = metadata.collection;
-        }
-
         allNFTs.push({
           nftTokenId,
           name: nftName,
@@ -1502,7 +1518,7 @@ const getNewNFTs = async (req, res, next) => {
           owner,
           listedDate: boost.startDate.toISOString(),
           collection: collectionInfo,
-          uri,
+          uri: nftUri,
           boostId: boost.id,
           boostPercentage: boost.boostPercentage,
           boostEndDate: boost.endDate,
