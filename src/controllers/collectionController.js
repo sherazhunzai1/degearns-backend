@@ -1696,9 +1696,78 @@ const getPopularCollections = async (req, res, next) => {
         // Get mintedCount from metadata or default to totalSupply
         const mintedCount = metadata.totalSupply || 0;
 
-        // recentNFTs would need to be fetched from XRPL, but since collection may not exist
-        // in our database, we return empty array (frontend can fetch if needed)
-        const recentNFTs = [];
+        // Fetch up to 4 NFTs for this collection from XRPL
+        let recentNFTs = [];
+        const creatorWallet = metadata.creator?.walletAddress || metadata.creatorWalletAddress;
+        const taxon = metadata.taxon;
+
+        if (creatorWallet && taxon) {
+          try {
+            // Get collection NFTs from XRPL
+            const collectionNFTs = await xrplService.getCollectionNFTs(creatorWallet, parseInt(taxon));
+
+            // Take up to 4 NFTs
+            const nftsToProcess = collectionNFTs.slice(0, 4);
+
+            // Fetch metadata and sell offers for each NFT
+            const nftPromises = nftsToProcess.map(async (nft) => {
+              try {
+                // Fetch NFT metadata
+                let nftMetadata = null;
+                try {
+                  nftMetadata = await xrplService.fetchNFTMetadata(nft.URI);
+                } catch (e) {
+                  logger.warn(`Could not fetch metadata for NFT ${nft.NFTokenID}`);
+                }
+
+                // Get sell offers for listing price
+                let price = null;
+                let sellOfferIndex = null;
+                try {
+                  const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+                  if (sellOffers && sellOffers.length > 0) {
+                    // Get lowest sell offer
+                    const lowestOffer = sellOffers.reduce((min, offer) => {
+                      const amount = typeof offer.amount === 'string' ? parseInt(offer.amount) : offer.amount;
+                      const minAmount = typeof min.amount === 'string' ? parseInt(min.amount) : min.amount;
+                      return amount < minAmount ? offer : min;
+                    }, sellOffers[0]);
+                    const amountDrops = typeof lowestOffer.amount === 'string' ? parseInt(lowestOffer.amount) : lowestOffer.amount;
+                    price = (amountDrops / 1000000).toFixed(6);
+                    sellOfferIndex = lowestOffer.nft_offer_index;
+                  }
+                } catch (e) {
+                  // No sell offers
+                }
+
+                // Get image URL
+                let imageUrl = null;
+                if (nftMetadata) {
+                  imageUrl = nftMetadata.image || nftMetadata.image_url || nftMetadata.imageUrl;
+                }
+
+                return {
+                  nftTokenId: nft.NFTokenID,
+                  name: nftMetadata?.name || null,
+                  image: imageUrl,
+                  description: nftMetadata?.description || null,
+                  uri: nft.URI ? xrplService.convertHexToString(nft.URI) : null,
+                  price: price,
+                  isListed: price !== null,
+                  sellOfferIndex: sellOfferIndex
+                };
+              } catch (error) {
+                logger.warn(`Error processing NFT ${nft.NFTokenID}:`, error.message);
+                return null;
+              }
+            });
+
+            const nftResults = await Promise.all(nftPromises);
+            recentNFTs = nftResults.filter(nft => nft !== null);
+          } catch (error) {
+            logger.warn(`Could not fetch NFTs for collection ${boost.collectionId}:`, error.message);
+          }
+        }
 
         collectionsWithStats.push({
           category: metadata.category || 'other',
