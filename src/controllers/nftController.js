@@ -1,5 +1,6 @@
 const xrplService = require('../services/xrplService');
-const { User, Collection } = require('../models');
+const { User, Collection, NftBoost } = require('../models');
+const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
 const ApiError = require('../utils/ApiError');
@@ -132,7 +133,17 @@ exports.getNFTDetail = async (req, res) => {
 
     const lastSale = sales.length > 0 ? sales[0] : null;
 
-    // Step 6: Format the response
+    // Step 6: Check if NFT has an active boost
+    const activeBoost = await NftBoost.findOne({
+      where: {
+        nftTokenId: nftTokenId,
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      }
+    });
+    const isBoosted = !!activeBoost;
+
+    // Step 7: Format the response
     const nftDetail = {
       nftTokenId: nftData.NFTokenID,
       title: nftTitle,
@@ -217,7 +228,10 @@ exports.getNFTDetail = async (req, res) => {
         amount: tx.amount,
         result: tx.result,
         ledgerIndex: tx.ledgerIndex
-      }))
+      })),
+
+      // Boost status
+      isBoosted: isBoosted
     };
 
     res.json({
