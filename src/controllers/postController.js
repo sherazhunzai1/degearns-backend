@@ -325,9 +325,24 @@ const getUserPosts = async (req, res, next) => {
     const subscriptionMap = await getActiveSubscriptionsForWallets([walletAddress]);
     const subscriptionPlan = subscriptionMap[walletAddress] || 'free';
 
+    // Fetch active post boosts to check which posts are boosted
+    const postIds = posts.map(p => p.id);
+    const activeBoosts = await PostBoost.findAll({
+      where: {
+        postId: { [Op.in]: postIds },
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      }
+    });
+    const boostedPostIds = new Set(activeBoosts.map(b => b.postId));
+
     // Format posts with engagement data
     const formattedPosts = await Promise.all(
-      posts.map(post => formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan))
+      posts.map(async (post) => {
+        const formatted = await formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan);
+        formatted.isBoosted = boostedPostIds.has(post.id);
+        return formatted;
+      })
     );
 
     // Count pinned posts for this user
