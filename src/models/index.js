@@ -33,6 +33,7 @@ const PostView = require('./PostView')(sequelize, DataTypes);
 const PostBoost = require('./PostBoost')(sequelize, DataTypes);
 const NftBoost = require('./NftBoost')(sequelize, DataTypes);
 const CollectionBoost = require('./CollectionBoost')(sequelize, DataTypes);
+const Repost = require('./Repost')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -493,6 +494,28 @@ CollectionBoost.belongsTo(User, {
   as: 'user'
 });
 
+// Post and Repost associations
+Post.hasMany(Repost, {
+  foreignKey: 'postId',
+  as: 'reposts'
+});
+Repost.belongsTo(Post, {
+  foreignKey: 'postId',
+  as: 'post'
+});
+
+// User and Repost associations
+User.hasMany(Repost, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'reposts'
+});
+Repost.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -533,5 +556,6 @@ module.exports = {
   Subscription,
   SubscriptionTier,
   UserStats,
-  ActivityLog
+  ActivityLog,
+  Repost
 };
