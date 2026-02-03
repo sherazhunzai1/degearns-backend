@@ -1,4 +1,4 @@
-const { User, Post, PostMedia, PostLike, PostComment, PostView, Follow, ActivityLog, Subscription, PostBoost } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment, PostView, Follow, ActivityLog, Subscription, PostBoost, Repost } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -277,9 +277,9 @@ const createPost = async (req, res, next) => {
 };
 
 /**
- * Get posts by wallet address (user's posts)
- * Pinned posts appear first, sorted by pinnedAt DESC
- * Then regular posts sorted by createdAt DESC
+ * Get posts by wallet address (user's timeline)
+ * Includes user's own posts and reposts from other users
+ * Pinned posts appear first, then sorted by date
  * Supports pagination
  */
 const getUserPosts = async (req, res, next) => {
@@ -293,19 +293,12 @@ const getUserPosts = async (req, res, next) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get posts with pagination, pinned posts first
-    const { count, rows: posts } = await Post.findAndCountAll({
+    // Get user's own posts
+    const ownPosts = await Post.findAll({
       where: {
         authorWalletAddress: walletAddress,
         isActive: true
       },
-      order: [
-        ['isPinned', 'DESC'],      // Pinned posts first
-        ['pinnedAt', 'DESC'],      // Most recently pinned first among pinned
-        ['createdAt', 'DESC']      // Then by creation date
-      ],
-      limit: parseInt(limit),
-      offset,
       include: [
         {
           model: PostMedia,
@@ -315,35 +308,122 @@ const getUserPosts = async (req, res, next) => {
       ]
     });
 
-    // Get author info
-    const author = await User.findOne({
-      where: { walletAddress },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    // Get user's reposts with the original post data
+    const reposts = await Repost.findAll({
+      where: { userWalletAddress: walletAddress },
+      include: [
+        {
+          model: Post,
+          as: 'post',
+          where: { isActive: true },
+          required: true,
+          include: [
+            {
+              model: PostMedia,
+              as: 'media',
+              order: [['displayOrder', 'ASC']]
+            }
+          ]
+        }
+      ]
     });
 
-    // Fetch subscription plan for author
-    const subscriptionMap = await getActiveSubscriptionsForWallets([walletAddress]);
-    const subscriptionPlan = subscriptionMap[walletAddress] || 'free';
+    // Get all author wallet addresses for user info lookup
+    const authorAddresses = new Set([walletAddress]);
+    ownPosts.forEach(p => authorAddresses.add(p.authorWalletAddress));
+    reposts.forEach(r => {
+      if (r.post) authorAddresses.add(r.post.authorWalletAddress);
+    });
 
-    // Fetch active post boosts to check which posts are boosted
-    const postIds = posts.map(p => p.id);
+    // Fetch user info and subscriptions
+    const [users, subscriptionMap] = await Promise.all([
+      User.findAll({
+        where: { walletAddress: { [Op.in]: [...authorAddresses] } },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      getActiveSubscriptionsForWallets([...authorAddresses])
+    ]);
+
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user.walletAddress] = {
+        ...user.toJSON(),
+        subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
+      };
+    });
+
+    // Fetch active post boosts
+    const allPostIds = [
+      ...ownPosts.map(p => p.id),
+      ...reposts.filter(r => r.post).map(r => r.post.id)
+    ];
     const activeBoosts = await PostBoost.findAll({
       where: {
-        postId: { [Op.in]: postIds },
+        postId: { [Op.in]: allPostIds },
         isActive: true,
         endDate: { [Op.gt]: new Date() }
       }
     });
     const boostedPostIds = new Set(activeBoosts.map(b => b.postId));
 
-    // Format posts with engagement data
-    const formattedPosts = await Promise.all(
-      posts.map(async (post) => {
-        const formatted = await formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan);
-        formatted.isBoosted = boostedPostIds.has(post.id);
-        return formatted;
-      })
-    );
+    // Combine own posts and reposts into timeline items
+    const timelineItems = [];
+
+    // Add own posts
+    for (const post of ownPosts) {
+      const author = userMap[post.authorWalletAddress];
+      const subPlan = subscriptionMap[post.authorWalletAddress] || 'free';
+      const formatted = await formatPostWithEngagement(post, author, viewerWalletAddress, true, subPlan);
+      formatted.isBoosted = boostedPostIds.has(post.id);
+      formatted.isRepost = false;
+      formatted.repostInfo = null;
+      formatted._sortDate = post.isPinned ? new Date('9999-12-31') : new Date(post.createdAt);
+      formatted._isPinned = post.isPinned;
+      timelineItems.push(formatted);
+    }
+
+    // Add reposts
+    for (const repost of reposts) {
+      if (!repost.post) continue;
+      const originalPost = repost.post;
+      const originalAuthor = userMap[originalPost.authorWalletAddress];
+      const subPlan = subscriptionMap[originalPost.authorWalletAddress] || 'free';
+      const formatted = await formatPostWithEngagement(originalPost, originalAuthor, viewerWalletAddress, true, subPlan);
+      formatted.isBoosted = boostedPostIds.has(originalPost.id);
+      formatted.isRepost = true;
+      formatted.repostInfo = {
+        repostId: repost.id,
+        repostedBy: userMap[walletAddress] || {
+          walletAddress,
+          username: walletAddress,
+          profileImage: null,
+          isVerified: false,
+          subscriptionPlan: 'free'
+        },
+        repostedAt: repost.createdAt,
+        quote: repost.quote
+      };
+      formatted._sortDate = new Date(repost.createdAt);
+      formatted._isPinned = false;
+      timelineItems.push(formatted);
+    }
+
+    // Sort: pinned posts first, then by date (most recent first)
+    timelineItems.sort((a, b) => {
+      if (a._isPinned && !b._isPinned) return -1;
+      if (!a._isPinned && b._isPinned) return 1;
+      return b._sortDate - a._sortDate;
+    });
+
+    // Remove internal sort fields
+    timelineItems.forEach(item => {
+      delete item._sortDate;
+      delete item._isPinned;
+    });
+
+    // Apply pagination
+    const total = timelineItems.length;
+    const paginatedItems = timelineItems.slice(offset, offset + parseInt(limit));
 
     // Count pinned posts for this user
     const pinnedCount = await Post.count({
@@ -354,17 +434,17 @@ const getUserPosts = async (req, res, next) => {
       }
     });
 
-    logger.info(`Posts fetched for wallet: ${walletAddress}`);
+    logger.info(`Timeline fetched for wallet: ${walletAddress} (${ownPosts.length} posts, ${reposts.length} reposts)`);
 
     res.status(200).json(
       new ApiResponse(200, {
-        posts: formattedPosts,
+        posts: paginatedItems,
         pinnedCount,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: count,
-          totalPages: Math.ceil(count / parseInt(limit))
+          total: total,
+          totalPages: Math.ceil(total / parseInt(limit))
         }
       }, 'Posts retrieved successfully')
     );
@@ -1930,6 +2010,236 @@ const getPinStatus = async (req, res, next) => {
   }
 };
 
+/**
+ * Repost a post
+ * Creates a repost entry and increments repostsCount on the original post
+ */
+const repostPost = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { walletAddress, quote } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Check if post exists
+    const post = await Post.findByPk(postId);
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Check if user is trying to repost their own post
+    if (post.authorWalletAddress === walletAddress) {
+      throw new ApiError(400, 'You cannot repost your own post');
+    }
+
+    // Check if user has already reposted this post
+    const existingRepost = await Repost.findOne({
+      where: {
+        postId,
+        userWalletAddress: walletAddress
+      }
+    });
+
+    if (existingRepost) {
+      throw new ApiError(400, 'You have already reposted this post');
+    }
+
+    // Create repost
+    const repost = await Repost.create({
+      postId,
+      userWalletAddress: walletAddress,
+      quote: quote || null
+    });
+
+    // Increment repostsCount on original post
+    await post.increment('repostsCount');
+
+    // Log activity
+    logActivity({
+      userWalletAddress: walletAddress,
+      action: 'repost',
+      entityType: 'post',
+      entityId: postId,
+      metadata: { quote: quote || null }
+    });
+
+    // Send notification to the post author
+    try {
+      await notificationService.createNotification({
+        recipientWalletAddress: post.authorWalletAddress,
+        senderWalletAddress: walletAddress,
+        type: 'repost',
+        message: 'reposted your post',
+        entityType: 'post',
+        entityId: postId
+      });
+    } catch (err) {
+      logger.warn('Failed to create repost notification:', err.message);
+    }
+
+    logger.info(`Post ${postId} reposted by ${walletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        repost,
+        repostsCount: post.repostsCount + 1
+      }, 'Post reposted successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Remove a repost
+ * Deletes the repost entry and decrements repostsCount on the original post
+ */
+const unrepostPost = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { walletAddress } = req.body;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Find the repost
+    const repost = await Repost.findOne({
+      where: {
+        postId,
+        userWalletAddress: walletAddress
+      }
+    });
+
+    if (!repost) {
+      throw new ApiError(404, 'Repost not found');
+    }
+
+    // Delete repost
+    await repost.destroy();
+
+    // Decrement repostsCount on original post
+    const post = await Post.findByPk(postId);
+    if (post && post.repostsCount > 0) {
+      await post.decrement('repostsCount');
+    }
+
+    logger.info(`Repost removed for post ${postId} by ${walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, null, 'Repost removed successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get reposts of a post
+ * Returns list of users who reposted the post
+ */
+const getPostReposts = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Check if post exists
+    const post = await Post.findByPk(postId);
+    if (!post) {
+      throw new ApiError(404, 'Post not found');
+    }
+
+    // Get reposts with pagination
+    const { count, rows: reposts } = await Repost.findAndCountAll({
+      where: { postId },
+      order: [['createdAt', 'DESC']],
+      limit: parseInt(limit),
+      offset
+    });
+
+    // Get user info for reposters
+    const walletAddresses = reposts.map(r => r.userWalletAddress);
+    const [users, subscriptionMap] = await Promise.all([
+      User.findAll({
+        where: { walletAddress: { [Op.in]: walletAddresses } },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      }),
+      getActiveSubscriptionsForWallets(walletAddresses)
+    ]);
+
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user.walletAddress] = {
+        ...user.toJSON(),
+        subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
+      };
+    });
+
+    // Format reposts with user info
+    const formattedReposts = reposts.map(repost => ({
+      id: repost.id,
+      postId: repost.postId,
+      user: userMap[repost.userWalletAddress] || {
+        walletAddress: repost.userWalletAddress,
+        username: repost.userWalletAddress,
+        profileImage: null,
+        isVerified: false,
+        subscriptionPlan: 'free'
+      },
+      quote: repost.quote,
+      createdAt: repost.createdAt
+    }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        reposts: formattedReposts,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Reposts retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Check if user has reposted a post
+ */
+const checkRepostStatus = async (req, res, next) => {
+  try {
+    const { postId } = req.params;
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const repost = await Repost.findOne({
+      where: {
+        postId,
+        userWalletAddress: walletAddress
+      }
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        hasReposted: !!repost,
+        repost: repost || null
+      }, 'Repost status retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createPost,
   getUserPosts,
@@ -1949,5 +2259,9 @@ module.exports = {
   getPostViews,
   pinPost,
   unpinPost,
-  getPinStatus
+  getPinStatus,
+  repostPost,
+  unrepostPost,
+  getPostReposts,
+  checkRepostStatus
 };

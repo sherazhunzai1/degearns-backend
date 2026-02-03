@@ -19,7 +19,11 @@ const {
   getPostViews,
   pinPost,
   unpinPost,
-  getPinStatus
+  getPinStatus,
+  repostPost,
+  unrepostPost,
+  getPostReposts,
+  checkRepostStatus
 } = require('../controllers/postController');
 
 /**
@@ -162,5 +166,35 @@ router.put('/comments/:commentId', updateComment);
  * @access  Public
  */
 router.delete('/comments/:commentId', deleteComment);
+
+// ==================== REPOST ROUTES ====================
+
+/**
+ * @route   POST /api/v1/posts/:postId/repost
+ * @desc    Repost a post to user's timeline
+ * @access  Public
+ */
+router.post('/:postId/repost', repostPost);
+
+/**
+ * @route   DELETE /api/v1/posts/:postId/repost
+ * @desc    Remove a repost from user's timeline
+ * @access  Public
+ */
+router.delete('/:postId/repost', unrepostPost);
+
+/**
+ * @route   GET /api/v1/posts/:postId/reposts
+ * @desc    Get all users who reposted a post
+ * @access  Public
+ */
+router.get('/:postId/reposts', getPostReposts);
+
+/**
+ * @route   GET /api/v1/posts/:postId/repost-status
+ * @desc    Check if user has reposted a post
+ * @access  Public
+ */
+router.get('/:postId/repost-status', checkRepostStatus);
 
 module.exports = router;

@@ -41,6 +41,11 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 0,
       comment: 'Number of shares of the post'
     },
+    repostsCount: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Number of reposts of the post'
+    },
     viewsCount: {
       type: DataTypes.INTEGER,
       defaultValue: 0,
