@@ -755,6 +755,24 @@ const getUserCollections = async (req, res, next) => {
       };
     });
 
+    // Fetch active collection boosts for this wallet
+    const activeBoosts = await CollectionBoost.findAll({
+      where: {
+        userWalletAddress: walletAddress,
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      }
+    });
+
+    // Create a set of boosted collection IDs and taxons for quick lookup
+    const boostedCollectionIds = new Set(activeBoosts.map(b => b.collectionId));
+    const boostedTaxons = new Set();
+    activeBoosts.forEach(b => {
+      if (b.metadata && b.metadata.taxon !== undefined && b.metadata.taxon !== null) {
+        boostedTaxons.add(parseInt(b.metadata.taxon));
+      }
+    });
+
     // Build collection data for each taxon
     const collections = await Promise.all(
       Object.entries(nftsByTaxon).map(async ([taxon, nfts]) => {
@@ -870,7 +888,9 @@ const getUserCollections = async (req, res, next) => {
           description: dbCollection ? dbCollection.description : null,
           category: dbCollection ? dbCollection.category : null,
           isVerified: dbCollection ? dbCollection.isVerified : false,
-          isRegistered: !!dbCollection
+          isRegistered: !!dbCollection,
+          // Check if collection has an active boost
+          isBoosted: boostedTaxons.has(taxonNum) || (dbCollection && boostedCollectionIds.has(dbCollection.id))
         };
       })
     );
