@@ -465,6 +465,18 @@ const getCollection = async (req, res, next) => {
         };
       });
 
+      // Fetch active NFT boosts to check which NFTs are boosted
+      const nftTokenIds = nftsWithOffers.map(item => item.nft.NFTokenID);
+      const activeNftBoosts = await NftBoost.findAll({
+        where: {
+          nftTokenId: { [Op.in]: nftTokenIds },
+          isActive: true,
+          endDate: { [Op.gt]: new Date() }
+        }
+      });
+      const boostedNftIds = new Set(activeNftBoosts.map(b => b.nftTokenId));
+      logger.info(`Found ${boostedNftIds.size} boosted NFTs in this collection`);
+
       // Fetch metadata and images for all NFTs
       logger.info(`Fetching metadata for ${nftsWithOffers.length} NFTs...`);
       const nftsWithMetadata = await Promise.all(
@@ -495,7 +507,7 @@ const getCollection = async (req, res, next) => {
         })
       );
 
-      // Enrich all NFTs with owner, issuer information, and metadata
+      // Enrich all NFTs with owner, issuer information, metadata, and boost status
       allNFTs = nftsWithMetadata.map(item => ({
         ...item.nft,
         sellOffers: item.sellOffers,
@@ -508,7 +520,8 @@ const getCollection = async (req, res, next) => {
         name: item.metadata?.name || null,
         description: item.metadata?.description || null,
         attributes: item.metadata?.attributes || null,
-        isOnSale: item.isOnSale
+        isOnSale: item.isOnSale,
+        isBoosted: boostedNftIds.has(item.nft.NFTokenID)
       }));
 
       // Set nftsOnSale to all NFTs (keeping key name for backward compatibility)
