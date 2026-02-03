@@ -376,7 +376,6 @@ const getAllPosts = async (req, res, next) => {
     } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    const POSTS_BETWEEN_ADS = 4; // Show a boosted post after every 4 regular posts
 
     // Build where clause for regular posts
     const whereClause = {
@@ -505,22 +504,36 @@ const getAllPosts = async (req, res, next) => {
     }
 
     // Mix regular posts with boosted posts (ads)
-    // Insert a boosted post after every POSTS_BETWEEN_ADS regular posts
+    // Higher boostPercentage = more visibility (appears earlier and more frequently)
+    // Interval based on boost percentage: 100% -> every 2 posts, 20% -> every 6 posts
     const mixedPosts = [];
     let boostedIndex = 0;
+    let postsSinceLastAd = 0;
     const boostsToShow = []; // Track which boosts were shown for impression counting
+
+    // Calculate interval for next boosted post based on its percentage
+    const getIntervalForBoost = (boostPercentage) => {
+      // 100% -> 2, 80% -> 3, 60% -> 4, 40% -> 5, 20% -> 6
+      return Math.max(2, 7 - Math.floor(boostPercentage / 20));
+    };
 
     for (let i = 0; i < processedPosts.length; i++) {
       mixedPosts.push({ ...processedPosts[i], _isSponsored: false });
+      postsSinceLastAd++;
 
-      // After every POSTS_BETWEEN_ADS posts, insert a boosted post
-      if ((i + 1) % POSTS_BETWEEN_ADS === 0 && boostedIndex < boostedPosts.length) {
-        const sponsoredPost = boostedPosts[boostedIndex];
-        mixedPosts.push(sponsoredPost);
-        if (sponsoredPost._boost) {
-          boostsToShow.push(sponsoredPost._boost.id);
+      // Check if we should insert a boosted post
+      if (boostedIndex < boostedPosts.length) {
+        const nextBoost = boostedPosts[boostedIndex];
+        const interval = getIntervalForBoost(nextBoost._boost?.boostPercentage || 20);
+
+        if (postsSinceLastAd >= interval) {
+          mixedPosts.push(nextBoost);
+          if (nextBoost._boost) {
+            boostsToShow.push(nextBoost._boost.id);
+          }
+          boostedIndex++;
+          postsSinceLastAd = 0; // Reset counter after showing an ad
         }
-        boostedIndex++;
       }
     }
 
