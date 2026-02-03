@@ -1,4 +1,4 @@
-const { User, Post, PostMedia, PostLike, PostComment, PostView, Follow, ActivityLog, Subscription } = require('../models');
+const { User, Post, PostMedia, PostLike, PostComment, PostView, Follow, ActivityLog, Subscription, PostBoost } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -360,7 +360,8 @@ const getUserPosts = async (req, res, next) => {
 
 /**
  * Get all posts (feed)
- * Returns all public posts with boost as primary sort
+ * Returns all public posts mixed with paid boosted posts (like ads)
+ * Boosted posts appear after every 4 regular posts
  * Secondary sort options: 'recent' (default), 'popular'
  * Supports pagination
  */
@@ -376,7 +377,7 @@ const getAllPosts = async (req, res, next) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Build where clause
+    // Build where clause for regular posts
     const whereClause = {
       isActive: true,
       visibility: 'public'
@@ -390,14 +391,66 @@ const getAllPosts = async (req, res, next) => {
     // Fetch more posts for boost sorting (we sort in memory after calculating boost)
     const fetchLimit = parseInt(limit) * 3;
 
-    // Get posts with initial ordering based on secondary sort
+    // Fetch active paid boosts from PostBoosts table (sorted by boostPercentage)
+    const activeBoosts = await PostBoost.findAll({
+      where: {
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      },
+      order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']]
+    });
+
+    // Get post IDs from active boosts
+    const boostedPostIds = activeBoosts.map(b => b.postId);
+
+    // Fetch boosted posts data
+    let boostedPosts = [];
+    if (boostedPostIds.length > 0) {
+      boostedPosts = await Post.findAll({
+        where: {
+          id: { [Op.in]: boostedPostIds },
+          isActive: true
+        },
+        include: [
+          {
+            model: PostMedia,
+            as: 'media',
+            order: [['displayOrder', 'ASC']]
+          }
+        ]
+      });
+
+      // Sort boosted posts by their boost percentage
+      const boostMap = {};
+      activeBoosts.forEach(b => { boostMap[b.postId] = b; });
+      boostedPosts.sort((a, b) => {
+        const boostA = boostMap[a.id]?.boostPercentage || 0;
+        const boostB = boostMap[b.id]?.boostPercentage || 0;
+        return boostB - boostA;
+      });
+
+      // Attach boost info to posts
+      boostedPosts = boostedPosts.map(post => {
+        const boost = boostMap[post.id];
+        return {
+          ...post.toJSON(),
+          _boost: boost,
+          _isSponsored: true
+        };
+      });
+    }
+
+    // Get regular posts (exclude boosted posts to avoid duplicates)
     const { count, rows: posts } = await Post.findAndCountAll({
-      where: whereClause,
+      where: {
+        ...whereClause,
+        id: { [Op.notIn]: boostedPostIds }
+      },
       order: sortBy === 'popular'
         ? [['likesCount', 'DESC'], ['createdAt', 'DESC']]
         : [['createdAt', 'DESC']],
       limit: fetchLimit,
-      offset: 0, // Start from beginning, apply offset after boost sorting
+      offset: 0,
       include: [
         {
           model: PostMedia,
@@ -407,15 +460,14 @@ const getAllPosts = async (req, res, next) => {
       ]
     });
 
-    // Get author wallet addresses
-    const authorAddresses = [...new Set(posts.map(p => p.authorWalletAddress))];
+    // Get all author wallet addresses (regular + boosted)
+    const allPosts = [...posts, ...boostedPosts];
+    const authorAddresses = [...new Set(allPosts.map(p => p.authorWalletAddress))];
 
     // Get author details
     const authors = await User.findAll({
       where: {
-        walletAddress: {
-          [Op.in]: authorAddresses
-        }
+        walletAddress: { [Op.in]: authorAddresses }
       },
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
     });
@@ -429,34 +481,72 @@ const getAllPosts = async (req, res, next) => {
     // Fetch subscription plans for all authors
     const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
 
-    // Always apply boost scoring
+    // Apply boost scoring to regular posts
     let processedPosts = posts;
     if (posts.length > 0) {
       const db = require('../models');
       const boostEngine = initBoostEngine(db);
-      const boostedPosts = await boostEngine.boostPosts(posts);
+      const boostedRegularPosts = await boostEngine.boostPosts(posts);
 
       // Sort by boost score (primary), then by secondary sort
-      boostedPosts.sort((a, b) => {
-        // Primary sort: boost score (descending)
+      boostedRegularPosts.sort((a, b) => {
         const boostDiff = (b.boostScore || 0) - (a.boostScore || 0);
-        if (Math.abs(boostDiff) > 0.01) return boostDiff; // If boost scores differ significantly
+        if (Math.abs(boostDiff) > 0.01) return boostDiff;
 
-        // Secondary sort based on sortBy parameter
         if (sortBy === 'popular') {
           return (b.likesCount || 0) - (a.likesCount || 0);
         }
-        // Default: recent (by createdAt)
         return new Date(b.createdAt) - new Date(a.createdAt);
       });
 
       // Apply pagination after boost sorting
-      processedPosts = boostedPosts.slice(offset, offset + parseInt(limit));
+      processedPosts = boostedRegularPosts.slice(offset, offset + parseInt(limit));
     }
 
-    // Format posts with engagement data
+    // Mix regular posts with boosted posts (ads)
+    // Higher boostPercentage = more visibility (appears earlier and more frequently)
+    // Interval based on boost percentage: 100% -> every 2 posts, 20% -> every 6 posts
+    const mixedPosts = [];
+    let boostedIndex = 0;
+    let postsSinceLastAd = 0;
+    const boostsToShow = []; // Track which boosts were shown for impression counting
+
+    // Calculate interval for next boosted post based on its percentage
+    const getIntervalForBoost = (boostPercentage) => {
+      // 100% -> 2, 80% -> 3, 60% -> 4, 40% -> 5, 20% -> 6
+      return Math.max(2, 7 - Math.floor(boostPercentage / 20));
+    };
+
+    for (let i = 0; i < processedPosts.length; i++) {
+      mixedPosts.push({ ...processedPosts[i], _isSponsored: false });
+      postsSinceLastAd++;
+
+      // Check if we should insert a boosted post
+      if (boostedIndex < boostedPosts.length) {
+        const nextBoost = boostedPosts[boostedIndex];
+        const interval = getIntervalForBoost(nextBoost._boost?.boostPercentage || 20);
+
+        if (postsSinceLastAd >= interval) {
+          mixedPosts.push(nextBoost);
+          if (nextBoost._boost) {
+            boostsToShow.push(nextBoost._boost.id);
+          }
+          boostedIndex++;
+          postsSinceLastAd = 0; // Reset counter after showing an ad
+        }
+      }
+    }
+
+    // Increment impressions for shown boosts (async, non-blocking)
+    if (boostsToShow.length > 0) {
+      PostBoost.increment('impressions', { where: { id: boostsToShow } }).catch(err => {
+        logger.error('Error incrementing post boost impressions:', err);
+      });
+    }
+
+    // Format all posts with engagement data
     const formattedPosts = await Promise.all(
-      processedPosts.map(async (post) => {
+      mixedPosts.map(async (post) => {
         const author = authorMap[post.authorWalletAddress];
         const subscriptionPlan = subscriptionMap[post.authorWalletAddress] || 'free';
         const formatted = await formatPostWithEngagement(
@@ -467,15 +557,25 @@ const getAllPosts = async (req, res, next) => {
           subscriptionPlan
         );
 
-        // Always include boost info
+        // Include boost info
         formatted.boostScore = post.boostScore || 1.0;
         formatted.boostDetails = post.boostDetails || null;
+
+        // Mark sponsored posts
+        formatted.isSponsored = post._isSponsored || false;
+        if (post._isSponsored && post._boost) {
+          formatted.sponsoredInfo = {
+            boostId: post._boost.id,
+            boostPercentage: post._boost.boostPercentage,
+            boostEndDate: post._boost.endDate
+          };
+        }
 
         return formatted;
       })
     );
 
-    logger.info(`All posts fetched, page: ${page}, sortBy: ${sortBy} (boost primary)`);
+    logger.info(`Feed fetched: ${processedPosts.length} regular posts, ${boostsToShow.length} sponsored posts, page: ${page}`);
 
     res.status(200).json(
       new ApiResponse(200, {
