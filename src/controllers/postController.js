@@ -479,6 +479,11 @@ const getAllPosts = async (req, res, next) => {
       visibility: 'public'
     };
 
+    // Exclude viewer's own posts from the feed
+    if (viewerWalletAddress) {
+      whereClause.authorWalletAddress = { [Op.ne]: viewerWalletAddress };
+    }
+
     // Filter by post type if specified
     if (postType && ['text', 'image', 'video', 'mixed'].includes(postType)) {
       whereClause.postType = postType;
@@ -499,14 +504,21 @@ const getAllPosts = async (req, res, next) => {
     // Get post IDs from active boosts
     const boostedPostIds = activeBoosts.map(b => b.postId);
 
-    // Fetch boosted posts data
+    // Fetch boosted posts data (exclude viewer's own posts)
     let boostedPosts = [];
     if (boostedPostIds.length > 0) {
+      const boostedWhereClause = {
+        id: { [Op.in]: boostedPostIds },
+        isActive: true
+      };
+
+      // Exclude viewer's own boosted posts from the feed
+      if (viewerWalletAddress) {
+        boostedWhereClause.authorWalletAddress = { [Op.ne]: viewerWalletAddress };
+      }
+
       boostedPosts = await Post.findAll({
-        where: {
-          id: { [Op.in]: boostedPostIds },
-          isActive: true
-        },
+        where: boostedWhereClause,
         include: [
           {
             model: PostMedia,
