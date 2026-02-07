@@ -308,26 +308,33 @@ exports.getNFTHistory = async (req, res) => {
       });
     }
 
-    // Use Bithomp API to get complete NFT transaction history
-    const history = await bithompService.getNFTHistory(nftTokenId);
+    // Use Bithomp API to get complete NFT data with transaction history
+    const nftData = await bithompService.getNFTHistory(nftTokenId);
 
-    logger.info(`NFT history fetched from Bithomp for: ${nftTokenId}, ${history.length} transactions`);
+    logger.info(`NFT history fetched from Bithomp for: ${nftTokenId}, ${nftData.history?.length || 0} transactions`);
 
     res.json({
       success: true,
       data: {
-        nftTokenId,
-        totalTransactions: history.length,
-        transactions: history
+        nftTokenId: nftData.nftTokenId,
+        issuer: nftData.issuer,
+        owner: nftData.owner,
+        taxon: nftData.taxon,
+        uri: nftData.uri,
+        metadata: nftData.metadata,
+        totalTransactions: nftData.history?.length || 0,
+        history: nftData.history || [],
+        sellOffers: nftData.sellOffers || [],
+        buyOffers: nftData.buyOffers || []
       },
       message: 'NFT transaction history fetched successfully'
     });
 
   } catch (error) {
-    logger.error('Error fetching NFT history:', error);
+    logger.error('Error fetching NFT history:', error.message);
 
     // Check if it's a Bithomp API error
-    if (error.response && error.response.status === 404) {
+    if (error.status === 404) {
       return res.status(404).json({
         success: false,
         message: 'NFT not found or no transaction history available'
