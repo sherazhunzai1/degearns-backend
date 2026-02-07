@@ -39,9 +39,22 @@ const getActiveBanners = async (req, res) => {
     attributes: ['id', 'title', 'subtitle', 'image', 'link', 'linkText', 'position']
   });
 
+  // Extract IPFS hash from full URL
+  const formattedBanners = banners.map(banner => {
+    const bannerData = banner.toJSON();
+    if (bannerData.image) {
+      // Extract hash from URL like https://gateway.pinata.cloud/ipfs/bafybeibm3aepwa2lo64jf5ejmjieucnlnamr4x5vkwhwnmzytanlu3w3mm
+      const ipfsMatch = bannerData.image.match(/\/ipfs\/([^/?#]+)/);
+      if (ipfsMatch) {
+        bannerData.image = ipfsMatch[1];
+      }
+    }
+    return bannerData;
+  });
+
   res.status(200).json(new ApiResponse(200, {
-    banners,
-    count: banners.length
+    banners: formattedBanners,
+    count: formattedBanners.length
   }, 'Active banners retrieved successfully'));
 };
 
@@ -81,7 +94,16 @@ const getBannerById = async (req, res) => {
     });
   }
 
-  res.status(200).json(new ApiResponse(200, { banner }, 'Banner retrieved successfully'));
+  // Extract IPFS hash from full URL
+  const bannerData = banner.toJSON();
+  if (bannerData.image) {
+    const ipfsMatch = bannerData.image.match(/\/ipfs\/([^/?#]+)/);
+    if (ipfsMatch) {
+      bannerData.image = ipfsMatch[1];
+    }
+  }
+
+  res.status(200).json(new ApiResponse(200, { banner: bannerData }, 'Banner retrieved successfully'));
 };
 
 module.exports = {
