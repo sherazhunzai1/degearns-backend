@@ -9,6 +9,28 @@ const {
 } = require('../utils/userHelpers');
 
 /**
+ * Extract IPFS hash from full URL
+ * Converts https://gateway.pinata.cloud/ipfs/bafybeibm3... to just bafybeibm3...
+ */
+const extractIpfsHash = (url) => {
+  if (!url) return null;
+  const ipfsMatch = url.match(/\/ipfs\/([^/?#]+)/);
+  return ipfsMatch ? ipfsMatch[1] : url;
+};
+
+/**
+ * Format group data with IPFS hash for groupImage
+ */
+const formatGroupData = (group) => {
+  if (!group) return null;
+  const data = group.toJSON ? group.toJSON() : { ...group };
+  if (data.groupImage) {
+    data.groupImage = extractIpfsHash(data.groupImage);
+  }
+  return data;
+};
+
+/**
  * Create a new group chat
  */
 const createGroup = async (req, res, next) => {
@@ -130,8 +152,8 @@ const createGroup = async (req, res, next) => {
 
     const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
 
-    // Add subscription plans to creator
-    const groupWithSubscription = createdGroup.toJSON();
+    // Add subscription plans to creator and format group data
+    const groupWithSubscription = formatGroupData(createdGroup);
     if (groupWithSubscription.creator) {
       groupWithSubscription.creator.subscriptionPlan = subscriptionMap[groupWithSubscription.creator.walletAddress] || 'free';
     }
@@ -247,7 +269,7 @@ const getGroups = async (req, res, next) => {
         }
       });
 
-      const groupJson = group.toJSON();
+      const groupJson = formatGroupData(group);
       if (groupJson.creator) {
         groupJson.creator.subscriptionPlan = subscriptionMap[groupJson.creator.walletAddress] || 'free';
       }
@@ -335,7 +357,7 @@ const getGroupDetails = async (req, res, next) => {
     const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
 
     // Add subscription plans to group creator
-    const groupJson = group.toJSON();
+    const groupJson = formatGroupData(group);
     if (groupJson.creator) {
       groupJson.creator.subscriptionPlan = subscriptionMap[groupJson.creator.walletAddress] || 'free';
     }
@@ -409,7 +431,7 @@ const updateGroup = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        group: group.toJSON()
+        group: formatGroupData(group)
       }, 'Group updated successfully')
     );
   } catch (error) {
@@ -1324,7 +1346,7 @@ const getUnreadCount = async (req, res, next) => {
         return {
           groupId: membership.groupId,
           groupName: group?.name,
-          groupImage: group?.groupImage,
+          groupImage: extractIpfsHash(group?.groupImage),
           unreadCount
         };
       }
