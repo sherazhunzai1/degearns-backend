@@ -121,6 +121,11 @@ const formatPostWithEngagement = async (post, author, userWalletAddress = null, 
   const isLiked = await checkUserLiked(post.id, userWalletAddress);
   const recentComments = includeRecentComments ? await getRecentComments(post.id, 3) : [];
 
+  // Calculate edit window (10 minutes from creation)
+  const postCreatedAt = new Date(post.createdAt);
+  const editableUntil = new Date(postCreatedAt.getTime() + 10 * 60 * 1000);
+  const isEditable = new Date() < editableUntil;
+
   return {
     id: post.id,
     authorWalletAddress: post.authorWalletAddress,
@@ -155,6 +160,8 @@ const formatPostWithEngagement = async (post, author, userWalletAddress = null, 
     repostsCount: post.repostsCount || 0,
     isPinned: post.isPinned || false,
     pinnedAt: post.pinnedAt || null,
+    isEditable,
+    editableUntil,
     isLiked,
     recentComments,
     metadata: post.metadata,
@@ -794,6 +801,16 @@ const updatePost = async (req, res, next) => {
     // Verify ownership
     if (post.authorWalletAddress !== authorWalletAddress) {
       throw new ApiError(403, 'You are not authorized to update this post');
+    }
+
+    // Check if post is within 10-minute edit window
+    const postCreatedAt = new Date(post.createdAt);
+    const now = new Date();
+    const tenMinutesInMs = 10 * 60 * 1000;
+    const timeSinceCreation = now - postCreatedAt;
+
+    if (timeSinceCreation > tenMinutesInMs) {
+      throw new ApiError(403, 'Posts can only be edited within 10 minutes of posting');
     }
 
     // Update content if provided
