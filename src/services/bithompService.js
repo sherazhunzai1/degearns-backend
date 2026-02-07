@@ -39,13 +39,15 @@ class BithompService {
         throw new Error('Bithomp API key is not configured');
       }
 
+      // Bithomp API uses ?history=true parameter on the NFT endpoint
       const response = await axios.get(
-        `${this.baseUrl}/nft/${nftTokenId}/transactions`,
+        `${this.baseUrl}/nft/${nftTokenId}?history=true&sellOffers=true&buyOffers=true`,
         { headers: this.getHeaders() }
       );
 
-      if (response.data && response.data.transactions) {
-        return response.data.transactions.map(tx => ({
+      // Extract history from the response
+      if (response.data && response.data.history) {
+        return response.data.history.map(tx => ({
           hash: tx.hash,
           type: tx.type,
           timestamp: tx.timestamp,
@@ -56,13 +58,17 @@ class BithompService {
           amountXRP: tx.amount ? (parseInt(tx.amount) / 1000000).toFixed(6) : null,
           currency: tx.currency || 'XRP',
           result: tx.result || 'tesSUCCESS',
-          ledgerIndex: tx.ledger_index,
-          offerIndex: tx.offer_index,
-          flags: tx.flags
+          ledgerIndex: tx.ledgerIndex || tx.ledger_index,
+          offerIndex: tx.offerIndex || tx.offer_index,
+          flags: tx.flags,
+          // Additional fields from Bithomp
+          counterparty: tx.counterparty,
+          price: tx.price,
+          priceXRP: tx.price ? (parseInt(tx.price) / 1000000).toFixed(6) : null
         }));
       }
 
-      return response.data || [];
+      return [];
     } catch (error) {
       logger.error('Error fetching NFT history from Bithomp:', error.message);
 
