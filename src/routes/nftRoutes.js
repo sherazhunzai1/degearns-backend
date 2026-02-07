@@ -36,10 +36,9 @@ router.get('/:nftTokenId/offers', getNFTOffers);
 
 /**
  * @route   GET /api/v1/nfts/:nftTokenId/history
- * @desc    Get NFT transaction history
+ * @desc    Get NFT transaction history using Bithomp API
  * @access  Public
- * @query   ownerAddress - Required: Current owner's wallet address
- * @query   limit - Optional: Number of transactions to fetch (default: 20)
+ * @returns {Object} transactions - Complete transaction history for the NFT
  */
 router.get('/:nftTokenId/history', getNFTHistory);
 

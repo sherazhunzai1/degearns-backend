@@ -1,4 +1,5 @@
 const xrplService = require('../services/xrplService');
+const bithompService = require('../services/bithompService');
 const { User, Collection, NftBoost } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
@@ -115,12 +116,14 @@ exports.getNFTDetail = async (req, res) => {
     ].filter(Boolean);
     const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
 
-    // Step 4: Get transaction history for this NFT
-    const transactionHistory = await xrplService.getNFTTransactionHistory(
-      ownerAddress,
-      nftTokenId,
-      50 // Get last 50 transactions
-    );
+    // Step 4: Get transaction history for this NFT using Bithomp API
+    let transactionHistory = [];
+    try {
+      transactionHistory = await bithompService.getNFTHistory(nftTokenId);
+    } catch (historyError) {
+      logger.warn(`Could not fetch NFT history from Bithomp: ${historyError.message}`);
+      // Continue without history if Bithomp fails
+    }
 
     // Step 5: Calculate stats from transaction history
     const sales = transactionHistory.filter(tx => tx.type === 'NFTokenSale');
@@ -291,39 +294,46 @@ exports.getNFTOffers = async (req, res) => {
 };
 
 /**
- * Get NFT transaction history
+ * Get NFT transaction history using Bithomp API
  * @route GET /api/v1/nfts/:nftTokenId/history
  */
 exports.getNFTHistory = async (req, res) => {
   try {
     const { nftTokenId } = req.params;
-    const { ownerAddress } = req.query;
-    const limit = parseInt(req.query.limit) || 20;
 
-    if (!ownerAddress) {
+    if (!nftTokenId) {
       return res.status(400).json({
         success: false,
-        message: 'Owner address is required as query parameter'
+        message: 'NFT token ID is required'
       });
     }
 
-    const history = await xrplService.getNFTTransactionHistory(
-      ownerAddress,
-      nftTokenId,
-      limit
-    );
+    // Use Bithomp API to get complete NFT transaction history
+    const history = await bithompService.getNFTHistory(nftTokenId);
+
+    logger.info(`NFT history fetched from Bithomp for: ${nftTokenId}, ${history.length} transactions`);
 
     res.json({
       success: true,
       data: {
         nftTokenId,
-        ownerAddress,
+        totalTransactions: history.length,
         transactions: history
-      }
+      },
+      message: 'NFT transaction history fetched successfully'
     });
 
   } catch (error) {
     logger.error('Error fetching NFT history:', error);
+
+    // Check if it's a Bithomp API error
+    if (error.response && error.response.status === 404) {
+      return res.status(404).json({
+        success: false,
+        message: 'NFT not found or no transaction history available'
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Failed to fetch NFT transaction history',
