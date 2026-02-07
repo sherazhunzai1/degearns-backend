@@ -796,6 +796,16 @@ const updatePost = async (req, res, next) => {
       throw new ApiError(403, 'You are not authorized to update this post');
     }
 
+    // Check if post is within 10-minute edit window
+    const postCreatedAt = new Date(post.createdAt);
+    const now = new Date();
+    const tenMinutesInMs = 10 * 60 * 1000;
+    const timeSinceCreation = now - postCreatedAt;
+
+    if (timeSinceCreation > tenMinutesInMs) {
+      throw new ApiError(403, 'Posts can only be edited within 10 minutes of posting');
+    }
+
     // Update content if provided
     if (content !== undefined) {
       post.content = content ? content.trim() : null;
