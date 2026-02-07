@@ -31,7 +31,7 @@ class BithompService {
   /**
    * Get NFT transaction history
    * @param {string} nftTokenId - The NFT token ID
-   * @returns {Promise<Array>} - Array of transactions
+   * @returns {Promise<Object>} - NFT data with history
    */
   async getNFTHistory(nftTokenId) {
     try {
@@ -39,15 +39,22 @@ class BithompService {
         throw new Error('Bithomp API key is not configured');
       }
 
-      // Bithomp API uses ?history=true parameter on the NFT endpoint
-      const response = await axios.get(
-        `${this.baseUrl}/nft/${nftTokenId}?history=true&sellOffers=true&buyOffers=true`,
-        { headers: this.getHeaders() }
-      );
+      // Bithomp API endpoint for NFT with history
+      const url = `${this.baseUrl}/nftoken/${nftTokenId}?history=true&sellOffers=true&buyOffers=true&uri=true`;
 
-      // Extract history from the response
-      if (response.data && response.data.history) {
-        return response.data.history.map(tx => ({
+      logger.info(`Fetching NFT history from Bithomp: ${url}`);
+
+      const response = await axios.get(url, { headers: this.getHeaders() });
+
+      logger.info(`Bithomp response received for NFT: ${nftTokenId}`);
+
+      // Return the full NFT data including history
+      const nftData = response.data;
+
+      // Format history if present
+      let formattedHistory = [];
+      if (nftData.history && Array.isArray(nftData.history)) {
+        formattedHistory = nftData.history.map(tx => ({
           hash: tx.hash,
           type: tx.type,
           timestamp: tx.timestamp,
@@ -61,14 +68,24 @@ class BithompService {
           ledgerIndex: tx.ledgerIndex || tx.ledger_index,
           offerIndex: tx.offerIndex || tx.offer_index,
           flags: tx.flags,
-          // Additional fields from Bithomp
           counterparty: tx.counterparty,
           price: tx.price,
           priceXRP: tx.price ? (parseInt(tx.price) / 1000000).toFixed(6) : null
         }));
       }
 
-      return [];
+      return {
+        nftTokenId: nftData.nftokenID || nftData.nftokenId || nftTokenId,
+        issuer: nftData.issuer,
+        owner: nftData.owner,
+        taxon: nftData.nftokenTaxon || nftData.taxon,
+        sequence: nftData.sequence,
+        uri: nftData.uri,
+        metadata: nftData.metadata,
+        history: formattedHistory,
+        sellOffers: nftData.sellOffers || [],
+        buyOffers: nftData.buyOffers || []
+      };
     } catch (error) {
       logger.error('Error fetching NFT history from Bithomp:', error.message);
 
