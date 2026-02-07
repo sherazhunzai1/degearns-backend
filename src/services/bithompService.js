@@ -18,6 +18,17 @@ class BithompService {
   }
 
   /**
+   * Create a clean error object without circular references
+   */
+  createCleanError(error) {
+    const cleanError = new Error(error.message);
+    cleanError.status = error.response?.status;
+    cleanError.statusText = error.response?.statusText;
+    cleanError.data = error.response?.data;
+    return cleanError;
+  }
+
+  /**
    * Get NFT transaction history
    * @param {string} nftTokenId - The NFT token ID
    * @returns {Promise<Array>} - Array of transactions
@@ -62,7 +73,7 @@ class BithompService {
         });
       }
 
-      throw error;
+      throw this.createCleanError(error);
     }
   }
 
@@ -85,7 +96,7 @@ class BithompService {
       return response.data;
     } catch (error) {
       logger.error('Error fetching NFT details from Bithomp:', error.message);
-      throw error;
+      throw this.createCleanError(error);
     }
   }
 
@@ -108,7 +119,7 @@ class BithompService {
       return response.data;
     } catch (error) {
       logger.error('Error fetching NFT offers from Bithomp:', error.message);
-      throw error;
+      throw this.createCleanError(error);
     }
   }
 
@@ -135,7 +146,7 @@ class BithompService {
       return response.data;
     } catch (error) {
       logger.error('Error fetching account NFTs from Bithomp:', error.message);
-      throw error;
+      throw this.createCleanError(error);
     }
   }
 }
