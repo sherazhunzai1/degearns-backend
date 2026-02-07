@@ -311,18 +311,26 @@ exports.getNFTHistory = async (req, res) => {
     // Use Bithomp API to get complete NFT data with transaction history
     const nftData = await bithompService.getNFTHistory(nftTokenId);
 
-    logger.info(`NFT history fetched from Bithomp for: ${nftTokenId}, ${nftData.history?.length || 0} transactions`);
+    logger.info(`NFT history fetched from Bithomp for: ${nftTokenId}, ${nftData.history?.length || 0} ownership changes`);
 
     res.json({
       success: true,
       data: {
         nftTokenId: nftData.nftTokenId,
         issuer: nftData.issuer,
+        issuerDetails: nftData.issuerDetails,
         owner: nftData.owner,
+        ownerDetails: nftData.ownerDetails,
         taxon: nftData.taxon,
+        transferFee: nftData.transferFee,
+        sequence: nftData.sequence,
+        flags: nftData.flags,
         uri: nftData.uri,
         metadata: nftData.metadata,
-        totalTransactions: nftData.history?.length || 0,
+        issuedAt: nftData.issuedAt,
+        ownerChangedAt: nftData.ownerChangedAt,
+        deletedAt: nftData.deletedAt,
+        totalOwnershipChanges: nftData.history?.length || 0,
         history: nftData.history || [],
         sellOffers: nftData.sellOffers || [],
         buyOffers: nftData.buyOffers || []

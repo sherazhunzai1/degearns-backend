@@ -39,8 +39,8 @@ class BithompService {
         throw new Error('Bithomp API key is not configured');
       }
 
-      // Bithomp API endpoint for NFT with history
-      const url = `${this.baseUrl}/nftoken/${nftTokenId}?history=true&sellOffers=true&buyOffers=true&uri=true`;
+      // Bithomp API endpoint: GET https://bithomp.com/api/v2/nft/<nftID>
+      const url = `${this.baseUrl}/nft/${nftTokenId}?history=true&sellOffers=true&buyOffers=true&uri=true&metadata=true`;
 
       logger.info(`Fetching NFT history from Bithomp: ${url}`);
 
@@ -48,43 +48,71 @@ class BithompService {
 
       logger.info(`Bithomp response received for NFT: ${nftTokenId}`);
 
-      // Return the full NFT data including history
       const nftData = response.data;
 
-      // Format history if present
+      // Format history based on Bithomp's actual response structure
       let formattedHistory = [];
       if (nftData.history && Array.isArray(nftData.history)) {
-        formattedHistory = nftData.history.map(tx => ({
-          hash: tx.hash,
-          type: tx.type,
-          timestamp: tx.timestamp,
-          date: tx.timestamp ? new Date(tx.timestamp * 1000).toISOString() : null,
-          account: tx.account,
-          destination: tx.destination,
-          amount: tx.amount,
-          amountXRP: tx.amount ? (parseInt(tx.amount) / 1000000).toFixed(6) : null,
-          currency: tx.currency || 'XRP',
-          result: tx.result || 'tesSUCCESS',
-          ledgerIndex: tx.ledgerIndex || tx.ledger_index,
-          offerIndex: tx.offerIndex || tx.offer_index,
-          flags: tx.flags,
-          counterparty: tx.counterparty,
-          price: tx.price,
-          priceXRP: tx.price ? (parseInt(tx.price) / 1000000).toFixed(6) : null
+        formattedHistory = nftData.history.map(h => ({
+          owner: h.owner,
+          changedAt: h.changedAt,
+          date: h.changedAt ? new Date(h.changedAt * 1000).toISOString() : null,
+          ledgerIndex: h.ledgerIndex,
+          txHash: h.txHash,
+          marketplace: h.marketplace || null
+        }));
+      }
+
+      // Format sell offers
+      let formattedSellOffers = [];
+      if (nftData.sellOffers && Array.isArray(nftData.sellOffers)) {
+        formattedSellOffers = nftData.sellOffers.map(offer => ({
+          amount: offer.amount,
+          amountXRP: typeof offer.amount === 'string' ? (parseInt(offer.amount) / 1000000).toFixed(6) : null,
+          offerIndex: offer.offerIndex || offer.index,
+          owner: offer.owner,
+          destination: offer.destination,
+          expiration: offer.expiration,
+          createdAt: offer.createdAt,
+          createdLedgerIndex: offer.createdLedgerIndex,
+          createdTxHash: offer.createdTxHash
+        }));
+      }
+
+      // Format buy offers
+      let formattedBuyOffers = [];
+      if (nftData.buyOffers && Array.isArray(nftData.buyOffers)) {
+        formattedBuyOffers = nftData.buyOffers.map(offer => ({
+          amount: offer.amount,
+          amountXRP: typeof offer.amount === 'string' ? (parseInt(offer.amount) / 1000000).toFixed(6) : null,
+          offerIndex: offer.offerIndex || offer.index,
+          owner: offer.owner,
+          destination: offer.destination,
+          expiration: offer.expiration,
+          createdAt: offer.createdAt,
+          createdLedgerIndex: offer.createdLedgerIndex,
+          createdTxHash: offer.createdTxHash
         }));
       }
 
       return {
-        nftTokenId: nftData.nftokenID || nftData.nftokenId || nftTokenId,
+        nftTokenId: nftData.nftokenID,
         issuer: nftData.issuer,
+        issuerDetails: nftData.issuerDetails || null,
         owner: nftData.owner,
-        taxon: nftData.nftokenTaxon || nftData.taxon,
+        ownerDetails: nftData.ownerDetails || null,
+        taxon: nftData.nftokenTaxon,
+        transferFee: nftData.transferFee,
         sequence: nftData.sequence,
+        flags: nftData.flags,
         uri: nftData.uri,
-        metadata: nftData.metadata,
+        metadata: nftData.metadata || null,
+        issuedAt: nftData.issuedAt,
+        ownerChangedAt: nftData.ownerChangedAt,
+        deletedAt: nftData.deletedAt,
         history: formattedHistory,
-        sellOffers: nftData.sellOffers || [],
-        buyOffers: nftData.buyOffers || []
+        sellOffers: formattedSellOffers,
+        buyOffers: formattedBuyOffers
       };
     } catch (error) {
       logger.error('Error fetching NFT history from Bithomp:', error.message);
