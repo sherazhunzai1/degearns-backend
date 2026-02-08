@@ -8,13 +8,26 @@ class BithompService {
   }
 
   /**
-   * Get headers with API key
+   * Check if using testnet (free, API key optional)
+   */
+  isTestnet() {
+    return this.baseUrl.includes('test.') || this.baseUrl.includes('dev.');
+  }
+
+  /**
+   * Get headers with API key (optional for testnet)
    */
   getHeaders() {
-    return {
-      'x-bithomp-token': this.apiKey,
+    const headers = {
       'Content-Type': 'application/json'
     };
+
+    // Only add API key header if provided
+    if (this.apiKey) {
+      headers['x-bithomp-token'] = this.apiKey;
+    }
+
+    return headers;
   }
 
   /**
@@ -35,14 +48,15 @@ class BithompService {
    */
   async getNFTHistory(nftTokenId) {
     try {
-      if (!this.apiKey) {
-        throw new Error('Bithomp API key is not configured');
+      // API key required for mainnet, optional for testnet/devnet
+      if (!this.apiKey && !this.isTestnet()) {
+        throw new Error('Bithomp API key is not configured (required for mainnet)');
       }
 
       // Bithomp API endpoint: GET https://bithomp.com/api/v2/nft/<nftID>
       const url = `${this.baseUrl}/nft/${nftTokenId}?history=true&sellOffers=true&buyOffers=true&uri=true&metadata=true`;
 
-      logger.info(`Fetching NFT history from Bithomp: ${url}`);
+      logger.info(`Fetching NFT history from Bithomp: ${url} (testnet: ${this.isTestnet()})`);
 
       const response = await axios.get(url, { headers: this.getHeaders() });
 
