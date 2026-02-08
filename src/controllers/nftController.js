@@ -118,15 +118,18 @@ exports.getNFTDetail = async (req, res) => {
 
     // Step 4: Get transaction history for this NFT using Bithomp API
     let transactionHistory = [];
+    let bithompData = null;
     try {
-      transactionHistory = await bithompService.getNFTHistory(nftTokenId);
+      bithompData = await bithompService.getNFTHistory(nftTokenId);
+      // Extract history array from Bithomp response
+      transactionHistory = bithompData?.history || [];
     } catch (historyError) {
       logger.warn(`Could not fetch NFT history from Bithomp: ${historyError.message}`);
       // Continue without history if Bithomp fails
     }
 
-    // Step 5: Calculate stats from transaction history
-    const sales = transactionHistory.filter(tx => tx.type === 'NFTokenSale');
+    // Step 5: Calculate stats from transaction history (Bithomp uses ownership changes, not sales)
+    const sales = Array.isArray(transactionHistory) ? transactionHistory : [];
     const totalVolume = sales.reduce((sum, sale) => {
       const amount = typeof sale.amount === 'string'
         ? parseInt(sale.amount)
@@ -220,18 +223,15 @@ exports.getNFTDetail = async (req, res) => {
         lastSaleDate: lastSale ? lastSale.date : null
       },
 
-      // Transaction history
-      history: transactionHistory.map(tx => ({
-        hash: tx.hash,
-        type: tx.type,
-        date: tx.date,
-        account: tx.account || tx.buyer,
-        seller: tx.seller,
-        buyer: tx.buyer,
-        amount: tx.amount,
-        result: tx.result,
-        ledgerIndex: tx.ledgerIndex
-      })),
+      // Transaction history (ownership changes from Bithomp)
+      history: Array.isArray(transactionHistory) ? transactionHistory.map(h => ({
+        owner: h.owner,
+        changedAt: h.changedAt,
+        date: h.date,
+        ledgerIndex: h.ledgerIndex,
+        txHash: h.txHash,
+        marketplace: h.marketplace
+      })) : [],
 
       // Boost status
       isBoosted: isBoosted
