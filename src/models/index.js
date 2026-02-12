@@ -34,6 +34,8 @@ const PostBoost = require('./PostBoost')(sequelize, DataTypes);
 const NftBoost = require('./NftBoost')(sequelize, DataTypes);
 const CollectionBoost = require('./CollectionBoost')(sequelize, DataTypes);
 const Repost = require('./Repost')(sequelize, DataTypes);
+const LuckyDraw = require('./LuckyDraw')(sequelize, DataTypes);
+const LuckyDrawParticipant = require('./LuckyDrawParticipant')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -516,6 +518,40 @@ Repost.belongsTo(User, {
   as: 'user'
 });
 
+// LuckyDraw and LuckyDrawParticipant associations
+LuckyDraw.hasMany(LuckyDrawParticipant, {
+  foreignKey: 'luckyDrawId',
+  as: 'participants'
+});
+LuckyDrawParticipant.belongsTo(LuckyDraw, {
+  foreignKey: 'luckyDrawId',
+  as: 'luckyDraw'
+});
+
+// User and LuckyDrawParticipant associations
+User.hasMany(LuckyDrawParticipant, {
+  foreignKey: 'userWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'luckyDrawParticipations'
+});
+LuckyDrawParticipant.belongsTo(User, {
+  foreignKey: 'userWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'user'
+});
+
+// User and LuckyDraw associations (winner)
+User.hasMany(LuckyDraw, {
+  foreignKey: 'winnerWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'luckyDrawWins'
+});
+LuckyDraw.belongsTo(User, {
+  foreignKey: 'winnerWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'winner'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -557,5 +593,7 @@ module.exports = {
   SubscriptionTier,
   UserStats,
   ActivityLog,
-  Repost
+  Repost,
+  LuckyDraw,
+  LuckyDrawParticipant
 };
