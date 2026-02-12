@@ -4,10 +4,12 @@ const {
   recordPurchase,
   getCurrentDraw,
   getParticipants,
+  getAllParticipantsForDraw,
   checkParticipation,
   drawWinner,
   getWinners,
   setPrize,
+  scheduleDraw,
   cancelDraw
 } = require('../controllers/luckyDrawController');
 
@@ -49,7 +51,7 @@ router.get('/check/:walletAddress', checkParticipation);
 
 /**
  * @route   GET /api/v1/lucky-draw/participants/:month
- * @desc    Get participants for a specific month
+ * @desc    Get participants for a specific month (paginated)
  * @param   month - Month in YYYY-MM format
  * @query   page - Optional: Page number (default: 1)
  * @query   limit - Optional: Items per page (default: 50)
@@ -58,10 +60,19 @@ router.get('/check/:walletAddress', checkParticipation);
 router.get('/participants/:month', getParticipants);
 
 /**
+ * @route   GET /api/v1/lucky-draw/:month/all-participants
+ * @desc    Get all unique participants for live draw display (no pagination)
+ * @param   month - Month in YYYY-MM format
+ * @access  Public
+ */
+router.get('/:month/all-participants', getAllParticipantsForDraw);
+
+/**
  * @route   POST /api/v1/lucky-draw/draw
  * @desc    Draw winner for a specific month (admin only)
  * @body    month - Optional: Month in YYYY-MM format (default: current month)
  * @body    adminWalletAddress - Optional: Admin wallet performing the draw
+ * @body    isLiveDraw - Optional: Whether to broadcast live draw animation (default: false)
  * @access  Admin
  */
 router.post('/draw', drawWinner);
@@ -76,6 +87,15 @@ router.post('/draw', drawWinner);
  * @access  Admin
  */
 router.put('/:month/prize', setPrize);
+
+/**
+ * @route   PUT /api/v1/lucky-draw/:month/schedule
+ * @desc    Schedule the draw time for a lucky draw (admin only)
+ * @param   month - Month in YYYY-MM format
+ * @body    drawScheduledAt - Required: ISO date string for scheduled draw time
+ * @access  Admin
+ */
+router.put('/:month/schedule', scheduleDraw);
 
 /**
  * @route   PUT /api/v1/lucky-draw/:month/cancel

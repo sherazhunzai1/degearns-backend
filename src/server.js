@@ -1,9 +1,11 @@
 require('dotenv').config();
+const http = require('http');
 const app = require('./app');
 const { connectDatabase } = require('./config/sequelize');
 const xrplConfig = require('./config/xrpl');
 const logger = require('./utils/logger');
 const { initScoringJobs } = require('./jobs/scoringJobs');
+const socketService = require('./services/socketService');
 
 const PORT = process.env.PORT || 5000;
 
@@ -30,10 +32,15 @@ const startServer = async () => {
       logger.info('Scoring cron jobs initialized');
     }
 
+    // Create HTTP server and initialize Socket.io
+    const server = http.createServer(app);
+    socketService.init(server);
+
     // Start server
-    const server = app.listen(PORT, () => {
+    server.listen(PORT, () => {
       logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
       logger.info(`XRPL Network: ${xrplConfig.getNetwork()}`);
+      logger.info('Socket.io server ready for connections');
     });
 
     // Handle unhandled promise rejections

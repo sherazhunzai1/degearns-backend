@@ -55,6 +55,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(100),
       allowNull: true,
       comment: 'Admin wallet who drew the winner (or "system" for auto-draw)'
+    },
+    drawScheduledAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Scheduled date/time for the live draw'
+    },
+    isLiveDrawActive: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: 'Whether the live draw is currently in progress'
     }
   }, {
     tableName: 'LuckyDraws',

@@ -3,6 +3,53 @@ const { LuckyDraw, LuckyDrawParticipant, User } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { luckyDrawEvents } = require('../services/socketService');
+
+/**
+ * Helper to calculate countdown info
+ */
+const getCountdownInfo = (drawScheduledAt) => {
+  if (!drawScheduledAt) {
+    return null;
+  }
+
+  const now = new Date();
+  const scheduledTime = new Date(drawScheduledAt);
+  const diffMs = scheduledTime.getTime() - now.getTime();
+
+  if (diffMs <= 0) {
+    return {
+      isExpired: true,
+      scheduledAt: scheduledTime.toISOString(),
+      remainingMs: 0,
+      remainingSeconds: 0,
+      remainingMinutes: 0,
+      remainingHours: 0,
+      remainingDays: 0
+    };
+  }
+
+  const seconds = Math.floor(diffMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  return {
+    isExpired: false,
+    scheduledAt: scheduledTime.toISOString(),
+    remainingMs: diffMs,
+    remainingSeconds: seconds % 60,
+    remainingMinutes: minutes % 60,
+    remainingHours: hours % 24,
+    remainingDays: days,
+    formatted: `${days}d ${hours % 24}h ${minutes % 60}m ${seconds % 60}s`
+  };
+};
+
+/**
+ * Sleep helper for animation delays
+ */
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Get current month in YYYY-MM format
@@ -100,6 +147,29 @@ const recordPurchase = async (req, res, next) => {
 
     logger.info(`User ${buyerWalletAddress} added to lucky draw for ${currentMonth} (NFT: ${nftTokenId})`);
 
+    // Get user details for socket event
+    const user = await User.findOne({
+      where: { walletAddress: buyerWalletAddress },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+    });
+
+    // Emit socket event for new participant
+    try {
+      luckyDrawEvents.newParticipant(currentMonth, {
+        participant: {
+          walletAddress: buyerWalletAddress,
+          username: user?.username || null,
+          profileImage: user?.profileImage || null,
+          isVerified: user?.isVerified || false,
+          nftTokenId,
+          purchasedAt: participant.purchasedAt
+        },
+        totalParticipants: uniqueParticipants
+      });
+    } catch (socketError) {
+      logger.warn('Failed to emit socket event for new participant:', socketError.message);
+    }
+
     res.status(201).json(
       new ApiResponse(201, {
         participant,
@@ -149,6 +219,25 @@ const getCurrentDraw = async (req, res, next) => {
       }]
     });
 
+    // Get winner details if completed
+    let winnerDetails = null;
+    if (luckyDraw.status === 'completed' && luckyDraw.winnerWalletAddress) {
+      const winnerUser = await User.findOne({
+        where: { walletAddress: luckyDraw.winnerWalletAddress },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+      winnerDetails = {
+        walletAddress: luckyDraw.winnerWalletAddress,
+        username: winnerUser?.username || null,
+        profileImage: winnerUser?.profileImage || null,
+        isVerified: winnerUser?.isVerified || false,
+        drawnAt: luckyDraw.drawnAt
+      };
+    }
+
+    // Calculate countdown info
+    const countdown = getCountdownInfo(luckyDraw.drawScheduledAt);
+
     res.status(200).json(
       new ApiResponse(200, {
         luckyDraw: {
@@ -160,10 +249,10 @@ const getCurrentDraw = async (req, res, next) => {
           prizeCurrency: luckyDraw.prizeCurrency,
           totalParticipants: uniqueParticipants,
           totalPurchases,
-          winner: luckyDraw.status === 'completed' ? {
-            walletAddress: luckyDraw.winnerWalletAddress,
-            drawnAt: luckyDraw.drawnAt
-          } : null
+          drawScheduledAt: luckyDraw.drawScheduledAt,
+          isLiveDrawActive: luckyDraw.isLiveDrawActive,
+          countdown,
+          winner: winnerDetails
         },
         recentParticipants: recentParticipants.map(p => ({
           walletAddress: p.userWalletAddress,
@@ -299,11 +388,12 @@ const checkParticipation = async (req, res, next) => {
 
 /**
  * Draw winner for a specific month (admin only)
+ * Supports live draw with real-time animation
  * @route POST /api/v1/lucky-draw/draw
  */
 const drawWinner = async (req, res, next) => {
   try {
-    const { month, adminWalletAddress } = req.body;
+    const { month, adminWalletAddress, isLiveDraw = false } = req.body;
 
     // Use provided month or default to current month
     const targetMonth = month || getCurrentMonth();
@@ -327,20 +417,93 @@ const drawWinner = async (req, res, next) => {
       throw new ApiError(400, `Lucky draw for ${targetMonth} has been cancelled`);
     }
 
-    // Get unique participants (one entry per wallet)
-    const participants = await LuckyDrawParticipant.findAll({
+    if (luckyDraw.isLiveDrawActive) {
+      throw new ApiError(400, 'A live draw is already in progress');
+    }
+
+    // Get unique participants with user details
+    const participantEntries = await LuckyDrawParticipant.findAll({
       where: { luckyDrawId: luckyDraw.id },
-      attributes: ['userWalletAddress'],
-      group: ['userWalletAddress']
+      include: [{
+        model: User,
+        as: 'user',
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'],
+        required: false
+      }]
     });
 
-    if (participants.length === 0) {
+    // Get unique wallets
+    const uniqueWallets = [...new Set(participantEntries.map(p => p.userWalletAddress))];
+
+    if (uniqueWallets.length === 0) {
       throw new ApiError(400, 'No participants in this lucky draw');
     }
 
+    // Format participants for frontend
+    const formattedParticipants = uniqueWallets.map(wallet => {
+      const entry = participantEntries.find(p => p.userWalletAddress === wallet);
+      return {
+        walletAddress: wallet,
+        username: entry?.user?.username || null,
+        profileImage: entry?.user?.profileImage || null,
+        isVerified: entry?.user?.isVerified || false
+      };
+    });
+
     // Randomly select a winner
-    const randomIndex = Math.floor(Math.random() * participants.length);
-    const winnerWallet = participants[randomIndex].userWalletAddress;
+    const randomIndex = Math.floor(Math.random() * uniqueWallets.length);
+    const winnerWallet = uniqueWallets[randomIndex];
+
+    // If live draw, perform animated selection
+    if (isLiveDraw) {
+      // Mark draw as active
+      await luckyDraw.update({ isLiveDrawActive: true });
+
+      // Emit draw starting event
+      luckyDrawEvents.drawStarting(targetMonth, {
+        totalParticipants: uniqueWallets.length,
+        participants: formattedParticipants
+      });
+
+      // Shuffle animation phase (highlight random participants)
+      const shuffleRounds = 15;
+      for (let i = 0; i < shuffleRounds; i++) {
+        const highlightIndex = Math.floor(Math.random() * uniqueWallets.length);
+        const highlightedParticipant = formattedParticipants[highlightIndex];
+
+        luckyDrawEvents.shuffling(targetMonth, {
+          round: i + 1,
+          totalRounds: shuffleRounds,
+          highlightedIndex: highlightIndex,
+          highlightedParticipant,
+          speed: i < 5 ? 'fast' : i < 10 ? 'medium' : 'slow'
+        });
+
+        // Increasing delay as we slow down
+        const delay = i < 5 ? 100 : i < 10 ? 200 : 400;
+        await sleep(delay);
+      }
+
+      // Final highlighting phases - getting closer to winner
+      const finalRounds = 5;
+      for (let i = 0; i < finalRounds; i++) {
+        // On last round, highlight the actual winner
+        const idx = i === finalRounds - 1 ? randomIndex : Math.floor(Math.random() * uniqueWallets.length);
+
+        luckyDrawEvents.highlighting(targetMonth, {
+          round: i + 1,
+          totalRounds: finalRounds,
+          highlightedIndex: idx,
+          highlightedParticipant: formattedParticipants[idx],
+          isFinal: i === finalRounds - 1
+        });
+
+        await sleep(800);
+      }
+
+      // Mark draw as no longer active
+      await luckyDraw.update({ isLiveDrawActive: false });
+    }
 
     // Get one of the winner's participant entries to mark as winner
     const winnerEntry = await LuckyDrawParticipant.findOne({
@@ -360,7 +523,8 @@ const drawWinner = async (req, res, next) => {
       winningParticipantId: winnerEntry.id,
       drawnAt: new Date(),
       drawnBy: adminWalletAddress || 'system',
-      totalParticipants: participants.length
+      totalParticipants: uniqueWallets.length,
+      isLiveDrawActive: false
     });
 
     // Get winner user details
@@ -369,7 +533,33 @@ const drawWinner = async (req, res, next) => {
       attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
     });
 
-    logger.info(`Lucky draw winner for ${targetMonth}: ${winnerWallet} (drawn by: ${adminWalletAddress || 'system'})`);
+    const winnerData = {
+      walletAddress: winnerWallet,
+      username: winnerUser?.username || null,
+      profileImage: winnerUser?.profileImage || null,
+      isVerified: winnerUser?.isVerified || false,
+      participantId: winnerEntry.id,
+      nftTokenId: winnerEntry.nftTokenId
+    };
+
+    // Emit winner selected event (for live draw)
+    if (isLiveDraw) {
+      luckyDrawEvents.winnerSelected(targetMonth, {
+        winner: winnerData,
+        prizeDescription: luckyDraw.prizeDescription,
+        prizeAmount: luckyDraw.prizeAmount,
+        prizeCurrency: luckyDraw.prizeCurrency
+      });
+
+      // Emit draw complete after a short delay
+      await sleep(2000);
+      luckyDrawEvents.drawComplete(targetMonth, {
+        winner: winnerData,
+        totalParticipants: uniqueWallets.length
+      });
+    }
+
+    logger.info(`Lucky draw winner for ${targetMonth}: ${winnerWallet} (drawn by: ${adminWalletAddress || 'system'}, live: ${isLiveDraw})`);
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -377,20 +567,26 @@ const drawWinner = async (req, res, next) => {
           id: luckyDraw.id,
           month: luckyDraw.month,
           status: 'completed',
-          totalParticipants: participants.length,
+          totalParticipants: uniqueWallets.length,
           drawnAt: new Date()
         },
-        winner: {
-          walletAddress: winnerWallet,
-          username: winnerUser?.username || null,
-          profileImage: winnerUser?.profileImage || null,
-          isVerified: winnerUser?.isVerified || false,
-          participantId: winnerEntry.id,
-          nftTokenId: winnerEntry.nftTokenId
-        }
+        winner: winnerData,
+        wasLiveDraw: isLiveDraw
       }, `Winner drawn successfully for ${targetMonth}`)
     );
   } catch (error) {
+    // If error during live draw, make sure to reset the flag
+    if (error && req.body?.isLiveDraw) {
+      const targetMonth = req.body.month || getCurrentMonth();
+      try {
+        await LuckyDraw.update(
+          { isLiveDrawActive: false },
+          { where: { month: targetMonth } }
+        );
+      } catch (updateError) {
+        logger.error('Failed to reset isLiveDrawActive flag:', updateError);
+      }
+    }
     next(error);
   }
 };
@@ -491,6 +687,74 @@ const setPrize = async (req, res, next) => {
 };
 
 /**
+ * Schedule draw time (admin only)
+ * @route PUT /api/v1/lucky-draw/:month/schedule
+ */
+const scheduleDraw = async (req, res, next) => {
+  try {
+    const { month } = req.params;
+    const { drawScheduledAt } = req.body;
+
+    // Validate month format
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new ApiError(400, 'Invalid month format. Use YYYY-MM');
+    }
+
+    if (!drawScheduledAt) {
+      throw new ApiError(400, 'Draw scheduled time is required');
+    }
+
+    const scheduledDate = new Date(drawScheduledAt);
+    if (isNaN(scheduledDate.getTime())) {
+      throw new ApiError(400, 'Invalid date format for drawScheduledAt');
+    }
+
+    if (scheduledDate <= new Date()) {
+      throw new ApiError(400, 'Scheduled time must be in the future');
+    }
+
+    const luckyDraw = await getOrCreateLuckyDraw(month);
+
+    if (luckyDraw.status === 'completed') {
+      throw new ApiError(400, 'Cannot schedule a completed draw');
+    }
+
+    if (luckyDraw.status === 'cancelled') {
+      throw new ApiError(400, 'Cannot schedule a cancelled draw');
+    }
+
+    await luckyDraw.update({ drawScheduledAt: scheduledDate });
+
+    const countdown = getCountdownInfo(scheduledDate);
+
+    // Emit countdown update to all clients in the room
+    try {
+      luckyDrawEvents.countdownUpdate(month, {
+        drawScheduledAt: scheduledDate.toISOString(),
+        countdown
+      });
+    } catch (socketError) {
+      logger.warn('Failed to emit countdown update:', socketError.message);
+    }
+
+    logger.info(`Lucky draw for ${month} scheduled at ${scheduledDate.toISOString()}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        luckyDraw: {
+          id: luckyDraw.id,
+          month: luckyDraw.month,
+          drawScheduledAt: scheduledDate,
+          countdown
+        }
+      }, 'Draw scheduled successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Cancel a lucky draw (admin only)
  * @route PUT /api/v1/lucky-draw/:month/cancel
  */
@@ -519,6 +783,15 @@ const cancelDraw = async (req, res, next) => {
       drawnBy: adminWalletAddress || 'system'
     });
 
+    // Emit cancellation event
+    try {
+      luckyDrawEvents.drawCancelled(month, {
+        reason: reason || 'Draw cancelled by admin'
+      });
+    } catch (socketError) {
+      logger.warn('Failed to emit draw cancelled event:', socketError.message);
+    }
+
     logger.info(`Lucky draw for ${month} cancelled by ${adminWalletAddress || 'system'}. Reason: ${reason || 'N/A'}`);
 
     res.status(200).json(
@@ -535,13 +808,84 @@ const cancelDraw = async (req, res, next) => {
   }
 };
 
+/**
+ * Get all participants for live draw display
+ * @route GET /api/v1/lucky-draw/:month/all-participants
+ */
+const getAllParticipantsForDraw = async (req, res, next) => {
+  try {
+    const { month } = req.params;
+
+    // Validate month format
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw new ApiError(400, 'Invalid month format. Use YYYY-MM');
+    }
+
+    const luckyDraw = await LuckyDraw.findOne({ where: { month } });
+
+    if (!luckyDraw) {
+      throw new ApiError(404, `No lucky draw found for ${month}`);
+    }
+
+    // Get all participants with user details
+    const participantEntries = await LuckyDrawParticipant.findAll({
+      where: { luckyDrawId: luckyDraw.id },
+      include: [{
+        model: User,
+        as: 'user',
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'],
+        required: false
+      }],
+      order: [['purchasedAt', 'ASC']]
+    });
+
+    // Get unique wallets
+    const uniqueWallets = [...new Set(participantEntries.map(p => p.userWalletAddress))];
+
+    // Format participants
+    const participants = uniqueWallets.map((wallet, index) => {
+      const entry = participantEntries.find(p => p.userWalletAddress === wallet);
+      const purchaseCount = participantEntries.filter(p => p.userWalletAddress === wallet).length;
+
+      return {
+        index,
+        walletAddress: wallet,
+        username: entry?.user?.username || null,
+        profileImage: entry?.user?.profileImage || null,
+        isVerified: entry?.user?.isVerified || false,
+        purchaseCount,
+        isWinner: entry?.isWinner || false
+      };
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        luckyDraw: {
+          id: luckyDraw.id,
+          month: luckyDraw.month,
+          status: luckyDraw.status,
+          drawScheduledAt: luckyDraw.drawScheduledAt,
+          isLiveDrawActive: luckyDraw.isLiveDrawActive,
+          countdown: getCountdownInfo(luckyDraw.drawScheduledAt)
+        },
+        participants,
+        totalParticipants: participants.length
+      }, 'All participants retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   recordPurchase,
   getCurrentDraw,
   getParticipants,
+  getAllParticipantsForDraw,
   checkParticipation,
   drawWinner,
   getWinners,
   setPrize,
+  scheduleDraw,
   cancelDraw
 };
