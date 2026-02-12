@@ -23,18 +23,31 @@ const getCurrentMonth = () => {
 };
 
 /**
+ * Get the last day of a specific month at 23:00 UTC
+ */
+const getEndOfMonthDrawTime = (month) => {
+  const [year, monthNum] = month.split('-').map(Number);
+  const lastDay = new Date(year, monthNum, 0); // Day 0 of next month = last day of current month
+  lastDay.setUTCHours(23, 0, 0, 0);
+  return lastDay;
+};
+
+/**
  * Get or create lucky draw for a specific month
+ * Automatically sets draw time to 23:00 UTC on the last day of the month
  */
 const getOrCreateLuckyDraw = async (month) => {
   let luckyDraw = await LuckyDraw.findOne({ where: { month } });
 
   if (!luckyDraw) {
+    const drawTime = getEndOfMonthDrawTime(month);
     luckyDraw = await LuckyDraw.create({
       month,
       status: 'active',
-      totalParticipants: 0
+      totalParticipants: 0,
+      drawScheduledAt: drawTime
     });
-    logger.info(`Created new lucky draw for month: ${month}`);
+    logger.info(`Created new lucky draw for month: ${month}, scheduled at ${drawTime.toISOString()}`);
   }
 
   return luckyDraw;

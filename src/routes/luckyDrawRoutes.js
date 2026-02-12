@@ -69,11 +69,12 @@ router.get('/:month/all-participants', getAllParticipantsForDraw);
 
 /**
  * @route   POST /api/v1/lucky-draw/draw
- * @desc    Draw winner for a specific month (admin only)
+ * @desc    Manually trigger draw (for testing only - draws happen automatically at 23:00 UTC on last day of month)
  * @body    month - Optional: Month in YYYY-MM format (default: current month)
  * @body    adminWalletAddress - Optional: Admin wallet performing the draw
  * @body    isLiveDraw - Optional: Whether to broadcast live draw animation (default: false)
- * @access  Admin
+ * @access  Admin (for testing)
+ * @note    Normal draws are automatic at 23:00 UTC on the last day of each month
  */
 router.post('/draw', drawWinner);
 

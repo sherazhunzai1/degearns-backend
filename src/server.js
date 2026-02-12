@@ -5,6 +5,7 @@ const { connectDatabase } = require('./config/sequelize');
 const xrplConfig = require('./config/xrpl');
 const logger = require('./utils/logger');
 const { initScoringJobs } = require('./jobs/scoringJobs');
+const { initLuckyDrawJobs } = require('./jobs/luckyDrawJobs');
 const socketService = require('./services/socketService');
 
 const PORT = process.env.PORT || 5000;
@@ -32,6 +33,13 @@ const startServer = async () => {
       logger.info('Scoring cron jobs initialized');
     }
 
+    // Initialize and start lucky draw jobs
+    const luckyDrawJobs = initLuckyDrawJobs(models);
+    if (process.env.ENABLE_LUCKY_DRAW_JOBS !== 'false') {
+      luckyDrawJobs.start();
+      logger.info('Lucky draw cron jobs initialized');
+    }
+
     // Create HTTP server and initialize Socket.io
     const server = http.createServer(app);
     socketService.init(server);
@@ -55,6 +63,7 @@ const startServer = async () => {
     process.on('SIGTERM', async () => {
       logger.info('SIGTERM signal received: closing HTTP server');
       scoringJobs.stop();
+      luckyDrawJobs.stop();
       server.close(async () => {
         logger.info('HTTP server closed');
         await xrplConfig.disconnect();
@@ -65,6 +74,7 @@ const startServer = async () => {
     process.on('SIGINT', async () => {
       logger.info('SIGINT signal received: closing HTTP server');
       scoringJobs.stop();
+      luckyDrawJobs.stop();
       server.close(async () => {
         logger.info('HTTP server closed');
         await xrplConfig.disconnect();
