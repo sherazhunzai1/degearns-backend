@@ -9,10 +9,101 @@
  * are minted on XRPL from the frontend and may not exist in the database.
  */
 
-const { ActivityLog } = require('../models');
+const { ActivityLog, LuckyDraw, LuckyDrawParticipant } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+
+/**
+ * Get current month in YYYY-MM format for lucky draw
+ */
+const getCurrentMonth = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+};
+
+/**
+ * Get or create lucky draw for a specific month
+ */
+const getOrCreateLuckyDraw = async (month) => {
+  let luckyDraw = await LuckyDraw.findOne({ where: { month } });
+
+  if (!luckyDraw) {
+    luckyDraw = await LuckyDraw.create({
+      month,
+      status: 'active',
+      totalParticipants: 0
+    });
+    logger.info(`Created new lucky draw for month: ${month}`);
+  }
+
+  return luckyDraw;
+};
+
+/**
+ * Add user to lucky draw participation (called automatically on NFT purchase)
+ */
+const addToLuckyDraw = async (buyerWalletAddress, nftTokenId, purchasePrice, purchaseCurrency, transactionHash) => {
+  try {
+    const currentMonth = getCurrentMonth();
+    const luckyDraw = await getOrCreateLuckyDraw(currentMonth);
+
+    // Check if draw is still active
+    if (luckyDraw.status !== 'active') {
+      logger.info(`Lucky draw for ${currentMonth} is ${luckyDraw.status}, skipping participation`);
+      return { added: false, reason: `Lucky draw is ${luckyDraw.status}` };
+    }
+
+    // Check if this NFT purchase is already recorded
+    const existingEntry = await LuckyDrawParticipant.findOne({
+      where: {
+        luckyDrawId: luckyDraw.id,
+        nftTokenId
+      }
+    });
+
+    if (existingEntry) {
+      logger.info(`NFT ${nftTokenId} already recorded in lucky draw for ${currentMonth}`);
+      return { added: false, reason: 'Already recorded', participant: existingEntry };
+    }
+
+    // Create participant entry
+    const participant = await LuckyDrawParticipant.create({
+      luckyDrawId: luckyDraw.id,
+      userWalletAddress: buyerWalletAddress,
+      nftTokenId,
+      purchasePrice,
+      purchaseCurrency: purchaseCurrency || 'XRP',
+      transactionHash,
+      purchasedAt: new Date()
+    });
+
+    // Update total participants count (unique users)
+    const uniqueParticipants = await LuckyDrawParticipant.count({
+      where: { luckyDrawId: luckyDraw.id },
+      distinct: true,
+      col: 'userWalletAddress'
+    });
+
+    await luckyDraw.update({ totalParticipants: uniqueParticipants });
+
+    logger.info(`User ${buyerWalletAddress} added to lucky draw for ${currentMonth} (NFT: ${nftTokenId})`);
+
+    return {
+      added: true,
+      participant,
+      luckyDraw: {
+        id: luckyDraw.id,
+        month: luckyDraw.month,
+        totalParticipants: uniqueParticipants
+      }
+    };
+  } catch (error) {
+    logger.error('Error adding to lucky draw:', error);
+    // Don't throw - lucky draw is a bonus feature, shouldn't break NFT buy activity
+    return { added: false, reason: 'Error adding to lucky draw', error: error.message };
+  }
+};
 
 /**
  * Log collection creation activity
@@ -329,8 +420,23 @@ exports.logNftBuy = async (req, res) => {
 
     logger.info(`NFT buy activity logged: ${walletAddress} bought NFT for ${xrpAmount} drops, tx: ${transactionHash}`);
 
+    // Automatically add buyer to lucky draw participation
+    let luckyDrawResult = null;
+    if (nftTokenId) {
+      luckyDrawResult = await addToLuckyDraw(
+        walletAddress,
+        nftTokenId,
+        xrpAmount,
+        'XRP',
+        transactionHash
+      );
+    }
+
     res.status(201).json(
-      new ApiResponse(201, { activity }, 'NFT buy activity logged successfully')
+      new ApiResponse(201, {
+        activity,
+        luckyDraw: luckyDrawResult
+      }, 'NFT buy activity logged successfully')
     );
   } catch (error) {
     logger.error('Error logging NFT buy activity:', error);
