@@ -18,6 +18,7 @@ const activityRoutes = require('./activityRoutes');
 const boostRoutes = require('./boostRoutes');
 const paidBoostRoutes = require('./paidBoostRoutes');
 const subscriptionTierRoutes = require('./subscriptionTierRoutes');
+const luckyDrawRoutes = require('./luckyDrawRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -37,6 +38,7 @@ router.use('/activities', activityRoutes);
 router.use('/boost', boostRoutes);
 router.use('/paid-boosts', paidBoostRoutes);
 router.use('/subscription-tiers', subscriptionTierRoutes);
+router.use('/lucky-draw', luckyDrawRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
