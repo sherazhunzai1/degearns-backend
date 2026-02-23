@@ -45,6 +45,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
       comment: 'Whether this participant won the draw'
+    },
+    winnerPosition: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Winner position (1-10), null if not a winner'
     }
   }, {
     tableName: 'LuckyDrawParticipants',
