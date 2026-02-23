@@ -89,9 +89,10 @@ const executeLiveDraw = async (LuckyDraw, LuckyDrawParticipant, User, targetMont
   }
 
   // Format participants for frontend
-  const formattedParticipants = uniqueWallets.map(wallet => {
+  const formattedParticipants = uniqueWallets.map((wallet, idx) => {
     const entry = participantEntries.find(p => p.userWalletAddress === wallet);
     return {
+      index: idx,
       walletAddress: wallet,
       username: entry?.user?.username || null,
       profileImage: entry?.user?.profileImage || null,
@@ -99,9 +100,10 @@ const executeLiveDraw = async (LuckyDraw, LuckyDrawParticipant, User, targetMont
     };
   });
 
-  // Randomly select a winner
-  const randomIndex = Math.floor(Math.random() * uniqueWallets.length);
-  const winnerWallet = uniqueWallets[randomIndex];
+  const winnersCount = Math.min(luckyDraw.totalWinners || 10, uniqueWallets.length);
+  const allWinnersData = [];
+  const remainingWallets = [...uniqueWallets];
+  const remainingParticipants = [...formattedParticipants];
 
   try {
     // Mark draw as active
@@ -110,105 +112,152 @@ const executeLiveDraw = async (LuckyDraw, LuckyDrawParticipant, User, targetMont
     // Emit draw starting event
     luckyDrawEvents.drawStarting(targetMonth, {
       totalParticipants: uniqueWallets.length,
+      totalWinners: winnersCount,
       participants: formattedParticipants
     });
 
-    // Wait a moment for clients to prepare
+    // Wait for clients to prepare
     await sleep(3000);
 
-    // Shuffle animation phase (highlight random participants)
-    const shuffleRounds = 15;
-    for (let i = 0; i < shuffleRounds; i++) {
-      const highlightIndex = Math.floor(Math.random() * uniqueWallets.length);
-      const highlightedParticipant = formattedParticipants[highlightIndex];
-
+    // Draw each winner one by one
+    for (let winnerNum = 1; winnerNum <= winnersCount; winnerNum++) {
+      // Announce which winner is being drawn
       luckyDrawEvents.shuffling(targetMonth, {
-        round: i + 1,
-        totalRounds: shuffleRounds,
-        highlightedIndex: highlightIndex,
-        highlightedParticipant,
-        speed: i < 5 ? 'fast' : i < 10 ? 'medium' : 'slow'
+        winnerNumber: winnerNum,
+        totalWinners: winnersCount,
+        phase: 'announce',
+        message: `Drawing Winner #${winnerNum} of ${winnersCount}`,
+        highlightedIndex: -1,
+        highlightedParticipant: null,
+        speed: 'pause'
       });
 
-      // Increasing delay as we slow down
-      const delay = i < 5 ? 100 : i < 10 ? 200 : 400;
-      await sleep(delay);
-    }
+      await sleep(1500);
 
-    // Final highlighting phases - getting closer to winner
-    const finalRounds = 5;
-    for (let i = 0; i < finalRounds; i++) {
-      // On last round, highlight the actual winner
-      const idx = i === finalRounds - 1 ? randomIndex : Math.floor(Math.random() * uniqueWallets.length);
+      // Randomly select from remaining
+      const randomIndex = Math.floor(Math.random() * remainingWallets.length);
+      const winnerWallet = remainingWallets[randomIndex];
+      const winnerParticipantIndex = formattedParticipants.findIndex(p => p.walletAddress === winnerWallet);
 
-      luckyDrawEvents.highlighting(targetMonth, {
-        round: i + 1,
-        totalRounds: finalRounds,
-        highlightedIndex: idx,
-        highlightedParticipant: formattedParticipants[idx],
-        isFinal: i === finalRounds - 1
-      });
+      // Shuffle animation for this winner
+      const shuffleRounds = 12;
+      for (let i = 0; i < shuffleRounds; i++) {
+        const rIdx = Math.floor(Math.random() * remainingParticipants.length);
+        const highlighted = remainingParticipants[rIdx];
+        const originalIndex = formattedParticipants.findIndex(p => p.walletAddress === highlighted.walletAddress);
 
-      await sleep(800);
-    }
+        luckyDrawEvents.shuffling(targetMonth, {
+          winnerNumber: winnerNum,
+          totalWinners: winnersCount,
+          phase: 'shuffle',
+          round: i + 1,
+          totalRounds: shuffleRounds,
+          highlightedIndex: originalIndex,
+          highlightedParticipant: highlighted,
+          speed: i < 4 ? 'fast' : i < 8 ? 'medium' : 'slow'
+        });
 
-    // Get winner's participant entry
-    const winnerEntry = await LuckyDrawParticipant.findOne({
-      where: {
-        luckyDrawId: luckyDraw.id,
-        userWalletAddress: winnerWallet
+        const delay = i < 4 ? 100 : i < 8 ? 200 : 400;
+        await sleep(delay);
       }
-    });
 
-    // Update participant as winner
-    await winnerEntry.update({ isWinner: true });
+      // Final highlighting for this winner
+      const finalRounds = 4;
+      for (let i = 0; i < finalRounds; i++) {
+        const isFinal = i === finalRounds - 1;
+        let idx;
+        if (isFinal) {
+          idx = winnerParticipantIndex;
+        } else {
+          const rIdx = Math.floor(Math.random() * remainingParticipants.length);
+          idx = formattedParticipants.findIndex(p => p.walletAddress === remainingParticipants[rIdx].walletAddress);
+        }
 
-    // Update lucky draw with winner
+        luckyDrawEvents.highlighting(targetMonth, {
+          winnerNumber: winnerNum,
+          totalWinners: winnersCount,
+          round: i + 1,
+          totalRounds: finalRounds,
+          highlightedIndex: idx,
+          highlightedParticipant: formattedParticipants[idx],
+          isFinal
+        });
+
+        await sleep(800);
+      }
+
+      // Mark winner in database
+      const winnerEntry = await LuckyDrawParticipant.findOne({
+        where: {
+          luckyDrawId: luckyDraw.id,
+          userWalletAddress: winnerWallet
+        }
+      });
+      await winnerEntry.update({ isWinner: true, winnerPosition: winnerNum });
+
+      const winnerUser = await User.findOne({
+        where: { walletAddress: winnerWallet },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
+
+      const winnerData = {
+        position: winnerNum,
+        walletAddress: winnerWallet,
+        username: winnerUser?.username || null,
+        profileImage: winnerUser?.profileImage || null,
+        isVerified: winnerUser?.isVerified || false,
+        participantId: winnerEntry.id,
+        nftTokenId: winnerEntry.nftTokenId
+      };
+
+      allWinnersData.push(winnerData);
+
+      // Announce this winner
+      luckyDrawEvents.winnerSelected(targetMonth, {
+        winnerNumber: winnerNum,
+        totalWinners: winnersCount,
+        winner: winnerData,
+        allWinners: allWinnersData,
+        prizeDescription: luckyDraw.prizeDescription,
+        prizeAmount: luckyDraw.prizeAmount,
+        prizeCurrency: luckyDraw.prizeCurrency
+      });
+
+      // Remove winner from remaining pool
+      remainingWallets.splice(randomIndex, 1);
+      const rpIdx = remainingParticipants.findIndex(p => p.walletAddress === winnerWallet);
+      remainingParticipants.splice(rpIdx, 1);
+
+      logger.info(`Lucky draw winner #${winnerNum} for ${targetMonth}: ${winnerWallet}`);
+
+      // Pause between winners
+      if (winnerNum < winnersCount) {
+        await sleep(3000);
+      }
+    }
+
+    // Update lucky draw as completed
     await luckyDraw.update({
       status: 'completed',
-      winnerWalletAddress: winnerWallet,
-      winningParticipantId: winnerEntry.id,
       drawnAt: new Date(),
       drawnBy: 'system-auto',
       totalParticipants: uniqueWallets.length,
       isLiveDrawActive: false
     });
 
-    // Get winner user details
-    const winnerUser = await User.findOne({
-      where: { walletAddress: winnerWallet },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-    });
-
-    const winnerData = {
-      walletAddress: winnerWallet,
-      username: winnerUser?.username || null,
-      profileImage: winnerUser?.profileImage || null,
-      isVerified: winnerUser?.isVerified || false,
-      participantId: winnerEntry.id,
-      nftTokenId: winnerEntry.nftTokenId
-    };
-
-    // Emit winner selected event
-    luckyDrawEvents.winnerSelected(targetMonth, {
-      winner: winnerData,
-      prizeDescription: luckyDraw.prizeDescription,
-      prizeAmount: luckyDraw.prizeAmount,
-      prizeCurrency: luckyDraw.prizeCurrency
-    });
-
-    // Emit draw complete after a short delay
+    // Emit draw complete
     await sleep(2000);
     luckyDrawEvents.drawComplete(targetMonth, {
-      winner: winnerData,
-      totalParticipants: uniqueWallets.length
+      winners: allWinnersData,
+      totalParticipants: uniqueWallets.length,
+      totalWinners: winnersCount
     });
 
-    logger.info(`Automatic lucky draw completed for ${targetMonth}. Winner: ${winnerWallet}`);
+    logger.info(`Automatic lucky draw completed for ${targetMonth}. ${winnersCount} winners drawn`);
 
     return {
       success: true,
-      winner: winnerData,
+      winners: allWinnersData,
       totalParticipants: uniqueWallets.length
     };
 

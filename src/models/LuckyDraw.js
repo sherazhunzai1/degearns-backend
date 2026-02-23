@@ -19,12 +19,17 @@ module.exports = (sequelize, DataTypes) => {
     winnerWalletAddress: {
       type: DataTypes.STRING(100),
       allowNull: true,
-      comment: 'Wallet address of the winner'
+      comment: 'Deprecated - use LuckyDrawParticipant.isWinner. Kept for backward compat.'
     },
     winningParticipantId: {
       type: DataTypes.UUID,
       allowNull: true,
-      comment: 'ID of the winning participant entry'
+      comment: 'Deprecated - use LuckyDrawParticipant.isWinner. Kept for backward compat.'
+    },
+    totalWinners: {
+      type: DataTypes.INTEGER,
+      defaultValue: 10,
+      comment: 'Number of winners to draw'
     },
     prizeDescription: {
       type: DataTypes.TEXT,
