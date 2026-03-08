@@ -36,6 +36,9 @@ const CollectionBoost = require('./CollectionBoost')(sequelize, DataTypes);
 const Repost = require('./Repost')(sequelize, DataTypes);
 const LuckyDraw = require('./LuckyDraw')(sequelize, DataTypes);
 const LuckyDrawParticipant = require('./LuckyDrawParticipant')(sequelize, DataTypes);
+const ReferralReward = require('./ReferralReward')(sequelize, DataTypes);
+const ReferralClaim = require('./ReferralClaim')(sequelize, DataTypes);
+const ReferralAuditLog = require('./ReferralAuditLog')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -564,6 +567,52 @@ LuckyDraw.belongsTo(User, {
   as: 'winner'
 });
 
+// User and ReferralReward associations (as referrer)
+User.hasMany(ReferralReward, {
+  foreignKey: 'referrerWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'referralRewardsEarned'
+});
+ReferralReward.belongsTo(User, {
+  foreignKey: 'referrerWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'referrer'
+});
+
+// User and ReferralReward associations (as referred)
+User.hasMany(ReferralReward, {
+  foreignKey: 'referredWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'referralRewardsGenerated'
+});
+ReferralReward.belongsTo(User, {
+  foreignKey: 'referredWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'referredUser'
+});
+
+// ReferralReward and ReferralClaim associations
+ReferralClaim.hasMany(ReferralReward, {
+  foreignKey: 'claimId',
+  as: 'rewards'
+});
+ReferralReward.belongsTo(ReferralClaim, {
+  foreignKey: 'claimId',
+  as: 'claim'
+});
+
+// User and ReferralClaim associations
+User.hasMany(ReferralClaim, {
+  foreignKey: 'referrerWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'referralClaims'
+});
+ReferralClaim.belongsTo(User, {
+  foreignKey: 'referrerWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'referrer'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -607,5 +656,8 @@ module.exports = {
   ActivityLog,
   Repost,
   LuckyDraw,
-  LuckyDrawParticipant
+  LuckyDrawParticipant,
+  ReferralReward,
+  ReferralClaim,
+  ReferralAuditLog
 };

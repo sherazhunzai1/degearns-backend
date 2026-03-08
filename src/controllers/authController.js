@@ -66,8 +66,16 @@ const getOrCreateUser = async (req, res, next) => {
       if (refCode) {
         const referrer = await User.findOne({ where: { referralCode: refCode } });
         if (referrer) {
-          referredBy = referrer.walletAddress;
-          logger.info(`User ${walletAddress} referred by ${referredBy} (code: ${refCode})`);
+          // Anti-abuse: prevent self-referral
+          if (referrer.walletAddress === walletAddress) {
+            logger.warn(`Self-referral attempt blocked: ${walletAddress}`);
+          } else if (referrer.isBanned) {
+            // Anti-abuse: don't accept referrals from banned users
+            logger.warn(`Referral from banned user blocked: ${referrer.walletAddress}`);
+          } else {
+            referredBy = referrer.walletAddress;
+            logger.info(`User ${walletAddress} referred by ${referredBy} (code: ${refCode})`);
+          }
         } else {
           logger.warn(`Invalid referral code used during signup: ${refCode}`);
         }
