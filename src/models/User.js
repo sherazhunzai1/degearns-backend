@@ -82,6 +82,17 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true,
       comment: 'Timestamp of the last cover image update for subscription-based rate limiting'
+    },
+    referralCode: {
+      type: DataTypes.STRING(20),
+      unique: true,
+      allowNull: true,
+      comment: 'Unique referral code for the user'
+    },
+    referredBy: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Wallet address of the user who referred this user'
     }
   }, {
     tableName: 'Users',
@@ -89,7 +100,9 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       { unique: true, fields: ['walletAddress'] },
       { fields: ['username'] },
-      { fields: ['email'] }
+      { fields: ['email'] },
+      { unique: true, fields: ['referralCode'] },
+      { fields: ['referredBy'] }
     ]
   });
 

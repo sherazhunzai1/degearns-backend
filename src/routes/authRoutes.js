@@ -6,7 +6,8 @@ const {
   updateProfile,
   updateProfilePicture,
   updateCoverPicture,
-  canUpdateCoverImage
+  canUpdateCoverImage,
+  getReferralInfo
 } = require('../controllers/authController');
 // const { authLimiter } = require('../middleware/rateLimiter'); // Rate limiting disabled
 
@@ -51,5 +52,12 @@ router.put('/cover-picture', updateCoverPicture);
  * @access  Public
  */
 router.get('/can-update-cover-image', canUpdateCoverImage);
+
+/**
+ * @route   GET /api/v1/auth/referral-info
+ * @desc    Get user's referral code, link, and referral stats
+ * @access  Public
+ */
+router.get('/referral-info', getReferralInfo);
 
 module.exports = router;
