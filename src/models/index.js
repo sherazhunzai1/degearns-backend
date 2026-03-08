@@ -404,6 +404,18 @@ GroupMessage.belongsTo(GroupMessage, {
   as: 'replyToMessage'
 });
 
+// User referral associations (self-referencing)
+User.belongsTo(User, {
+  foreignKey: 'referredBy',
+  targetKey: 'walletAddress',
+  as: 'referrer'
+});
+User.hasMany(User, {
+  foreignKey: 'referredBy',
+  sourceKey: 'walletAddress',
+  as: 'referrals'
+});
+
 // User and Subscription associations
 User.hasMany(Subscription, {
   foreignKey: 'userWalletAddress',

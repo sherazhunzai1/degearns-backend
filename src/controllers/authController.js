@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+const { Op } = require('sequelize');
 const { User, Subscription } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -5,12 +7,33 @@ const logger = require('../utils/logger');
 const { getActiveSubscriptionPlan, checkCoverImageUpdateEligibility } = require('../utils/userHelpers');
 
 /**
+ * Generate a unique referral code (6 alphanumeric characters, uppercase)
+ */
+const generateReferralCode = async () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude confusing chars: 0,O,1,I
+  let code;
+  let exists = true;
+
+  while (exists) {
+    code = '';
+    const bytes = crypto.randomBytes(6);
+    for (let i = 0; i < 6; i++) {
+      code += chars[bytes[i] % chars.length];
+    }
+    const existing = await User.findOne({ where: { referralCode: code } });
+    exists = !!existing;
+  }
+
+  return code;
+};
+
+/**
  * Get or create user by wallet address (XAMAN wallet connection)
  * This endpoint is called after user connects their XAMAN wallet
  */
 const getOrCreateUser = async (req, res, next) => {
   try {
-    const { walletAddress } = req.body;
+    const { walletAddress, referralCode: refCode } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
@@ -35,14 +58,31 @@ const getOrCreateUser = async (req, res, next) => {
 
     // If user doesn't exist, create new user with wallet address as default username
     if (!user) {
+      // Generate a unique referral code for the new user
+      const newReferralCode = await generateReferralCode();
+
+      // Look up the referrer by referral code if provided
+      let referredBy = null;
+      if (refCode) {
+        const referrer = await User.findOne({ where: { referralCode: refCode } });
+        if (referrer) {
+          referredBy = referrer.walletAddress;
+          logger.info(`User ${walletAddress} referred by ${referredBy} (code: ${refCode})`);
+        } else {
+          logger.warn(`Invalid referral code used during signup: ${refCode}`);
+        }
+      }
+
       user = await User.create({
         walletAddress,
         username: walletAddress,  // Set wallet address as default username
-        role: 'user'
+        role: 'user',
+        referralCode: newReferralCode,
+        referredBy
       });
 
       isNewUser = true;
-      logger.info(`New user created with wallet: ${walletAddress}`);
+      logger.info(`New user created with wallet: ${walletAddress}, referralCode: ${newReferralCode}`);
     }
 
     logger.info(`User authenticated: ${walletAddress}`);
@@ -319,11 +359,60 @@ const canUpdateCoverImage = async (req, res, next) => {
   }
 };
 
+/**
+ * Get user's referral info (code, link, and stats)
+ */
+const getReferralInfo = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    const user = await User.findOne({ where: { walletAddress } });
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    // Generate referral code if user doesn't have one (for existing users before this feature)
+    if (!user.referralCode) {
+      user.referralCode = await generateReferralCode();
+      await user.save();
+    }
+
+    // Count total referrals
+    const totalReferrals = await User.count({ where: { referredBy: walletAddress } });
+
+    // Get referred users list
+    const referredUsers = await User.findAll({
+      where: { referredBy: walletAddress },
+      attributes: ['walletAddress', 'username', 'profileImage', 'createdAt'],
+      order: [['createdAt', 'DESC']],
+      limit: 50
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        referralCode: user.referralCode,
+        referralLink: `https://degearns.com/signup?ref=${user.referralCode}`,
+        totalReferrals,
+        referredUsers,
+        referredBy: user.referredBy
+      }, 'Referral info retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getOrCreateUser,
   getMe,
   updateProfile,
   updateProfilePicture,
   updateCoverPicture,
-  canUpdateCoverImage
+  canUpdateCoverImage,
+  getReferralInfo
 };
