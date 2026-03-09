@@ -261,11 +261,113 @@ const getCollections = async (req, res, next) => {
       stats: item.stats
     }));
 
+    // Fetch active boosted collections from CollectionBoosts table
+    const regularCollectionIds = new Set(formattedCollections.map(c => c.id));
+
+    const activeBoosts = await CollectionBoost.findAll({
+      where: {
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      },
+      order: [['boostPercentage', 'DESC'], ['createdAt', 'DESC']]
+    });
+
+    // Get boosted collection IDs that are NOT already in the regular results
+    const boostedCollectionIds = activeBoosts
+      .map(b => b.collectionId)
+      .filter(id => !regularCollectionIds.has(id));
+
+    // Remove duplicates
+    const uniqueBoostedIds = [...new Set(boostedCollectionIds)];
+
+    let boostedFormattedCollections = [];
+
+    if (uniqueBoostedIds.length > 0) {
+      // Fetch boosted collections from DB
+      const boostedCollections = await Collection.findAll({
+        where: { id: { [Op.in]: uniqueBoostedIds } },
+        include: [
+          {
+            association: 'creator',
+            attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+          }
+        ]
+      });
+
+      // Build a map of collectionId -> highest active boost
+      const boostMap = {};
+      for (const boost of activeBoosts) {
+        if (!boostMap[boost.collectionId] || boost.boostPercentage > boostMap[boost.collectionId].boostPercentage) {
+          boostMap[boost.collectionId] = boost;
+        }
+      }
+
+      boostedFormattedCollections = boostedCollections.map(collection => ({
+        ...collection.toJSON(),
+        isBoosted: true,
+        boostInfo: {
+          boostPercentage: boostMap[collection.id]?.boostPercentage || 0,
+          endDate: boostMap[collection.id]?.endDate || null,
+          remainingDays: boostMap[collection.id]?.getRemainingDays() || 0
+        },
+        stats: {
+          totalSupply: collection.totalSupply || 0,
+          floorPrice: collection.floorPrice,
+          totalVolume: collection.totalVolume || '0',
+          listedCount: 0,
+          listingPercentage: '0.00'
+        }
+      }));
+
+      // Sort boosted collections by boost percentage (highest first)
+      boostedFormattedCollections.sort((a, b) =>
+        (b.boostInfo.boostPercentage || 0) - (a.boostInfo.boostPercentage || 0)
+      );
+
+      // Increment impressions for displayed boosts (async, non-blocking)
+      const displayedBoostIds = boostedFormattedCollections.map(c => {
+        const boost = boostMap[c.id];
+        return boost ? boost.id : null;
+      }).filter(Boolean);
+
+      if (displayedBoostIds.length > 0) {
+        CollectionBoost.increment('impressions', {
+          where: { id: { [Op.in]: displayedBoostIds } }
+        }).catch(err => {
+          logger.error('Error incrementing collection boost impressions:', err);
+        });
+      }
+    }
+
+    // Also mark regular collections that have active boosts
+    const boostMapAll = {};
+    for (const boost of activeBoosts) {
+      if (!boostMapAll[boost.collectionId] || boost.boostPercentage > boostMapAll[boost.collectionId].boostPercentage) {
+        boostMapAll[boost.collectionId] = boost;
+      }
+    }
+
+    formattedCollections = formattedCollections.map(c => {
+      const boost = boostMapAll[c.id];
+      if (boost) {
+        return {
+          ...c,
+          isBoosted: true,
+          boostInfo: {
+            boostPercentage: boost.boostPercentage,
+            endDate: boost.endDate,
+            remainingDays: boost.getRemainingDays()
+          }
+        };
+      }
+      return { ...c, isBoosted: false };
+    });
+
     // Always apply boost scoring (boost is primary sort)
     if (formattedCollections.length > 0) {
       const db = require('../models');
       const boostEngine = initBoostEngine(db);
-      const boostedCollections = await boostEngine.boostCollections(
+      const boostedResults = await boostEngine.boostCollections(
         formattedCollections.map(c => ({
           ...c,
           creatorWalletAddress: c.creatorWalletAddress
@@ -273,7 +375,7 @@ const getCollections = async (req, res, next) => {
       );
 
       // Sort by boost score (primary), then by secondary sort
-      boostedCollections.sort((a, b) => {
+      boostedResults.sort((a, b) => {
         // Primary sort: boost score (descending)
         const boostDiff = (b.boostScore || 0) - (a.boostScore || 0);
         if (Math.abs(boostDiff) > 0.01) return boostDiff;
@@ -290,16 +392,19 @@ const getCollections = async (req, res, next) => {
         return new Date(b.createdAt) - new Date(a.createdAt);
       });
 
-      formattedCollections = boostedCollections;
+      formattedCollections = boostedResults;
     }
 
+    // Merge: boosted collections first, then regular results
+    let allCollections = [...boostedFormattedCollections, ...formattedCollections];
+
     // Add subscription plans to creator data
-    const creatorWallets = formattedCollections
+    const creatorWallets = allCollections
       .map(c => c.creator?.walletAddress)
       .filter(Boolean);
     const subscriptionMap = await getActiveSubscriptionsForWallets(creatorWallets);
 
-    formattedCollections = formattedCollections.map(collection => ({
+    allCollections = allCollections.map(collection => ({
       ...collection,
       creator: collection.creator ? {
         ...collection.creator,
@@ -309,12 +414,13 @@ const getCollections = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        collections: formattedCollections,
+        collections: allCollections,
+        boostedCount: boostedFormattedCollections.length,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: count,
-          pages: Math.ceil(count / limit)
+          total: count + boostedFormattedCollections.length,
+          pages: Math.ceil((count + boostedFormattedCollections.length) / limit)
         },
         sorting: {
           primary: 'boost',
