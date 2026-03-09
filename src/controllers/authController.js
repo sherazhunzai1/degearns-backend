@@ -58,13 +58,20 @@ const getOrCreateUser = async (req, res, next) => {
 
     // If user doesn't exist, create new user with wallet address as default username
     if (!user) {
-      // Generate a unique referral code for the new user
-      const newReferralCode = await generateReferralCode();
+      // Use wallet address as referral code
+      const newReferralCode = walletAddress;
 
-      // Look up the referrer by referral code if provided
+      // Look up the referrer by referral code (which is their wallet address)
       let referredBy = null;
       if (refCode) {
-        const referrer = await User.findOne({ where: { referralCode: refCode } });
+        const referrer = await User.findOne({
+          where: {
+            [Op.or]: [
+              { referralCode: refCode },
+              { walletAddress: refCode }
+            ]
+          }
+        });
         if (referrer) {
           // Anti-abuse: prevent self-referral
           if (referrer.walletAddress === walletAddress) {
@@ -384,9 +391,9 @@ const getReferralInfo = async (req, res, next) => {
       throw new ApiError(404, 'User not found');
     }
 
-    // Generate referral code if user doesn't have one (for existing users before this feature)
+    // Set referral code to wallet address if user doesn't have one (for existing users before this feature)
     if (!user.referralCode) {
-      user.referralCode = await generateReferralCode();
+      user.referralCode = walletAddress;
       await user.save();
     }
 
