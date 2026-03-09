@@ -78,14 +78,20 @@ const getDashboard = async (req, res, next) => {
       limit: 50
     });
 
+    // Set referral code to wallet address if not set (backfill for existing users)
+    const referralCode = user.referralCode || walletAddress;
+    if (!user.referralCode) {
+      await User.update({ referralCode: walletAddress }, { where: { walletAddress } });
+    }
+
     // Get next payout date (first of next month)
     const now = new Date();
     const nextPayoutDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
     res.status(200).json(
       new ApiResponse(200, {
-        referralCode: user.referralCode,
-        referralLink: `https://degearns.com/signup?ref=${user.referralCode}`,
+        referralCode,
+        referralLink: `https://degearns.com/signup?ref=${referralCode}`,
         totalReferrals,
         totalEarnings: totalEarnings.toString(),
         pendingRewards: pendingRewards.toString(),
