@@ -84,7 +84,7 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Timestamp of the last cover image update for subscription-based rate limiting'
     },
     referralCode: {
-      type: DataTypes.STRING(20),
+      type: DataTypes.STRING(100),
       unique: true,
       allowNull: true,
       comment: 'Unique referral code for the user'
