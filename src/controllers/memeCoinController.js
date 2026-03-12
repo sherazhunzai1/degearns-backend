@@ -107,19 +107,19 @@ const createMemeCoin = async (req, res, next) => {
 
     res.status(201).json(
       new ApiResponse(201, {
-        memeCoin: {
-          id: memeCoin.id,
-          tokenName: memeCoin.tokenName,
-          tokenSymbol: memeCoin.tokenSymbol,
-          currencyHex: memeCoin.currencyHex,
-          totalSupply: memeCoin.totalSupply,
-          decimals: memeCoin.decimals,
-          logo: memeCoin.logo,
-          description: memeCoin.description,
-          issuerWalletAddress: memeCoin.issuerWalletAddress,
-          creatorWalletAddress: memeCoin.creatorWalletAddress,
-          status: memeCoin.status
-        },
+        // Flat fields for frontend compatibility (createResult.id, createResult.trustSetTransaction)
+        id: memeCoin.id,
+        _id: memeCoin.id,
+        tokenName: memeCoin.tokenName,
+        tokenSymbol: memeCoin.tokenSymbol,
+        currencyHex: memeCoin.currencyHex,
+        totalSupply: memeCoin.totalSupply,
+        decimals: memeCoin.decimals,
+        logo: memeCoin.logo,
+        description: memeCoin.description,
+        issuerWalletAddress: memeCoin.issuerWalletAddress,
+        creatorWalletAddress: memeCoin.creatorWalletAddress,
+        status: memeCoin.status,
         // Transaction payload for frontend QR code (Xaman signing)
         // Clean payload without Sequence/Fee/LastLedgerSequence — Xaman fills those
         trustSetTransaction: trustSetTx,
