@@ -94,16 +94,14 @@ const createMemeCoin = async (req, res, next) => {
       }
     });
 
-    // Build the TrustSet transaction for the user to sign
+    // Build the TrustSet transaction for the user to sign via Xaman
+    // Do NOT autofill (Sequence, Fee, LastLedgerSequence) — Xaman handles those
     const trustSetTx = xrplService.buildTrustSetPayload({
       creatorWallet: walletAddress,
       issuerAddress,
       currencyHex,
       totalSupply: supply
     });
-
-    // Prepare the transaction (autofill Fee, Sequence, etc.)
-    const preparedTrustSet = await xrplService.prepareTransaction(trustSetTx);
 
     logger.info(`MemeCoin created: ${tokenName} (${symbolCleaned}) by ${walletAddress}, id: ${memeCoin.id}`);
 
@@ -123,7 +121,8 @@ const createMemeCoin = async (req, res, next) => {
           status: memeCoin.status
         },
         // Transaction payload for frontend QR code (Xaman signing)
-        trustSetTransaction: preparedTrustSet,
+        // Clean payload without Sequence/Fee/LastLedgerSequence — Xaman fills those
+        trustSetTransaction: trustSetTx,
         instructions: {
           step: 1,
           message: 'Scan the QR code with your XRPL wallet to set the trust line. After signing, call /api/v1/memecoins/:id/confirm-trustline with the transaction hash.',
