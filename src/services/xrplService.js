@@ -1156,6 +1156,115 @@ class XRPLService {
       throw error;
     }
   }
+
+  /**
+   * Convert a token symbol to XRPL currency hex format.
+   * Standard currencies (3 chars) stay as-is.
+   * Non-standard (4+ chars) are hex-encoded and right-padded to 40 chars.
+   */
+  currencyToHex(symbol) {
+    const cleaned = symbol.toUpperCase().trim();
+    if (cleaned.length <= 3) {
+      return cleaned;
+    }
+    // Hex-encode and pad to 40 characters (20 bytes)
+    const hex = Buffer.from(cleaned, 'ascii').toString('hex').toUpperCase();
+    return hex.padEnd(40, '0');
+  }
+
+  /**
+   * Build a TrustSet transaction payload for the user to sign.
+   * The user (creator) sets a trust line to the issuer for the new token.
+   */
+  buildTrustSetPayload({ creatorWallet, issuerAddress, currencyHex, totalSupply }) {
+    return {
+      TransactionType: 'TrustSet',
+      Account: creatorWallet,
+      LimitAmount: {
+        currency: currencyHex,
+        issuer: issuerAddress,
+        value: totalSupply.toString()
+      }
+    };
+  }
+
+  /**
+   * Build the token issuance Payment transaction.
+   * The issuer sends the full supply to the creator's wallet.
+   */
+  buildTokenIssuancePayload({ issuerAddress, creatorWallet, currencyHex, totalSupply }) {
+    return {
+      TransactionType: 'Payment',
+      Account: issuerAddress,
+      Destination: creatorWallet,
+      Amount: {
+        currency: currencyHex,
+        issuer: issuerAddress,
+        value: totalSupply.toString()
+      }
+    };
+  }
+
+  /**
+   * Prepare and autofill a transaction (adds Fee, Sequence, LastLedgerSequence).
+   * Returns the prepared transaction object ready for signing.
+   */
+  async prepareTransaction(tx) {
+    try {
+      const client = xrplConfig.getClient();
+      const prepared = await client.autofill(tx);
+      return prepared;
+    } catch (error) {
+      logger.error('Error preparing transaction:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Submit a signed transaction blob to the XRPL network.
+   */
+  async submitTransaction(txBlob) {
+    try {
+      const client = xrplConfig.getClient();
+      const result = await client.submitAndWait(txBlob);
+      return result;
+    } catch (error) {
+      logger.error('Error submitting transaction:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Issue tokens from the admin (issuer) wallet to a destination.
+   * Signs and submits the Payment transaction server-side.
+   */
+  async issueTokenFromAdmin({ destinationAddress, currencyHex, totalSupply }) {
+    try {
+      const wallet = xrplConfig.getAdminWallet();
+      const client = xrplConfig.getClient();
+
+      const tx = {
+        TransactionType: 'Payment',
+        Account: wallet.address,
+        Destination: destinationAddress,
+        Amount: {
+          currency: currencyHex,
+          issuer: wallet.address,
+          value: totalSupply.toString()
+        }
+      };
+
+      const prepared = await client.autofill(tx);
+      const signed = wallet.sign(prepared);
+      const result = await client.submitAndWait(signed.tx_blob);
+
+      logger.info(`Token issued: ${totalSupply} ${currencyHex} to ${destinationAddress}, tx: ${result.result.hash}`);
+      return result;
+    } catch (error) {
+      logger.error('Error issuing token from admin:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = new XRPLService();
