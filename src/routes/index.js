@@ -20,6 +20,7 @@ const paidBoostRoutes = require('./paidBoostRoutes');
 const subscriptionTierRoutes = require('./subscriptionTierRoutes');
 const luckyDrawRoutes = require('./luckyDrawRoutes');
 const referralRoutes = require('./referralRoutes');
+const memeCoinRoutes = require('./memeCoinRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -41,6 +42,7 @@ router.use('/paid-boosts', paidBoostRoutes);
 router.use('/subscription-tiers', subscriptionTierRoutes);
 router.use('/lucky-draw', luckyDrawRoutes);
 router.use('/referrals', referralRoutes);
+router.use('/memecoins', memeCoinRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {

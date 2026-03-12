@@ -39,6 +39,7 @@ const LuckyDrawParticipant = require('./LuckyDrawParticipant')(sequelize, DataTy
 const ReferralReward = require('./ReferralReward')(sequelize, DataTypes);
 const ReferralClaim = require('./ReferralClaim')(sequelize, DataTypes);
 const ReferralAuditLog = require('./ReferralAuditLog')(sequelize, DataTypes);
+const MemeCoin = require('./MemeCoin')(sequelize, DataTypes);
 
 // Define associations
 // User and Collection
@@ -613,6 +614,18 @@ ReferralClaim.belongsTo(User, {
   as: 'referrer'
 });
 
+// User and MemeCoin associations
+User.hasMany(MemeCoin, {
+  foreignKey: 'creatorWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'memeCoins'
+});
+MemeCoin.belongsTo(User, {
+  foreignKey: 'creatorWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'creator'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -659,5 +672,6 @@ module.exports = {
   LuckyDrawParticipant,
   ReferralReward,
   ReferralClaim,
-  ReferralAuditLog
+  ReferralAuditLog,
+  MemeCoin
 };
