@@ -385,26 +385,23 @@ const compareUsers = async (req, res) => {
 /**
  * Get user badges for profile display
  * GET /leaderboard/user/:walletAddress/badges
- * Query params: month, year
+ * Returns real-time ranking based on current leaderboard state
  */
 const getUserBadges = async (req, res) => {
   const { walletAddress } = req.params;
 
-  const { month, year } = parsePeriod(req.query);
-
   const scoringEngine = getScoringEngine();
-  const badges = await scoringEngine.getUserBadges(walletAddress, month, year);
+  const badges = await scoringEngine.getUserBadges(walletAddress);
 
   if (!badges) {
     throw new ApiError(404, 'User not found or has no stats');
   }
 
   res.status(200).json(new ApiResponse(200, {
-    ...badges,
-    period: {
-      ...badges.period,
-      name: `${getMonthName(month)} ${year}`
-    }
+    walletAddress,
+    traders: badges.trader,
+    creators: badges.creator,
+    influencers: badges.influencer
   }, 'User badges retrieved successfully'));
 };
 

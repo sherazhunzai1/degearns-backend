@@ -54,8 +54,7 @@ router.get('/user/:walletAddress/ranks', leaderboardController.getUserRanks);
 
 /**
  * GET /leaderboard/user/:walletAddress/badges
- * Get user's badge info for profile display (rank, score, badge tier per category)
- * Query params: month, year
+ * Get user's real-time badge info for profile display (rank, badge tier per category)
  */
 router.get('/user/:walletAddress/badges', leaderboardController.getUserBadges);
 
