@@ -642,6 +642,95 @@ class ScoringEngine {
   }
 
   /**
+   * Get user badges with ranking info for profile display
+   * Returns rank, score, total participants, percentile, and badge tier for each category
+   */
+  async getUserBadges(walletAddress, month = null, year = null) {
+    const { UserStats, User, Subscription } = this.models;
+
+    const period = this.config.getCurrentPeriod();
+    const targetMonth = month || period.month;
+    const targetYear = year || period.year;
+
+    const userStats = await UserStats.findOne({
+      where: { userWalletAddress: walletAddress },
+      raw: true
+    });
+
+    if (!userStats) {
+      return null;
+    }
+
+    // Get user profile info
+    const user = await User.findOne({
+      where: { walletAddress },
+      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'displayName'],
+      raw: true
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    // Get subscription info
+    const subscriptionsMap = await getActiveSubscriptionsForWallets([walletAddress]);
+    const planType = subscriptionsMap[walletAddress] || 'free';
+
+    const categories = ['trader', 'creator', 'influencer'];
+    const badges = {};
+
+    await Promise.all(categories.map(async (category) => {
+      const scoreField = `boosted${category.charAt(0).toUpperCase() + category.slice(1)}Score`;
+      const baseScoreField = `${category}Score`;
+      const userScore = parseFloat(userStats[scoreField]) || 0;
+      const userBaseScore = parseFloat(userStats[baseScoreField]) || 0;
+
+      // Count users with higher score (rank) and total participants
+      const [higherCount, totalParticipants] = await Promise.all([
+        UserStats.count({
+          where: { [scoreField]: { [Op.gt]: userScore } }
+        }),
+        UserStats.count({
+          where: { [scoreField]: { [Op.gt]: this.config.normalization.minLeaderboardScore } }
+        })
+      ]);
+
+      const rank = userScore > this.config.normalization.minLeaderboardScore ? higherCount + 1 : null;
+      const percentile = (rank && totalParticipants > 0)
+        ? parseFloat((((totalParticipants - rank) / totalParticipants) * 100).toFixed(1))
+        : 0;
+
+      // Determine badge tier based on percentile
+      let badge = 'none';
+      if (rank && totalParticipants > 0) {
+        const topPercent = (rank / totalParticipants) * 100;
+        if (topPercent <= 1) badge = 'diamond';
+        else if (topPercent <= 5) badge = 'platinum';
+        else if (topPercent <= 10) badge = 'gold';
+        else if (topPercent <= 25) badge = 'silver';
+        else if (topPercent <= 50) badge = 'bronze';
+        else badge = 'member';
+      }
+
+      badges[category] = {
+        rank,
+        score: userScore,
+        baseScore: userBaseScore,
+        totalParticipants,
+        percentile,
+        badge,
+        metrics: this.getCategoryMetrics(userStats, category)
+      };
+    }));
+
+    return {
+      user: { ...user, subscriptionPlan: planType },
+      period: { month: targetMonth, year: targetYear },
+      badges
+    };
+  }
+
+  /**
    * Get month name from month number
    */
   getMonthName(month) {

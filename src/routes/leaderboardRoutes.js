@@ -53,6 +53,13 @@ router.get('/user/:walletAddress', leaderboardController.getUserStats);
 router.get('/user/:walletAddress/ranks', leaderboardController.getUserRanks);
 
 /**
+ * GET /leaderboard/user/:walletAddress/badges
+ * Get user's badge info for profile display (rank, score, badge tier per category)
+ * Query params: month, year
+ */
+router.get('/user/:walletAddress/badges', leaderboardController.getUserBadges);
+
+/**
  * GET /leaderboard/compare/:walletAddress1/:walletAddress2
  * Compare two users' stats
  * Query params: month, year
