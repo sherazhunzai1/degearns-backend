@@ -688,11 +688,7 @@ class ScoringEngine {
         else badge = 'member';
       }
 
-      badges[category] = {
-        rank,
-        totalParticipants,
-        badge
-      };
+      badges[category] = { rank };
     }));
 
     return badges;
