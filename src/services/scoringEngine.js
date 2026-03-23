@@ -642,6 +642,59 @@ class ScoringEngine {
   }
 
   /**
+   * Get user badges with ranking info for profile display
+   * Uses current date/time for real-time ranking
+   */
+  async getUserBadges(walletAddress) {
+    const { UserStats } = this.models;
+
+    const userStats = await UserStats.findOne({
+      where: { userWalletAddress: walletAddress },
+      raw: true
+    });
+
+    if (!userStats) {
+      return null;
+    }
+
+    const categories = ['trader', 'creator', 'influencer'];
+    const badges = {};
+
+    await Promise.all(categories.map(async (category) => {
+      const scoreField = `boosted${category.charAt(0).toUpperCase() + category.slice(1)}Score`;
+      const userScore = parseFloat(userStats[scoreField]) || 0;
+
+      // Count users with higher score (rank) and total participants
+      const [higherCount, totalParticipants] = await Promise.all([
+        UserStats.count({
+          where: { [scoreField]: { [Op.gt]: userScore } }
+        }),
+        UserStats.count({
+          where: { [scoreField]: { [Op.gt]: this.config.normalization.minLeaderboardScore } }
+        })
+      ]);
+
+      const rank = userScore > this.config.normalization.minLeaderboardScore ? higherCount + 1 : null;
+
+      // Determine badge tier based on position
+      let badge = 'none';
+      if (rank && totalParticipants > 0) {
+        const topPercent = (rank / totalParticipants) * 100;
+        if (topPercent <= 1) badge = 'diamond';
+        else if (topPercent <= 5) badge = 'platinum';
+        else if (topPercent <= 10) badge = 'gold';
+        else if (topPercent <= 25) badge = 'silver';
+        else if (topPercent <= 50) badge = 'bronze';
+        else badge = 'member';
+      }
+
+      badges[category] = { rank };
+    }));
+
+    return badges;
+  }
+
+  /**
    * Get month name from month number
    */
   getMonthName(month) {

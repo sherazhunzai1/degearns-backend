@@ -383,6 +383,29 @@ const compareUsers = async (req, res) => {
 };
 
 /**
+ * Get user badges for profile display
+ * GET /leaderboard/user/:walletAddress/badges
+ * Returns real-time ranking based on current leaderboard state
+ */
+const getUserBadges = async (req, res) => {
+  const { walletAddress } = req.params;
+
+  const scoringEngine = getScoringEngine();
+  const badges = await scoringEngine.getUserBadges(walletAddress);
+
+  if (!badges) {
+    throw new ApiError(404, 'User not found or has no stats');
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    walletAddress,
+    traders: badges.trader,
+    creators: badges.creator,
+    influencers: badges.influencer
+  }, 'User badges retrieved successfully'));
+};
+
+/**
  * Get available periods (months) for historical data
  * GET /leaderboard/periods
  */
@@ -422,6 +445,7 @@ module.exports = {
   getLeaderboard,
   getUserStats,
   getUserRanks,
+  getUserBadges,
   recalculateMyScores,
   getSubscriptionPlans,
   getMySubscription,
