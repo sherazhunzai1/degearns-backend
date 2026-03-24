@@ -31,7 +31,8 @@ module.exports = (sequelize, DataTypes) => {
         'subscription_upgraded',
         'subscription_cancelled',
         'subscription_expiring',
-        'subscription_expired'
+        'subscription_expired',
+        'referral_signup'
       ),
       allowNull: false,
       comment: 'Type of notification'
@@ -52,7 +53,7 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'ID of the related entity (postId, commentId, followId, collectionId)'
     },
     relatedEntityType: {
-      type: DataTypes.ENUM('post', 'comment', 'follow', 'collection', 'nft', 'drop', 'subscription'),
+      type: DataTypes.ENUM('post', 'comment', 'follow', 'collection', 'nft', 'drop', 'subscription', 'referral'),
       allowNull: true,
       comment: 'Type of the related entity'
     },
