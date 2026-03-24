@@ -675,6 +675,38 @@ class NotificationService {
     }
   }
 
+  // ==================== REFERRAL NOTIFICATIONS ====================
+
+  /**
+   * Create a notification for referrer when a new user signs up with their referral code
+   * @param {Object} params - Parameters for the notification
+   * @param {string} params.referrerWalletAddress - Wallet address of the referrer (receives notification)
+   * @param {string} params.newUserWalletAddress - Wallet address of the new user who signed up
+   * @param {string} params.newUserUsername - Username of the new user
+   */
+  async createReferralSignupNotification({ referrerWalletAddress, newUserWalletAddress, newUserUsername }) {
+    try {
+      const notification = await this.Notification.create({
+        recipientWalletAddress: referrerWalletAddress,
+        senderWalletAddress: newUserWalletAddress,
+        type: 'referral_signup',
+        title: 'New Referral Signup',
+        message: `${newUserUsername || newUserWalletAddress.slice(0, 8) + '...'} signed up using your referral code`,
+        relatedEntityType: 'referral',
+        metadata: {
+          newUserWalletAddress,
+          newUserUsername
+        }
+      });
+
+      logger.info(`Referral signup notification created for ${referrerWalletAddress} from ${newUserWalletAddress}`);
+      return notification;
+    } catch (error) {
+      logger.error('Error creating referral signup notification:', error);
+      return null;
+    }
+  }
+
   // ==================== NOTIFICATION RETRIEVAL & MANAGEMENT ====================
 
   /**

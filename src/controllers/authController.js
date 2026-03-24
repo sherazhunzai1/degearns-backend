@@ -5,6 +5,7 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const { getActiveSubscriptionPlan, checkCoverImageUpdateEligibility } = require('../utils/userHelpers');
+const notificationService = require('../services/notificationService');
 
 /**
  * Generate a unique referral code (6 alphanumeric characters, uppercase)
@@ -98,6 +99,15 @@ const getOrCreateUser = async (req, res, next) => {
 
       isNewUser = true;
       logger.info(`New user created with wallet: ${walletAddress}, referralCode: ${newReferralCode}`);
+
+      // Notify the referrer that a new user signed up with their referral code
+      if (referredBy) {
+        notificationService.createReferralSignupNotification({
+          referrerWalletAddress: referredBy,
+          newUserWalletAddress: walletAddress,
+          newUserUsername: walletAddress
+        });
+      }
     }
 
     logger.info(`User authenticated: ${walletAddress}`);
