@@ -89,16 +89,29 @@ const getOrCreateUser = async (req, res, next) => {
         }
       }
 
-      user = await User.create({
-        walletAddress,
-        username: walletAddress,  // Set wallet address as default username
-        role: 'user',
-        referralCode: newReferralCode,
-        referredBy
-      });
+      try {
+        user = await User.create({
+          walletAddress,
+          username: walletAddress,  // Set wallet address as default username
+          role: 'user',
+          referralCode: newReferralCode,
+          referredBy
+        });
 
-      isNewUser = true;
-      logger.info(`New user created with wallet: ${walletAddress}, referralCode: ${newReferralCode}`);
+        isNewUser = true;
+        logger.info(`New user created with wallet: ${walletAddress}, referralCode: ${newReferralCode}`);
+      } catch (createError) {
+        // Handle race condition: if another request created the user between findOne and create
+        if (createError.name === 'SequelizeUniqueConstraintError') {
+          logger.info(`Race condition detected for wallet: ${walletAddress}, fetching existing user`);
+          user = await User.findOne({ where: { walletAddress } });
+          if (!user) {
+            throw createError;
+          }
+        } else {
+          throw createError;
+        }
+      }
 
       // Notify the referrer that a new user signed up with their referral code
       if (referredBy) {
