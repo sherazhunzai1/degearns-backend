@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const {
   getOrCreateUser,
+  getSolanaAuthNonce,
+  solanaAuth,
   getMe,
   updateProfile,
   updateProfilePicture,
@@ -13,10 +15,27 @@ const {
 
 /**
  * @route   POST /api/v1/auth/wallet
- * @desc    Get or create user by wallet address (XAMAN login)
+ * @desc    Get or create user by wallet address (XAMAN / XRPL login).
+ *          Accepts optional `network` field ('xrpl' default, or 'solana').
  * @access  Public
  */
 router.post('/wallet', getOrCreateUser);
+
+/**
+ * @route   GET /api/v1/auth/solana/nonce
+ * @desc    Get a sign-in challenge nonce for a Solana wallet
+ * @access  Public
+ * @query   walletAddress
+ */
+router.get('/solana/nonce', getSolanaAuthNonce);
+
+/**
+ * @route   POST /api/v1/auth/solana
+ * @desc    Authenticate a Solana wallet by verifying a signed nonce.
+ *          Returns the user and a JWT.
+ * @access  Public
+ */
+router.post('/solana', solanaAuth);
 
 /**
  * @route   GET /api/v1/auth/me

@@ -88,9 +88,9 @@ const optionalAuth = async (req, res, next) => {
 /**
  * Generate JWT token
  */
-const generateToken = (userId, walletAddress) => {
+const generateToken = (userId, walletAddress, network = 'xrpl') => {
   return jwt.sign(
-    { userId, walletAddress },
+    { userId, walletAddress, network },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );

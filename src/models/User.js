@@ -10,7 +10,13 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(100),
       unique: true,
       allowNull: false,
-      comment: 'XRPL wallet address - primary identifier'
+      comment: 'Blockchain wallet address - primary identifier'
+    },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      defaultValue: 'xrpl',
+      allowNull: false,
+      comment: 'Blockchain network the wallet belongs to'
     },
     username: {
       type: DataTypes.STRING(50),
@@ -101,6 +107,7 @@ module.exports = (sequelize, DataTypes) => {
       { unique: true, fields: ['walletAddress'] },
       { fields: ['username'] },
       { fields: ['email'] },
+      { fields: ['network'] },
       { unique: true, fields: ['referralCode'] },
       { fields: ['referredBy'] }
     ]
