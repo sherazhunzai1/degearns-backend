@@ -1,6 +1,8 @@
 const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
+const solanaService = require('../services/solanaService');
+const chainServiceFactory = require('../services/chainServiceFactory');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -48,11 +50,74 @@ const convertToIpfsHash = (url) => {
  */
 const listCollection = async (req, res, next) => {
   try {
-    const { name, description, image, bannerImage, category, royaltyPercentage, socialLinks, taxon, creatorWalletAddress } = req.body;
+    const { name, description, image, bannerImage, category, royaltyPercentage, socialLinks, taxon, creatorWalletAddress, network, mintAddress } = req.body;
 
     if (!creatorWalletAddress) {
       throw new ApiError(400, 'Creator wallet address is required');
     }
+
+    const resolvedNetwork = chainServiceFactory.normalizeNetwork(network);
+    if (!chainServiceFactory.isSupportedNetwork(resolvedNetwork)) {
+      throw new ApiError(400, `Unsupported network: ${network}`);
+    }
+
+    // --- Solana collection ---
+    if (resolvedNetwork === 'solana') {
+      if (!mintAddress) {
+        throw new ApiError(400, 'mintAddress is required for Solana collections');
+      }
+      if (!solanaService.isValidAddress(mintAddress)) {
+        throw new ApiError(400, 'Invalid Solana mint address');
+      }
+
+      // Check if collection already registered
+      const existingCollection = await Collection.findOne({
+        where: { mintAddress, network: 'solana' },
+        include: [{
+          association: 'creator',
+          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+        }]
+      });
+
+      if (existingCollection) {
+        return res.status(200).json(
+          new ApiResponse(200, existingCollection, 'Collection already listed')
+        );
+      }
+
+      // Generate unique slug
+      let baseSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      let slug = baseSlug;
+      let slugSuffix = 0;
+      while (true) {
+        const existingSlug = await Collection.findOne({ where: { slug } });
+        if (!existingSlug) break;
+        slugSuffix++;
+        slug = `${baseSlug}-${creatorWalletAddress.substring(0, 6).toLowerCase()}${slugSuffix > 1 ? '-' + slugSuffix : ''}`;
+      }
+
+      const collection = await Collection.create({
+        name,
+        slug,
+        description,
+        image,
+        bannerImage,
+        creatorWalletAddress,
+        network: 'solana',
+        mintAddress,
+        taxon: null,
+        category: category || 'other',
+        royaltyPercentage: royaltyPercentage || 0,
+        socialLinks
+      });
+
+      logger.info(`Solana collection listed: ${collection.name} (mint: ${mintAddress}) by ${creatorWalletAddress}`);
+      return res.status(201).json(
+        new ApiResponse(201, collection, 'Collection listed successfully')
+      );
+    }
+
+    // --- XRPL collection (existing logic) ---
 
     // Check if taxon is provided (0 is a valid taxon value for the first collection)
     if (taxon === undefined || taxon === null) {
@@ -111,6 +176,7 @@ const listCollection = async (req, res, next) => {
       image,
       bannerImage,
       creatorWalletAddress,
+      network: 'xrpl',
       taxon: taxonNum,
       category: category || 'other',
       royaltyPercentage: royaltyPercentage || 0,
@@ -146,11 +212,13 @@ const getCollections = async (req, res, next) => {
       creatorWalletAddress,
       sortBy = 'createdAt',
       order = 'DESC',
-      search
+      search,
+      network
     } = req.query;
 
     const where = {};
 
+    if (network) where.network = network;
     if (category) where.category = category;
     if (creatorWalletAddress) where.creatorWalletAddress = creatorWalletAddress;
     if (search) {

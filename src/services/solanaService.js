@@ -8,6 +8,7 @@
 
 const nacl = require('tweetnacl');
 const bs58 = require('bs58');
+const axios = require('axios');
 const { PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const solanaConfig = require('../config/solana');
 const logger = require('../utils/logger');
@@ -71,6 +72,94 @@ async function getNftMints(walletAddress) {
     .map((info) => info.mint);
 }
 
+// ==================== Helius DAS API (Digital Asset Standard) ====================
+// These methods require a DAS-capable RPC (e.g., Helius). They return rich NFT
+// metadata including name, image, attributes, collection info, and ownership data.
+
+/**
+ * Helper: send a DAS JSON-RPC request to the Helius RPC endpoint.
+ */
+async function dasRequest(method, params) {
+  const { data } = await axios.post(solanaConfig.rpcUrl, {
+    jsonrpc: '2.0',
+    id: `das-${method}`,
+    method,
+    params
+  });
+  if (data.error) {
+    throw new Error(`DAS ${method} error: ${data.error.message}`);
+  }
+  return data.result;
+}
+
+/**
+ * Get full metadata for a single NFT by its mint address.
+ * Returns name, image, attributes, collection, ownership, royalty info, etc.
+ */
+async function getAsset(mintAddress) {
+  return dasRequest('getAsset', { id: mintAddress });
+}
+
+/**
+ * Get all NFTs owned by a wallet with full metadata.
+ * @param {number} page - 1-indexed page number
+ * @param {number} limit - Max items per page (max 1000)
+ */
+async function getAssetsByOwner(walletAddress, page = 1, limit = 100) {
+  return dasRequest('getAssetsByOwner', {
+    ownerAddress: walletAddress,
+    page,
+    limit,
+    displayOptions: { showFungible: false }
+  });
+}
+
+/**
+ * Get all NFTs in a collection by the collection's mint address.
+ */
+async function getAssetsByCollection(collectionMintAddress, page = 1, limit = 100) {
+  return dasRequest('getAssetsByGroup', {
+    groupKey: 'collection',
+    groupValue: collectionMintAddress,
+    page,
+    limit
+  });
+}
+
+/**
+ * Search assets with flexible filters.
+ * @param {Object} filters - DAS searchAssets params (ownerAddress, grouping, burnt, etc.)
+ */
+async function searchAssets(filters) {
+  return dasRequest('searchAssets', filters);
+}
+
+// ==================== Transaction verification ====================
+
+/**
+ * Verify that a Solana transaction succeeded on-chain.
+ * @param {string} signature - Transaction signature (base58)
+ * @returns {Promise<{verified: boolean, transaction?: Object, error?: string}>}
+ */
+async function verifyTransaction(signature) {
+  try {
+    const connection = solanaConfig.getConnection();
+    const tx = await connection.getTransaction(signature, {
+      maxSupportedTransactionVersion: 0
+    });
+    if (!tx) {
+      return { verified: false, error: 'Transaction not found' };
+    }
+    if (tx.meta && tx.meta.err) {
+      return { verified: false, error: JSON.stringify(tx.meta.err) };
+    }
+    return { verified: true, transaction: tx };
+  } catch (error) {
+    logger.error('Solana transaction verification failed:', error.message);
+    return { verified: false, error: error.message };
+  }
+}
+
 function getNetworkInfo() {
   return solanaConfig.getNetworkInfo();
 }
@@ -81,5 +170,10 @@ module.exports = {
   isValidAddress,
   getBalance,
   getNftMints,
+  getAsset,
+  getAssetsByOwner,
+  getAssetsByCollection,
+  searchAssets,
+  verifyTransaction,
   getNetworkInfo
 };

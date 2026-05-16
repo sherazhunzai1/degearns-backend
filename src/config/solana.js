@@ -1,4 +1,5 @@
-const { Connection, clusterApiUrl, PublicKey } = require('@solana/web3.js');
+const { Connection, clusterApiUrl, PublicKey, Keypair } = require('@solana/web3.js');
+const bs58 = require('bs58');
 const logger = require('../utils/logger');
 
 // Network configurations
@@ -21,7 +22,38 @@ class SolanaConfig {
     // Connection is created lazily on first use
     this.connection = null;
 
+    // Admin keypair (loaded lazily on first use)
+    this.adminKeypair = null;
+
     logger.info(`Solana Config: Network=${this.network}, RPC=${this.rpcUrl}`);
+  }
+
+  /**
+   * Initialize admin keypair from env (base58-encoded secret key).
+   * Returns null if not configured.
+   */
+  getAdminKeypair() {
+    if (this.adminKeypair) return this.adminKeypair;
+
+    const secretKey = process.env.SOLANA_ADMIN_SECRET_KEY;
+    if (!secretKey) {
+      logger.warn('No Solana admin keypair configured. Set SOLANA_ADMIN_SECRET_KEY in environment.');
+      return null;
+    }
+
+    try {
+      this.adminKeypair = Keypair.fromSecretKey(bs58.decode(secretKey));
+      logger.info(`Solana admin keypair loaded: ${this.adminKeypair.publicKey.toBase58()}`);
+      return this.adminKeypair;
+    } catch (error) {
+      logger.error('Failed to load Solana admin keypair:', error.message);
+      return null;
+    }
+  }
+
+  getAdminAddress() {
+    const kp = this.getAdminKeypair();
+    return kp ? kp.publicKey.toBase58() : null;
   }
 
   /**

@@ -16,10 +16,16 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       comment: 'Wallet address of the minter'
     },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      defaultValue: 'xrpl',
+      allowNull: false,
+      comment: 'Blockchain network for this mint'
+    },
     nftTokenId: {
       type: DataTypes.STRING(100),
       allowNull: false,
-      comment: 'XRPL NFToken ID of the minted NFT'
+      comment: 'NFT identifier (XRPL NFToken ID or Solana mint address)'
     },
     nftUri: {
       type: DataTypes.STRING(500),

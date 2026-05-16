@@ -1,5 +1,6 @@
 const xrplService = require('../services/xrplService');
 const bithompService = require('../services/bithompService');
+const solanaService = require('../services/solanaService');
 const { User, Collection, NftBoost } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
@@ -18,7 +19,44 @@ const {
 exports.getNFTDetail = async (req, res) => {
   try {
     const { nftTokenId } = req.params;
-    const { wallet } = req.query; // Optional wallet parameter
+    const { wallet, network } = req.query;
+
+    // --- Solana NFT: use Helius DAS API ---
+    if (network === 'solana') {
+      if (!solanaService.isValidAddress(nftTokenId)) {
+        return res.status(400).json({ success: false, message: 'Invalid Solana mint address' });
+      }
+
+      const asset = await solanaService.getAsset(nftTokenId);
+      if (!asset) {
+        return res.status(404).json({ success: false, message: 'NFT not found' });
+      }
+
+      // Look up owner and collection in DB
+      const ownerAddress = asset.ownership?.owner;
+      const collectionAddress = asset.grouping?.find(g => g.group_key === 'collection')?.group_value;
+      const [ownerUser, collection] = await Promise.all([
+        ownerAddress ? User.findOne({ where: { walletAddress: ownerAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
+        collectionAddress ? Collection.findOne({ where: { mintAddress: collectionAddress, network: 'solana' }, include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }] }) : null
+      ]);
+
+      return res.status(200).json(new ApiResponse(200, {
+        nftTokenId,
+        network: 'solana',
+        title: asset.content?.metadata?.name || null,
+        description: asset.content?.metadata?.description || null,
+        image: asset.content?.links?.image || asset.content?.files?.[0]?.uri || null,
+        attributes: asset.content?.metadata?.attributes || [],
+        owner: ownerUser ? ownerUser.toJSON() : (ownerAddress ? { walletAddress: ownerAddress } : null),
+        collection: collection ? collection.toJSON() : (collectionAddress ? { mintAddress: collectionAddress } : null),
+        royalty: asset.royalty || null,
+        compressed: asset.compression?.compressed || false,
+        mintAddress: nftTokenId,
+        raw: asset
+      }, 'Solana NFT detail retrieved successfully'));
+    }
+
+    // --- XRPL NFT (existing logic) ---
 
     // Step 1: Get NFT sell offers to find current owner and sale info
     const sellOffers = await xrplService.getNFTSellOffers(nftTokenId);
