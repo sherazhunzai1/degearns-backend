@@ -37,11 +37,21 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       comment: 'Wallet address of collection creator'
     },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      defaultValue: 'xrpl',
+      allowNull: false,
+      comment: 'Blockchain network for this collection'
+    },
+    mintAddress: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Solana collection mint address (null for XRPL collections)'
+    },
     taxon: {
       type: DataTypes.INTEGER,
-      allowNull: false,
-      unique: true,
-      comment: 'XRPL NFToken Taxon - unique identifier to query NFTs from XRPL'
+      allowNull: true,
+      comment: 'XRPL NFToken Taxon (null for Solana collections)'
     },
     category: {
       type: DataTypes.ENUM('art', 'music', 'photography', 'sports', 'gaming', 'collectibles', 'other'),
@@ -104,6 +114,8 @@ module.exports = (sequelize, DataTypes) => {
       { unique: true, fields: ['slug'] },
       { unique: true, fields: ['taxon', 'creatorWalletAddress'], name: 'unique_taxon_creator' },
       { fields: ['creatorWalletAddress'] },
+      { fields: ['network'] },
+      { fields: ['mintAddress'] },
       { fields: ['category'] },
       { fields: ['createdAt'] }
     ]

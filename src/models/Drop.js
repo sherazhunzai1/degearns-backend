@@ -16,6 +16,17 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       comment: 'Wallet address of drop creator'
     },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      defaultValue: 'xrpl',
+      allowNull: false,
+      comment: 'Blockchain network for this drop'
+    },
+    collectionMintAddress: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Solana collection mint address for this drop'
+    },
     name: {
       type: DataTypes.STRING(200),
       allowNull: false,
@@ -78,7 +89,13 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(50),
       allowNull: false,
       defaultValue: '0',
-      comment: 'Price per NFT in drops (XRP drops)'
+      comment: 'Price per NFT in smallest unit (XRP drops or SOL lamports)'
+    },
+    priceCurrency: {
+      type: DataTypes.ENUM('XRP', 'SOL'),
+      defaultValue: 'XRP',
+      allowNull: false,
+      comment: 'Currency for pricing (XRP drops or SOL lamports)'
     },
     limitPerWallet: {
       type: DataTypes.INTEGER,
@@ -229,6 +246,7 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       // Note: collectionId and creatorWalletAddress indexes are auto-created by foreign keys
       { fields: ['status'] },
+      { fields: ['network'] },
       { fields: ['startDate'] },
       { fields: ['endDate'] },
       { fields: ['paymentStatus'] },

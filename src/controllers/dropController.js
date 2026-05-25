@@ -5,6 +5,8 @@ const logger = require('../utils/logger');
 const { Op } = require('sequelize');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
+const solanaService = require('../services/solanaService');
+const chainServiceFactory = require('../services/chainServiceFactory');
 const { initBoostEngine } = require('../services/boostEngine');
 const {
   getActiveSubscriptionsForWallets,
@@ -26,6 +28,8 @@ const createDrop = async (req, res, next) => {
       image,
       bannerImage,
       taxonId,
+      network,
+      collectionMintAddress,
       // Social links
       websiteUrl,
       twitterUrl,
@@ -41,6 +45,67 @@ const createDrop = async (req, res, next) => {
     if (!name) {
       throw new ApiError(400, 'Drop name is required');
     }
+
+    const resolvedNetwork = chainServiceFactory.normalizeNetwork(network);
+    if (!chainServiceFactory.isSupportedNetwork(resolvedNetwork)) {
+      throw new ApiError(400, `Unsupported network: ${network}`);
+    }
+
+    // --- Solana drop ---
+    if (resolvedNetwork === 'solana') {
+      if (!collectionMintAddress) {
+        throw new ApiError(400, 'Collection mint address is required for Solana drops');
+      }
+      if (!solanaService.isValidAddress(collectionMintAddress)) {
+        throw new ApiError(400, 'Invalid Solana collection mint address');
+      }
+
+      // Check for existing active drop with same collection
+      const existingDrop = await Drop.findOne({
+        where: {
+          creatorWalletAddress,
+          collectionMintAddress,
+          network: 'solana',
+          status: { [Op.in]: ['draft', 'scheduled', 'active'] }
+        }
+      });
+      if (existingDrop) {
+        throw new ApiError(400, 'You already have an active drop with this collection');
+      }
+
+      const drop = await Drop.create({
+        creatorWalletAddress,
+        name,
+        description,
+        image,
+        bannerImage,
+        network: 'solana',
+        collectionMintAddress,
+        priceCurrency: 'SOL',
+        websiteUrl,
+        twitterUrl,
+        discordUrl,
+        telegramUrl,
+        totalSupply: 0,
+        status: 'draft',
+        metadata
+      });
+
+      logger.info(`Solana drop created: ${drop.name} (collection: ${collectionMintAddress}) by ${creatorWalletAddress}`);
+
+      const createdDrop = await Drop.findByPk(drop.id, {
+        include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }]
+      });
+
+      return res.status(201).json(
+        new ApiResponse(201, {
+          ...createdDrop.toJSON(),
+          nextStep: 'Upload NFTs using POST /drops/:id/nfts'
+        }, 'Solana drop created successfully. Next step: Upload bulk NFTs')
+      );
+    }
+
+    // --- XRPL drop (existing logic) ---
 
     if (!taxonId) {
       throw new ApiError(400, 'Taxon ID is required for NFT minting');
@@ -70,6 +135,7 @@ const createDrop = async (req, res, next) => {
       image,
       bannerImage,
       taxonId,
+      network: 'xrpl',
       // Social links
       websiteUrl,
       twitterUrl,
@@ -285,11 +351,13 @@ const getDrops = async (req, res, next) => {
       collectionId,
       sortBy = 'createdAt',
       order = 'DESC',
-      search
+      search,
+      network
     } = req.query;
 
     const where = {};
 
+    if (network) where.network = network;
     if (status) {
       if (status.includes(',')) {
         where.status = { [Op.in]: status.split(',') };
@@ -1259,11 +1327,21 @@ const recordMint = async (req, res, next) => {
       throw new ApiError(400, 'Drop is sold out');
     }
 
+    // For Solana drops, verify the mint transaction on-chain
+    if (drop.network === 'solana') {
+      const verification = await solanaService.verifyTransaction(transactionHash);
+      if (!verification.verified) {
+        throw new ApiError(400, `Solana transaction verification failed: ${verification.error}`);
+      }
+      logger.info(`Solana mint transaction verified: ${transactionHash}`);
+    }
+
     // Create mint record
     const mintIndex = drop.mintedCount + 1;
     const mint = await DropMint.create({
       dropId: id,
       minterWalletAddress,
+      network: drop.network || 'xrpl',
       nftTokenId,
       nftUri,
       transactionHash,

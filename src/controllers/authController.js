@@ -6,6 +6,14 @@ const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const { getActiveSubscriptionPlan, checkCoverImageUpdateEligibility } = require('../utils/userHelpers');
 const notificationService = require('../services/notificationService');
+const solanaService = require('../services/solanaService');
+const chainServiceFactory = require('../services/chainServiceFactory');
+const { generateToken } = require('../middleware/auth');
+
+// In-memory store for Solana auth challenge nonces (walletAddress -> { message, expiresAt }).
+// PM2 runs a single fork-mode instance, so an in-memory store is sufficient here.
+const solanaAuthNonces = new Map();
+const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Generate a unique referral code (6 alphanumeric characters, uppercase)
@@ -29,116 +37,222 @@ const generateReferralCode = async () => {
 };
 
 /**
- * Get or create user by wallet address (XAMAN wallet connection)
- * This endpoint is called after user connects their XAMAN wallet
+ * Find an existing user or create a new one for the given wallet.
+ * Shared by the XRPL (XAMAN) and Solana authentication flows.
+ *
+ * @param {Object} params
+ * @param {string} params.walletAddress - Wallet address (primary identifier)
+ * @param {string} params.network - 'xrpl' or 'solana'
+ * @param {string|null} params.refCode - Optional referral code used at signup
+ * @returns {Promise<{user: Object, isNewUser: boolean}>}
+ */
+const findOrCreateUserRecord = async ({ walletAddress, network = 'xrpl', refCode = null }) => {
+  let user = await User.findOne({ where: { walletAddress } });
+
+  // If user exists, check if they are banned
+  if (user && user.isBanned) {
+    logger.warn(`Banned user attempted to authenticate: ${walletAddress}`);
+    throw new ApiError(403, 'Your account has been banned', {
+      isBanned: true,
+      banReason: user.banReason || 'No reason provided',
+      bannedAt: user.bannedAt
+    });
+  }
+
+  if (user) {
+    return { user, isNewUser: false };
+  }
+
+  // Look up the referrer by referral code (which defaults to their wallet address)
+  let referredBy = null;
+  if (refCode) {
+    const referrer = await User.findOne({
+      where: {
+        [Op.or]: [
+          { referralCode: refCode },
+          { walletAddress: refCode }
+        ]
+      }
+    });
+    if (referrer) {
+      // Anti-abuse: prevent self-referral
+      if (referrer.walletAddress === walletAddress) {
+        logger.warn(`Self-referral attempt blocked: ${walletAddress}`);
+      } else if (referrer.isBanned) {
+        // Anti-abuse: don't accept referrals from banned users
+        logger.warn(`Referral from banned user blocked: ${referrer.walletAddress}`);
+      } else {
+        referredBy = referrer.walletAddress;
+        logger.info(`User ${walletAddress} referred by ${referredBy} (code: ${refCode})`);
+      }
+    } else {
+      logger.warn(`Invalid referral code used during signup: ${refCode}`);
+    }
+  }
+
+  let isNewUser = false;
+  try {
+    user = await User.create({
+      walletAddress,
+      username: walletAddress,  // Set wallet address as default username
+      role: 'user',
+      network,
+      referralCode: walletAddress,  // Use wallet address as referral code
+      referredBy
+    });
+
+    isNewUser = true;
+    logger.info(`New ${network} user created with wallet: ${walletAddress}`);
+  } catch (createError) {
+    // Handle race condition: if another request created the user between findOne and create
+    if (createError.name === 'SequelizeUniqueConstraintError') {
+      logger.info(`Race condition detected for wallet: ${walletAddress}, fetching existing user`);
+      user = await User.findOne({ where: { walletAddress } });
+      if (!user) {
+        throw createError;
+      }
+    } else {
+      throw createError;
+    }
+  }
+
+  // Notify the referrer that a new user signed up with their referral code
+  if (isNewUser && referredBy) {
+    notificationService.createReferralSignupNotification({
+      referrerWalletAddress: referredBy,
+      newUserWalletAddress: walletAddress,
+      newUserUsername: walletAddress
+    });
+  }
+
+  return { user, isNewUser };
+};
+
+/**
+ * Get or create user by wallet address (XAMAN / XRPL wallet connection)
+ * This endpoint is called after user connects their wallet.
+ * Accepts an optional `network` field ('xrpl' default, or 'solana').
  */
 const getOrCreateUser = async (req, res, next) => {
   try {
-    const { walletAddress, referralCode: refCode } = req.body;
+    const { walletAddress, referralCode: refCode, network } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
 
-    // Try to find existing user
-    let user = await User.findOne({
-      where: { walletAddress }
+    const resolvedNetwork = chainServiceFactory.normalizeNetwork(network);
+    if (!chainServiceFactory.isSupportedNetwork(resolvedNetwork)) {
+      throw new ApiError(400, `Unsupported network: ${network}`);
+    }
+
+    const { user, isNewUser } = await findOrCreateUserRecord({
+      walletAddress,
+      network: resolvedNetwork,
+      refCode
     });
-
-    let isNewUser = false;
-
-    // If user exists, check if they are banned
-    if (user && user.isBanned) {
-      logger.warn(`Banned user attempted to authenticate: ${walletAddress}`);
-      throw new ApiError(403, 'Your account has been banned', {
-        isBanned: true,
-        banReason: user.banReason || 'No reason provided',
-        bannedAt: user.bannedAt
-      });
-    }
-
-    // If user doesn't exist, create new user with wallet address as default username
-    if (!user) {
-      // Use wallet address as referral code
-      const newReferralCode = walletAddress;
-
-      // Look up the referrer by referral code (which is their wallet address)
-      let referredBy = null;
-      if (refCode) {
-        const referrer = await User.findOne({
-          where: {
-            [Op.or]: [
-              { referralCode: refCode },
-              { walletAddress: refCode }
-            ]
-          }
-        });
-        if (referrer) {
-          // Anti-abuse: prevent self-referral
-          if (referrer.walletAddress === walletAddress) {
-            logger.warn(`Self-referral attempt blocked: ${walletAddress}`);
-          } else if (referrer.isBanned) {
-            // Anti-abuse: don't accept referrals from banned users
-            logger.warn(`Referral from banned user blocked: ${referrer.walletAddress}`);
-          } else {
-            referredBy = referrer.walletAddress;
-            logger.info(`User ${walletAddress} referred by ${referredBy} (code: ${refCode})`);
-          }
-        } else {
-          logger.warn(`Invalid referral code used during signup: ${refCode}`);
-        }
-      }
-
-      try {
-        user = await User.create({
-          walletAddress,
-          username: walletAddress,  // Set wallet address as default username
-          role: 'user',
-          referralCode: newReferralCode,
-          referredBy
-        });
-
-        isNewUser = true;
-        logger.info(`New user created with wallet: ${walletAddress}, referralCode: ${newReferralCode}`);
-      } catch (createError) {
-        // Handle race condition: if another request created the user between findOne and create
-        if (createError.name === 'SequelizeUniqueConstraintError') {
-          logger.info(`Race condition detected for wallet: ${walletAddress}, fetching existing user`);
-          user = await User.findOne({ where: { walletAddress } });
-          if (!user) {
-            throw createError;
-          }
-        } else {
-          throw createError;
-        }
-      }
-
-      // Notify the referrer that a new user signed up with their referral code
-      if (referredBy) {
-        notificationService.createReferralSignupNotification({
-          referrerWalletAddress: referredBy,
-          newUserWalletAddress: walletAddress,
-          newUserUsername: walletAddress
-        });
-      }
-    }
 
     logger.info(`User authenticated: ${walletAddress}`);
 
     // Get user's subscription plan
     const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
 
-    // Build response with subscription plan
-    const userData = {
-      ...user.toJSON(),
-      subscriptionPlan
-    };
+    res.status(200).json(
+      new ApiResponse(200, {
+        user: { ...user.toJSON(), subscriptionPlan },
+        isNewUser
+      }, 'User authenticated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Generate a sign-in challenge nonce for a Solana wallet.
+ * The frontend signs the returned `message` with the wallet and submits
+ * the signature to POST /auth/solana.
+ */
+const getSolanaAuthNonce = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!solanaService.isValidAddress(walletAddress)) {
+      throw new ApiError(400, 'Invalid Solana wallet address');
+    }
+
+    const nonce = crypto.randomBytes(16).toString('hex');
+    const message = `Sign this message to authenticate with DeGearns.\n\nWallet: ${walletAddress}\nNonce: ${nonce}`;
+
+    solanaAuthNonces.set(walletAddress, {
+      message,
+      expiresAt: Date.now() + NONCE_TTL_MS
+    });
 
     res.status(200).json(
       new ApiResponse(200, {
-        user: userData,
-        isNewUser
-      }, 'User authenticated successfully')
+        nonce,
+        message,
+        expiresIn: NONCE_TTL_MS / 1000
+      }, 'Nonce generated successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Authenticate a Solana wallet by verifying a signed challenge nonce.
+ * On success, get-or-creates the user and returns a JWT.
+ */
+const solanaAuth = async (req, res, next) => {
+  try {
+    const { walletAddress, signature, referralCode: refCode } = req.body;
+
+    if (!walletAddress || !signature) {
+      throw new ApiError(400, 'Wallet address and signature are required');
+    }
+
+    if (!solanaService.isValidAddress(walletAddress)) {
+      throw new ApiError(400, 'Invalid Solana wallet address');
+    }
+
+    const stored = solanaAuthNonces.get(walletAddress);
+    if (!stored || stored.expiresAt < Date.now()) {
+      solanaAuthNonces.delete(walletAddress);
+      throw new ApiError(401, 'Nonce expired or not found. Request a new nonce.');
+    }
+
+    const isValid = solanaService.verifySignature(walletAddress, stored.message, signature);
+
+    // Nonce is single-use - consume it regardless of verification result
+    solanaAuthNonces.delete(walletAddress);
+
+    if (!isValid) {
+      throw new ApiError(401, 'Invalid signature');
+    }
+
+    const { user, isNewUser } = await findOrCreateUserRecord({
+      walletAddress,
+      network: 'solana',
+      refCode
+    });
+
+    logger.info(`Solana user authenticated: ${walletAddress}`);
+
+    const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+    const token = generateToken(user.id, user.walletAddress, user.network);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        user: { ...user.toJSON(), subscriptionPlan },
+        isNewUser,
+        token
+      }, 'Solana wallet authenticated successfully')
     );
   } catch (error) {
     next(error);
@@ -447,6 +561,8 @@ const getReferralInfo = async (req, res, next) => {
 
 module.exports = {
   getOrCreateUser,
+  getSolanaAuthNonce,
+  solanaAuth,
   getMe,
   updateProfile,
   updateProfilePicture,
