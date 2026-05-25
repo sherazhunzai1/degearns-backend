@@ -631,3 +631,69 @@ exports.getIncomingOffers = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Get all NFTs owned by a Solana wallet via Helius DAS API
+ * @route GET /api/v1/nfts/solana/wallet/:walletAddress
+ */
+exports.getSolanaNFTsByOwner = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    if (!solanaService.isValidAddress(walletAddress)) {
+      throw new ApiError(400, 'Invalid Solana wallet address');
+    }
+
+    const result = await solanaService.getAssetsByOwner(
+      walletAddress,
+      parseInt(page),
+      Math.min(parseInt(limit), 1000)
+    );
+
+    res.status(200).json(new ApiResponse(200, {
+      network: 'solana',
+      walletAddress,
+      total: result.total,
+      items: result.items,
+      page: parseInt(page),
+      limit: parseInt(limit)
+    }, 'Solana NFTs retrieved successfully'));
+  } catch (error) {
+    logger.error('Error getting Solana NFTs by owner:', error);
+    next(error);
+  }
+};
+
+/**
+ * Get all NFTs in a Solana collection via Helius DAS API
+ * @route GET /api/v1/nfts/solana/collection/:collectionMintAddress
+ */
+exports.getSolanaNFTsByCollection = async (req, res, next) => {
+  try {
+    const { collectionMintAddress } = req.params;
+    const { page = 1, limit = 50 } = req.query;
+
+    if (!solanaService.isValidAddress(collectionMintAddress)) {
+      throw new ApiError(400, 'Invalid Solana collection mint address');
+    }
+
+    const result = await solanaService.getAssetsByCollection(
+      collectionMintAddress,
+      parseInt(page),
+      Math.min(parseInt(limit), 1000)
+    );
+
+    res.status(200).json(new ApiResponse(200, {
+      network: 'solana',
+      collectionMintAddress,
+      total: result.total,
+      items: result.items,
+      page: parseInt(page),
+      limit: parseInt(limit)
+    }, 'Collection NFTs retrieved successfully'));
+  } catch (error) {
+    logger.error('Error getting Solana collection NFTs:', error);
+    next(error);
+  }
+};

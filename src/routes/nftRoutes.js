@@ -6,19 +6,33 @@ const {
   getNFTHistory,
   notifyNFTListing,
   notifyNFTPurchase,
-  getIncomingOffers
+  getIncomingOffers,
+  getSolanaNFTsByOwner,
+  getSolanaNFTsByCollection
 } = require('../controllers/nftController');
 
 /**
  * @route   GET /api/v1/nfts/incoming-offers/:walletAddress
  * @desc    Get incoming offers for a wallet (buy offers on owned NFTs)
  * @access  Public
- * @param   walletAddress - Required: Wallet address to get incoming offers for
- * @returns {Object} buyOffers - Array of buy offers with NFT details and accept transaction data
- * @returns {Object} sellOffersForYou - Array of sell offers with destination = walletAddress
- * @returns {Object} summary - Summary of total offers and value
  */
 router.get('/incoming-offers/:walletAddress', getIncomingOffers);
+
+/**
+ * @route   GET /api/v1/nfts/solana/wallet/:walletAddress
+ * @desc    Get all NFTs owned by a Solana wallet via Helius DAS API
+ * @access  Public
+ * @query   page, limit
+ */
+router.get('/solana/wallet/:walletAddress', getSolanaNFTsByOwner);
+
+/**
+ * @route   GET /api/v1/nfts/solana/collection/:collectionMintAddress
+ * @desc    Get all NFTs in a Solana collection via Helius DAS API
+ * @access  Public
+ * @query   page, limit
+ */
+router.get('/solana/collection/:collectionMintAddress', getSolanaNFTsByCollection);
 
 /**
  * @route   GET /api/v1/nfts/:nftTokenId
