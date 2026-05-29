@@ -15,6 +15,13 @@ const app = express();
 // Trust proxy
 app.set('trust proxy', 1);
 
+// Disable ETag caching so every response returns fresh data
+app.set('etag', false);
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // Security middleware
 app.use(helmet());
 
