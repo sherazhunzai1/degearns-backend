@@ -694,11 +694,37 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
       throw new ApiError(400, 'Invalid Solana collection mint address');
     }
 
-    const result = await solanaService.getAssetsByCollection(
-      collectionMintAddress,
-      parseInt(page),
-      Math.min(parseInt(limit), 1000)
-    );
+    // Fetch collection detail (DAS + DB) and NFTs in parallel
+    const [collectionAsset, dbCollection, result] = await Promise.all([
+      solanaService.getAsset(collectionMintAddress).catch(() => null),
+      Collection.findOne({
+        where: { mintAddress: collectionMintAddress, network: 'solana' },
+        include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }]
+      }),
+      solanaService.getAssetsByCollection(
+        collectionMintAddress,
+        parseInt(page),
+        Math.min(parseInt(limit), 1000)
+      )
+    ]);
+
+    const collection = {
+      mintAddress: collectionMintAddress,
+      name: dbCollection?.name || collectionAsset?.content?.metadata?.name || null,
+      description: dbCollection?.description || collectionAsset?.content?.metadata?.description || null,
+      image: dbCollection?.image || collectionAsset?.content?.links?.image || null,
+      bannerImage: dbCollection?.bannerImage || null,
+      category: dbCollection?.category || null,
+      royaltyPercentage: dbCollection?.royaltyPercentage || null,
+      floorPrice: dbCollection?.floorPrice || null,
+      totalVolume: dbCollection?.totalVolume || null,
+      totalSupply: result.total || dbCollection?.totalSupply || 0,
+      isVerified: dbCollection?.isVerified || false,
+      slug: dbCollection?.slug || null,
+      creator: dbCollection?.creator || (collectionAsset?.ownership?.owner ? { walletAddress: collectionAsset.ownership.owner } : null),
+      socialLinks: dbCollection?.socialLinks || null,
+      royalty: collectionAsset?.royalty || null
+    };
 
     const nfts = (result.items || []).map(item => {
       const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
@@ -718,12 +744,12 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
 
     res.status(200).json(new ApiResponse(200, {
       network: 'solana',
-      collectionMintAddress,
+      collection,
       total: result.total,
       items: nfts,
       page: parseInt(page),
       limit: parseInt(limit)
-    }, 'Collection NFTs retrieved successfully'));
+    }, 'Collection detail and NFTs retrieved successfully'));
   } catch (error) {
     logger.error('Error getting Solana collection NFTs:', error);
     next(error);
