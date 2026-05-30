@@ -9,8 +9,12 @@ const {
   updateProfilePicture,
   updateCoverPicture,
   canUpdateCoverImage,
-  getReferralInfo
+  getReferralInfo,
+  linkWallet,
+  unlinkWallet,
+  getLinkedWallets
 } = require('../controllers/authController');
+const { authenticate } = require('../middleware/auth');
 // const { authLimiter } = require('../middleware/rateLimiter'); // Rate limiting disabled
 
 /**
@@ -78,5 +82,28 @@ router.get('/can-update-cover-image', canUpdateCoverImage);
  * @access  Public
  */
 router.get('/referral-info', getReferralInfo);
+
+/**
+ * @route   GET /api/v1/auth/wallets
+ * @desc    Get all wallets linked to a user account
+ * @access  Public
+ * @query   walletAddress
+ */
+router.get('/wallets', getLinkedWallets);
+
+/**
+ * @route   POST /api/v1/auth/link-wallet
+ * @desc    Link a new wallet to the authenticated user's account.
+ *          Solana wallets require a signed nonce (get nonce first via GET /auth/solana/nonce).
+ * @access  Authenticated (JWT)
+ */
+router.post('/link-wallet', authenticate, linkWallet);
+
+/**
+ * @route   DELETE /api/v1/auth/unlink-wallet
+ * @desc    Unlink a wallet from the authenticated user's account (cannot unlink primary)
+ * @access  Authenticated (JWT)
+ */
+router.delete('/unlink-wallet', authenticate, unlinkWallet);
 
 module.exports = router;
