@@ -171,12 +171,19 @@ const getOrCreateUser = async (req, res, next) => {
 
     logger.info(`User authenticated: ${walletAddress}`);
 
-    // Get user's subscription plan
-    const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+    // Get user's subscription plan and linked wallets in parallel
+    const [subscriptionPlan, linkedWallets] = await Promise.all([
+      getActiveSubscriptionPlan(user.walletAddress),
+      UserWallet.findAll({
+        where: { userId: user.id },
+        order: [['isPrimary', 'DESC'], ['createdAt', 'ASC']]
+      })
+    ]);
 
     res.status(200).json(
       new ApiResponse(200, {
         user: { ...user.toJSON(), subscriptionPlan },
+        wallets: linkedWallets,
         isNewUser
       }, 'User authenticated successfully')
     );
@@ -261,12 +268,19 @@ const solanaAuth = async (req, res, next) => {
 
     logger.info(`Solana user authenticated: ${walletAddress}`);
 
-    const subscriptionPlan = await getActiveSubscriptionPlan(walletAddress);
+    const [subscriptionPlan, linkedWallets] = await Promise.all([
+      getActiveSubscriptionPlan(user.walletAddress),
+      UserWallet.findAll({
+        where: { userId: user.id },
+        order: [['isPrimary', 'DESC'], ['createdAt', 'ASC']]
+      })
+    ]);
     const token = generateToken(user.id, user.walletAddress, user.network);
 
     res.status(200).json(
       new ApiResponse(200, {
         user: { ...user.toJSON(), subscriptionPlan },
+        wallets: linkedWallets,
         isNewUser,
         token
       }, 'Solana wallet authenticated successfully')
