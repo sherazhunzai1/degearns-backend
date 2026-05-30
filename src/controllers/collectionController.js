@@ -990,16 +990,18 @@ const fetchSolanaCollections = async (walletAddress) => {
   const groupMap = {};
   items.forEach(item => {
     const cg = item.grouping?.find(g => g.group_key === 'collection');
-    const mint = cg?.group_value || 'uncategorized';
+    const mint = cg?.group_value || null;
     if (!groupMap[mint]) groupMap[mint] = [];
     groupMap[mint].push({
       mintAddress: item.id,
       name: item.content?.metadata?.name || null,
+      description: item.content?.metadata?.description || null,
       image: item.content?.links?.image || item.content?.files?.[0]?.uri || null
     });
   });
 
-  const collectionMints = Object.keys(groupMap).filter(m => m !== 'uncategorized');
+  // Fetch metadata for grouped collections
+  const collectionMints = Object.keys(groupMap).filter(m => m !== 'null' && m !== null);
   const collectionAssets = await Promise.all(
     collectionMints.map(mint => solanaService.getAsset(mint).catch(() => null))
   );
@@ -1007,33 +1009,37 @@ const fetchSolanaCollections = async (walletAddress) => {
   const collections = collectionMints.map((mint, i) => {
     const asset = collectionAssets[i];
     const nfts = groupMap[mint];
+    const firstNft = nfts[0];
     return {
       id: mint,
       network: 'solana',
       walletAddress,
       collectionMintAddress: mint,
-      title: asset?.content?.metadata?.name || null,
-      description: asset?.content?.metadata?.description || null,
-      image: asset?.content?.links?.image || asset?.content?.files?.[0]?.uri || null,
+      title: asset?.content?.metadata?.name || firstNft.name || null,
+      description: asset?.content?.metadata?.description || firstNft.description || null,
+      image: asset?.content?.links?.image || asset?.content?.files?.[0]?.uri || firstNft.image || null,
       items: nfts.length,
       nfts,
       royalty: asset?.royalty || null
     };
   });
 
-  if (groupMap['uncategorized']?.length > 0) {
+  // Standalone NFTs (no collection) — each becomes its own entry
+  const standalone = groupMap[null] || groupMap['null'] || [];
+  standalone.forEach(nft => {
     collections.push({
-      id: 'uncategorized',
+      id: nft.mintAddress,
       network: 'solana',
       walletAddress,
       collectionMintAddress: null,
-      title: 'Uncategorized',
-      description: null,
-      image: null,
-      items: groupMap['uncategorized'].length,
-      nfts: groupMap['uncategorized']
+      title: nft.name,
+      description: nft.description,
+      image: nft.image,
+      items: 1,
+      nfts: [nft],
+      royalty: null
     });
-  }
+  });
 
   return collections;
 };
