@@ -1,4 +1,4 @@
-const { Collection, User, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost } = require('../models');
+const { Collection, User, UserWallet, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const solanaService = require('../services/solanaService');
@@ -856,6 +856,193 @@ const updateCollectionStats = async (req, res, next) => {
  * Get collections created by or owned by a wallet address
  * Fetches live data from XRPL and user info from database
  */
+/**
+ * Helper: fetch XRPL collections for a wallet address.
+ * Returns an array of collection objects.
+ */
+const fetchXrplCollections = async (walletAddress) => {
+  const accountNFTs = await xrplService.getAccountNFTs(walletAddress);
+  if (!accountNFTs || accountNFTs.length === 0) return [];
+
+  // Group NFTs by taxon
+  const nftsByTaxon = {};
+  accountNFTs.forEach(nft => {
+    const taxon = nft.NFTokenTaxon || 0;
+    if (!nftsByTaxon[taxon]) nftsByTaxon[taxon] = [];
+    nftsByTaxon[taxon].push(nft);
+  });
+
+  const taxons = Object.keys(nftsByTaxon).map(t => parseInt(t));
+  const dbCollections = await Collection.findAll({
+    where: { taxon: taxons },
+    include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }]
+  });
+  const collectionMap = {};
+  dbCollections.forEach(col => { collectionMap[col.taxon] = col; });
+
+  const issuerAddresses = [...new Set(accountNFTs.map(nft => nft.Issuer))];
+  const allUserAddresses = [...new Set([...issuerAddresses, walletAddress])];
+  const [users, subscriptionMap] = await Promise.all([
+    User.findAll({ where: { walletAddress: allUserAddresses }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }),
+    getActiveSubscriptionsForWallets(allUserAddresses)
+  ]);
+  const userMap = {};
+  users.forEach(u => { userMap[u.walletAddress] = { ...u.toJSON(), subscriptionPlan: subscriptionMap[u.walletAddress] || 'free' }; });
+
+  const activeBoosts = await CollectionBoost.findAll({
+    where: { userWalletAddress: walletAddress, isActive: true, endDate: { [Op.gt]: new Date() } }
+  });
+  const boostedCollectionIds = new Set(activeBoosts.map(b => b.collectionId));
+  const boostedTaxons = new Set();
+  activeBoosts.forEach(b => { if (b.metadata?.taxon !== undefined) boostedTaxons.add(parseInt(b.metadata.taxon)); });
+
+  const collections = await Promise.all(
+    Object.entries(nftsByTaxon).map(async ([taxon, nfts]) => {
+      const taxonNum = parseInt(taxon);
+      const dbCollection = collectionMap[taxonNum];
+      const firstNFT = nfts[0];
+      const issuer = firstNFT.Issuer;
+
+      let listedCount = 0;
+      const prices = [];
+      for (const nft of nfts) {
+        try {
+          const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+          if (sellOffers && sellOffers.length > 0) {
+            listedCount++;
+            sellOffers.forEach(offer => {
+              const amount = parseInt(offer.amount || offer.Amount);
+              if (!isNaN(amount) && amount > 0) prices.push(amount);
+            });
+          }
+        } catch (err) {
+          logger.warn(`Could not fetch sell offers for NFT ${nft.NFTokenID}`);
+        }
+      }
+
+      const totalItems = nfts.length;
+      const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
+      const listedPercentage = totalItems > 0 ? ((listedCount / totalItems) * 100).toFixed(2) : '0';
+
+      let collectionImage = dbCollection ? dbCollection.image : null;
+      let collectionTitle = dbCollection ? dbCollection.name : null;
+      if (!dbCollection && nfts.length > 0) {
+        try {
+          const metadata = await xrplService.fetchNFTMetadata(firstNFT.URI);
+          if (metadata) {
+            if (metadata.collection) {
+              collectionTitle = typeof metadata.collection === 'string' ? metadata.collection : metadata.collection.name || metadata.collection.family || null;
+            }
+            if (!collectionTitle && metadata.name) collectionTitle = metadata.name;
+            if (metadata.image || metadata.image_url || metadata.imageUrl) collectionImage = metadata.image || metadata.image_url || metadata.imageUrl;
+          }
+        } catch (err) {
+          logger.warn(`Could not fetch metadata for collection taxon ${taxonNum}`);
+        }
+      }
+      if (!collectionTitle) collectionTitle = `Collection #${taxonNum}`;
+
+      let creatorData;
+      if (dbCollection && dbCollection.creator) {
+        creatorData = { ...dbCollection.creator.toJSON(), subscriptionPlan: subscriptionMap[dbCollection.creator.walletAddress] || 'free' };
+      } else {
+        creatorData = userMap[issuer] || { walletAddress: issuer, username: issuer, profileImage: null, isVerified: false, subscriptionPlan: subscriptionMap[issuer] || 'free' };
+      }
+
+      return {
+        id: dbCollection ? dbCollection.id : crypto.randomUUID(),
+        network: 'xrpl',
+        walletAddress,
+        taxon: taxonNum,
+        title: collectionTitle,
+        image: convertToIpfsHash(collectionImage),
+        floorPrice,
+        items: totalItems,
+        listedCount,
+        listedPercentage,
+        volume: dbCollection ? dbCollection.totalVolume : '0',
+        creator: creatorData,
+        owner: userMap[walletAddress] || { walletAddress, username: walletAddress, profileImage: null, isVerified: false, subscriptionPlan: subscriptionMap[walletAddress] || 'free' },
+        collectionId: dbCollection ? dbCollection.id : null,
+        slug: dbCollection ? dbCollection.slug : null,
+        description: dbCollection ? dbCollection.description : null,
+        category: dbCollection ? dbCollection.category : null,
+        isVerified: dbCollection ? dbCollection.isVerified : false,
+        isRegistered: !!dbCollection,
+        isBoosted: boostedTaxons.has(taxonNum) || (dbCollection && boostedCollectionIds.has(dbCollection.id))
+      };
+    })
+  );
+
+  return collections.filter(c => c.isRegistered || c.image);
+};
+
+/**
+ * Helper: fetch Solana collections for a wallet address.
+ * Returns an array of collection objects.
+ */
+const fetchSolanaCollections = async (walletAddress) => {
+  const result = await solanaService.getAssetsByOwner(walletAddress, 1, 1000);
+  const items = result.items || [];
+  if (items.length === 0) return [];
+
+  // Group NFTs by collection
+  const groupMap = {};
+  items.forEach(item => {
+    const cg = item.grouping?.find(g => g.group_key === 'collection');
+    const mint = cg?.group_value || 'uncategorized';
+    if (!groupMap[mint]) groupMap[mint] = [];
+    groupMap[mint].push({
+      mintAddress: item.id,
+      name: item.content?.metadata?.name || null,
+      image: item.content?.links?.image || item.content?.files?.[0]?.uri || null
+    });
+  });
+
+  const collectionMints = Object.keys(groupMap).filter(m => m !== 'uncategorized');
+  const collectionAssets = await Promise.all(
+    collectionMints.map(mint => solanaService.getAsset(mint).catch(() => null))
+  );
+
+  const collections = collectionMints.map((mint, i) => {
+    const asset = collectionAssets[i];
+    const nfts = groupMap[mint];
+    return {
+      id: mint,
+      network: 'solana',
+      walletAddress,
+      collectionMintAddress: mint,
+      title: asset?.content?.metadata?.name || null,
+      description: asset?.content?.metadata?.description || null,
+      image: asset?.content?.links?.image || asset?.content?.files?.[0]?.uri || null,
+      items: nfts.length,
+      nfts,
+      royalty: asset?.royalty || null
+    };
+  });
+
+  if (groupMap['uncategorized']?.length > 0) {
+    collections.push({
+      id: 'uncategorized',
+      network: 'solana',
+      walletAddress,
+      collectionMintAddress: null,
+      title: 'Uncategorized',
+      description: null,
+      image: null,
+      items: groupMap['uncategorized'].length,
+      nfts: groupMap['uncategorized']
+    });
+  }
+
+  return collections;
+};
+
+/**
+ * Get collections for a user profile.
+ * Looks up the wallet in Users + UserWallets to find all linked wallets,
+ * then fetches collections from the appropriate blockchain for each wallet.
+ */
 const getUserCollections = async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
@@ -864,243 +1051,70 @@ const getUserCollections = async (req, res, next) => {
       throw new ApiError(400, 'Wallet address is required');
     }
 
-    logger.info(`Fetching collections for wallet: ${walletAddress}`);
-    logger.info(`Using XRPL network: ${xrplConfig.getNetwork()}`);
-    logger.info(`Using XRPL WebSocket: ${xrplConfig.wssUrl}`);
-
-    // Get all NFTs owned by this wallet from XRPL
-    const accountNFTs = await xrplService.getAccountNFTs(walletAddress);
-    logger.info(`Found ${accountNFTs?.length || 0} total NFTs for wallet ${walletAddress}`);
-
-    if (!accountNFTs || accountNFTs.length === 0) {
-      logger.warn(`No NFTs found for wallet ${walletAddress} on ${xrplConfig.getNetwork()}`);
-      return res.status(200).json(
-        new ApiResponse(200, [], 'No collections found for this wallet')
-      );
+    // Find the user by primary wallet or linked wallet
+    let user = await User.findOne({ where: { walletAddress } });
+    if (!user) {
+      const linked = await UserWallet.findOne({ where: { walletAddress } });
+      if (linked) user = await User.findByPk(linked.userId);
     }
 
-    // Group NFTs by taxon (collection identifier)
-    const nftsByTaxon = {};
-    accountNFTs.forEach(nft => {
-      const taxon = nft.NFTokenTaxon || 0;
-      if (!nftsByTaxon[taxon]) {
-        nftsByTaxon[taxon] = [];
+    // Gather all wallets to query
+    let walletsToQuery = [];
+
+    if (user) {
+      // Get all linked wallets for this user
+      const allWallets = await UserWallet.findAll({
+        where: { userId: user.id },
+        order: [['isPrimary', 'DESC']]
+      });
+
+      if (allWallets.length > 0) {
+        walletsToQuery = allWallets.map(w => ({ address: w.walletAddress, network: w.network }));
+      } else {
+        // Fallback: only the primary wallet from Users table
+        walletsToQuery = [{ address: user.walletAddress, network: user.network }];
       }
-      nftsByTaxon[taxon].push(nft);
-    });
+    } else {
+      // User not in DB — determine network from address format and query just this wallet
+      const network = solanaService.isValidAddress(walletAddress) ? 'solana' : 'xrpl';
+      walletsToQuery = [{ address: walletAddress, network }];
+    }
 
-    // Get all collections from database that match these taxons
-    const taxons = Object.keys(nftsByTaxon).map(t => parseInt(t));
-    const dbCollections = await Collection.findAll({
-      where: {
-        taxon: taxons
-      },
-      include: [
-        {
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }
-      ]
-    });
+    logger.info(`Fetching collections for ${walletsToQuery.length} wallet(s): ${walletsToQuery.map(w => `${w.address.slice(0, 8)}...(${w.network})`).join(', ')}`);
 
-    // Create a map of taxon to collection
-    const collectionMap = {};
-    dbCollections.forEach(col => {
-      collectionMap[col.taxon] = col;
-    });
+    // Fetch collections from each network in parallel
+    const xrplWallets = walletsToQuery.filter(w => w.network === 'xrpl');
+    const solanaWallets = walletsToQuery.filter(w => w.network === 'solana');
 
-    // Get all unique issuer addresses to fetch user info
-    const issuerAddresses = [...new Set(accountNFTs.map(nft => nft.Issuer))];
-    const allUserAddresses = [...new Set([...issuerAddresses, walletAddress])];
-
-    const [users, subscriptionMap] = await Promise.all([
-      User.findAll({
-        where: { walletAddress: allUserAddresses },
-        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-      }),
-      getActiveSubscriptionsForWallets(allUserAddresses)
+    const [xrplResults, solanaResults] = await Promise.all([
+      Promise.all(xrplWallets.map(w => fetchXrplCollections(w.address).catch(err => {
+        logger.error(`Error fetching XRPL collections for ${w.address}:`, err.message);
+        return [];
+      }))),
+      Promise.all(solanaWallets.map(w => fetchSolanaCollections(w.address).catch(err => {
+        logger.error(`Error fetching Solana collections for ${w.address}:`, err.message);
+        return [];
+      })))
     ]);
 
-    const userMap = {};
-    users.forEach(user => {
-      userMap[user.walletAddress] = {
-        walletAddress: user.walletAddress,
-        username: user.username,
-        profileImage: user.profileImage,
-        isVerified: user.isVerified,
-        subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
-      };
-    });
+    const allCollections = [
+      ...xrplResults.flat(),
+      ...solanaResults.flat()
+    ];
 
-    // Fetch active collection boosts for this wallet
-    const activeBoosts = await CollectionBoost.findAll({
-      where: {
-        userWalletAddress: walletAddress,
-        isActive: true,
-        endDate: { [Op.gt]: new Date() }
-      }
-    });
-
-    // Create a set of boosted collection IDs and taxons for quick lookup
-    const boostedCollectionIds = new Set(activeBoosts.map(b => b.collectionId));
-    const boostedTaxons = new Set();
-    activeBoosts.forEach(b => {
-      if (b.metadata && b.metadata.taxon !== undefined && b.metadata.taxon !== null) {
-        boostedTaxons.add(parseInt(b.metadata.taxon));
-      }
-    });
-
-    // Build collection data for each taxon
-    const collections = await Promise.all(
-      Object.entries(nftsByTaxon).map(async ([taxon, nfts]) => {
-        const taxonNum = parseInt(taxon);
-        const dbCollection = collectionMap[taxonNum];
-
-        // Get first NFT to determine issuer
-        const firstNFT = nfts[0];
-        const issuer = firstNFT.Issuer;
-
-        // Calculate stats from XRPL
-        let listedCount = 0;
-        const prices = [];
-
-        // Check which NFTs are listed (have sell offers)
-        for (const nft of nfts) {
-          try {
-            const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
-            if (sellOffers && sellOffers.length > 0) {
-              listedCount++;
-              sellOffers.forEach(offer => {
-                const amount = parseInt(offer.amount || offer.Amount);
-                if (!isNaN(amount) && amount > 0) {
-                  prices.push(amount);
-                }
-              });
-            }
-          } catch (err) {
-            // Continue if we can't get offers
-            logger.warn(`Could not fetch sell offers for NFT ${nft.NFTokenID}`);
-          }
-        }
-
-        const totalItems = nfts.length;
-        const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
-        const listedPercentage = totalItems > 0 ? ((listedCount / totalItems) * 100).toFixed(2) : '0';
-
-        // Try to get collection image from first NFT metadata if not in database
-        let collectionImage = dbCollection ? dbCollection.image : null;
-        let collectionTitle = dbCollection ? dbCollection.name : null;
-
-        if (!dbCollection && nfts.length > 0) {
-          try {
-            const metadata = await xrplService.fetchNFTMetadata(firstNFT.URI);
-            if (metadata) {
-              // Extract collection name from metadata
-              if (metadata.collection) {
-                // Collection can be a string or object with name field
-                collectionTitle = typeof metadata.collection === 'string'
-                  ? metadata.collection
-                  : metadata.collection.name || metadata.collection.family || null;
-              }
-
-              // If no collection field, try using the NFT name as fallback
-              if (!collectionTitle && metadata.name) {
-                collectionTitle = metadata.name;
-              }
-
-              // Extract image
-              if (metadata.image || metadata.image_url || metadata.imageUrl) {
-                collectionImage = metadata.image || metadata.image_url || metadata.imageUrl;
-              }
-            }
-          } catch (err) {
-            logger.warn(`Could not fetch metadata for collection taxon ${taxonNum}`);
-          }
-        }
-
-        // Fallback title if still no title found
-        if (!collectionTitle) {
-          collectionTitle = `Collection #${taxonNum}`;
-        }
-
-        // Build creator object with subscription plan
-        let creatorData;
-        if (dbCollection && dbCollection.creator) {
-          creatorData = {
-            ...dbCollection.creator.toJSON ? dbCollection.creator.toJSON() : dbCollection.creator,
-            subscriptionPlan: subscriptionMap[dbCollection.creator.walletAddress] || 'free'
-          };
-        } else {
-          creatorData = userMap[issuer] || {
-            walletAddress: issuer,
-            username: issuer,
-            profileImage: null,
-            isVerified: false,
-            subscriptionPlan: subscriptionMap[issuer] || 'free'
-          };
-        }
-
-        // Build collection object
-        return {
-          id: dbCollection ? dbCollection.id : crypto.randomUUID(),
-          taxon: taxonNum,
-          title: collectionTitle,
-          image: convertToIpfsHash(collectionImage),
-          floorPrice: floorPrice,
-          items: totalItems,
-          listedCount: listedCount,
-          listedPercentage: listedPercentage,
-          volume: dbCollection ? dbCollection.totalVolume : '0',
-          creator: creatorData,
-          owner: userMap[walletAddress] || {
-            walletAddress: walletAddress,
-            username: walletAddress,
-            profileImage: null,
-            isVerified: false,
-            subscriptionPlan: subscriptionMap[walletAddress] || 'free'
-          },
-          // Include DB collection data if available
-          collectionId: dbCollection ? dbCollection.id : null,
-          slug: dbCollection ? dbCollection.slug : null,
-          description: dbCollection ? dbCollection.description : null,
-          category: dbCollection ? dbCollection.category : null,
-          isVerified: dbCollection ? dbCollection.isVerified : false,
-          isRegistered: !!dbCollection,
-          // Check if collection has an active boost
-          isBoosted: boostedTaxons.has(taxonNum) || (dbCollection && boostedCollectionIds.has(dbCollection.id))
-        };
-      })
-    );
-
-    // Filter out incomplete collections
-    const filteredCollections = collections.filter(collection => {
-      // Always include registered collections (in database)
-      if (collection.isRegistered) {
-        return true;
-      }
-
-      // For unregistered collections, only filter out if no image available
-      // Removed: minimum NFT count requirement (now shows all collections)
-      // Removed: listing requirement (shows collections even without active sales)
-      if (!collection.image) {
-        logger.info(`Filtering out unregistered collection taxon ${collection.taxon} with no image`);
-        return false;
-      }
-
-      return true;
-    });
-
-    // Sort: registered collections first, then by total items (largest first)
-    filteredCollections.sort((a, b) => {
+    // Sort: registered first, then by item count
+    allCollections.sort((a, b) => {
       if (a.isRegistered && !b.isRegistered) return -1;
       if (!a.isRegistered && b.isRegistered) return 1;
       return b.items - a.items;
     });
 
-    logger.info(`Found ${collections.length} collections for wallet: ${walletAddress}, ${filteredCollections.length} after filtering`);
-
     res.status(200).json(
-      new ApiResponse(200, filteredCollections, 'Collections retrieved successfully')
+      new ApiResponse(200, {
+        wallets: walletsToQuery,
+        totalCollections: allCollections.length,
+        collections: allCollections
+      }, 'Collections retrieved successfully')
     );
   } catch (error) {
     logger.error('Error fetching user collections:', error);
@@ -2157,96 +2171,6 @@ const getCollectionHistory = async (req, res, next) => {
   }
 };
 
-/**
- * Get collections owned by a Solana wallet.
- * Fetches all NFTs from the wallet via Helius DAS, groups them by collection,
- * and returns each collection with its NFT count and a sample of NFTs.
- */
-const getSolanaUserCollections = async (req, res, next) => {
-  try {
-    const { walletAddress } = req.params;
-    const { page = 1, limit = 100 } = req.query;
-
-    if (!walletAddress) {
-      throw new ApiError(400, 'Wallet address is required');
-    }
-
-    if (!solanaService.isValidAddress(walletAddress)) {
-      throw new ApiError(400, 'Invalid Solana wallet address');
-    }
-
-    // Fetch all NFTs owned by this wallet from Helius DAS
-    const result = await solanaService.getAssetsByOwner(
-      walletAddress,
-      parseInt(page),
-      Math.min(parseInt(limit), 1000)
-    );
-
-    const items = result.items || [];
-
-    // Group NFTs by collection mint address
-    const collectionMap = {};
-    items.forEach(item => {
-      const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
-      const collectionMint = collectionGroup?.group_value || 'uncategorized';
-
-      if (!collectionMap[collectionMint]) {
-        collectionMap[collectionMint] = { nfts: [] };
-      }
-
-      collectionMap[collectionMint].nfts.push({
-        mintAddress: item.id,
-        name: item.content?.metadata?.name || null,
-        image: item.content?.links?.image || item.content?.files?.[0]?.uri || null
-      });
-    });
-
-    // Fetch collection metadata for each collection from DAS
-    const collectionMints = Object.keys(collectionMap).filter(m => m !== 'uncategorized');
-    const collectionAssets = await Promise.all(
-      collectionMints.map(mint => solanaService.getAsset(mint).catch(() => null))
-    );
-
-    const collections = collectionMints.map((mint, i) => {
-      const asset = collectionAssets[i];
-      const group = collectionMap[mint];
-      return {
-        collectionMintAddress: mint,
-        name: asset?.content?.metadata?.name || null,
-        description: asset?.content?.metadata?.description || null,
-        image: asset?.content?.links?.image || asset?.content?.files?.[0]?.uri || null,
-        nftCount: group.nfts.length,
-        nfts: group.nfts
-      };
-    });
-
-    // Add uncategorized NFTs if any
-    if (collectionMap['uncategorized']?.nfts.length > 0) {
-      collections.push({
-        collectionMintAddress: null,
-        name: 'Uncategorized',
-        description: null,
-        image: null,
-        nftCount: collectionMap['uncategorized'].nfts.length,
-        nfts: collectionMap['uncategorized'].nfts
-      });
-    }
-
-    res.status(200).json(
-      new ApiResponse(200, {
-        network: 'solana',
-        walletAddress,
-        totalCollections: collections.length,
-        totalNfts: items.length,
-        collections
-      }, 'Solana wallet collections retrieved successfully')
-    );
-  } catch (error) {
-    logger.error('Error getting Solana user collections:', error);
-    next(error);
-  }
-};
-
 module.exports = {
   listCollection,
   getCollections,
@@ -2259,6 +2183,5 @@ module.exports = {
   getNewNFTs,
   getTopSellers,
   getPopularCollections,
-  getCollectionHistory,
-  getSolanaUserCollections
+  getCollectionHistory
 };
