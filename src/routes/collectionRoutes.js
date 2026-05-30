@@ -12,7 +12,8 @@ const {
   getNewNFTs,
   getTopSellers,
   getPopularCollections,
-  getCollectionHistory
+  getCollectionHistory,
+  getSolanaUserCollections
 } = require('../controllers/collectionController');
 
 /**
@@ -35,6 +36,14 @@ router.get('/', getCollections);
  * @access  Public
  */
 router.get('/wallet/:walletAddress', getUserCollections);
+
+/**
+ * @route   GET /api/v1/collections/solana/wallet/:walletAddress
+ * @desc    Get Solana collections owned by a wallet (from blockchain via Helius DAS)
+ * @access  Public
+ * @query   page, limit
+ */
+router.get('/solana/wallet/:walletAddress', getSolanaUserCollections);
 
 /**
  * @route   GET /api/v1/collections/stats

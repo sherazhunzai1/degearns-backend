@@ -2157,6 +2157,96 @@ const getCollectionHistory = async (req, res, next) => {
   }
 };
 
+/**
+ * Get collections owned by a Solana wallet.
+ * Fetches all NFTs from the wallet via Helius DAS, groups them by collection,
+ * and returns each collection with its NFT count and a sample of NFTs.
+ */
+const getSolanaUserCollections = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.params;
+    const { page = 1, limit = 100 } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    if (!solanaService.isValidAddress(walletAddress)) {
+      throw new ApiError(400, 'Invalid Solana wallet address');
+    }
+
+    // Fetch all NFTs owned by this wallet from Helius DAS
+    const result = await solanaService.getAssetsByOwner(
+      walletAddress,
+      parseInt(page),
+      Math.min(parseInt(limit), 1000)
+    );
+
+    const items = result.items || [];
+
+    // Group NFTs by collection mint address
+    const collectionMap = {};
+    items.forEach(item => {
+      const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
+      const collectionMint = collectionGroup?.group_value || 'uncategorized';
+
+      if (!collectionMap[collectionMint]) {
+        collectionMap[collectionMint] = { nfts: [] };
+      }
+
+      collectionMap[collectionMint].nfts.push({
+        mintAddress: item.id,
+        name: item.content?.metadata?.name || null,
+        image: item.content?.links?.image || item.content?.files?.[0]?.uri || null
+      });
+    });
+
+    // Fetch collection metadata for each collection from DAS
+    const collectionMints = Object.keys(collectionMap).filter(m => m !== 'uncategorized');
+    const collectionAssets = await Promise.all(
+      collectionMints.map(mint => solanaService.getAsset(mint).catch(() => null))
+    );
+
+    const collections = collectionMints.map((mint, i) => {
+      const asset = collectionAssets[i];
+      const group = collectionMap[mint];
+      return {
+        collectionMintAddress: mint,
+        name: asset?.content?.metadata?.name || null,
+        description: asset?.content?.metadata?.description || null,
+        image: asset?.content?.links?.image || asset?.content?.files?.[0]?.uri || null,
+        nftCount: group.nfts.length,
+        nfts: group.nfts
+      };
+    });
+
+    // Add uncategorized NFTs if any
+    if (collectionMap['uncategorized']?.nfts.length > 0) {
+      collections.push({
+        collectionMintAddress: null,
+        name: 'Uncategorized',
+        description: null,
+        image: null,
+        nftCount: collectionMap['uncategorized'].nfts.length,
+        nfts: collectionMap['uncategorized'].nfts
+      });
+    }
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        network: 'solana',
+        walletAddress,
+        totalCollections: collections.length,
+        totalNfts: items.length,
+        collections
+      }, 'Solana wallet collections retrieved successfully')
+    );
+  } catch (error) {
+    logger.error('Error getting Solana user collections:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
@@ -2169,5 +2259,6 @@ module.exports = {
   getNewNFTs,
   getTopSellers,
   getPopularCollections,
-  getCollectionHistory
+  getCollectionHistory,
+  getSolanaUserCollections
 };
