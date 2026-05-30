@@ -651,11 +651,27 @@ exports.getSolanaNFTsByOwner = async (req, res, next) => {
       Math.min(parseInt(limit), 1000)
     );
 
+    const nfts = (result.items || []).map(item => {
+      const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
+      return {
+        mintAddress: item.id,
+        name: item.content?.metadata?.name || null,
+        description: item.content?.metadata?.description || null,
+        image: item.content?.links?.image || item.content?.files?.[0]?.uri || null,
+        attributes: item.content?.metadata?.attributes || [],
+        collectionMintAddress: collectionGroup?.group_value || null,
+        owner: item.ownership?.owner || null,
+        compressed: item.compression?.compressed || false,
+        royalty: item.royalty || null,
+        raw: item
+      };
+    });
+
     res.status(200).json(new ApiResponse(200, {
       network: 'solana',
       walletAddress,
       total: result.total,
-      items: result.items,
+      items: nfts,
       page: parseInt(page),
       limit: parseInt(limit)
     }, 'Solana NFTs retrieved successfully'));
@@ -684,11 +700,27 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
       Math.min(parseInt(limit), 1000)
     );
 
+    const nfts = (result.items || []).map(item => {
+      const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
+      return {
+        mintAddress: item.id,
+        name: item.content?.metadata?.name || null,
+        description: item.content?.metadata?.description || null,
+        image: item.content?.links?.image || item.content?.files?.[0]?.uri || null,
+        attributes: item.content?.metadata?.attributes || [],
+        collectionMintAddress: collectionGroup?.group_value || null,
+        owner: item.ownership?.owner || null,
+        compressed: item.compression?.compressed || false,
+        royalty: item.royalty || null,
+        raw: item
+      };
+    });
+
     res.status(200).json(new ApiResponse(200, {
       network: 'solana',
       collectionMintAddress,
       total: result.total,
-      items: result.items,
+      items: nfts,
       page: parseInt(page),
       limit: parseInt(limit)
     }, 'Collection NFTs retrieved successfully'));
