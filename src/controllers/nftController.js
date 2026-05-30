@@ -694,13 +694,9 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
       throw new ApiError(400, 'Invalid Solana collection mint address');
     }
 
-    // Fetch collection detail (DAS + DB) and NFTs in parallel
-    const [collectionAsset, dbCollection, result] = await Promise.all([
+    // Fetch collection detail and NFTs from blockchain in parallel
+    const [collectionAsset, result] = await Promise.all([
       solanaService.getAsset(collectionMintAddress).catch(() => null),
-      Collection.findOne({
-        where: { mintAddress: collectionMintAddress, network: 'solana' },
-        include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }]
-      }),
       solanaService.getAssetsByCollection(
         collectionMintAddress,
         parseInt(page),
@@ -710,20 +706,15 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
 
     const collection = {
       mintAddress: collectionMintAddress,
-      name: dbCollection?.name || collectionAsset?.content?.metadata?.name || null,
-      description: dbCollection?.description || collectionAsset?.content?.metadata?.description || null,
-      image: dbCollection?.image || collectionAsset?.content?.links?.image || null,
-      bannerImage: dbCollection?.bannerImage || null,
-      category: dbCollection?.category || null,
-      royaltyPercentage: dbCollection?.royaltyPercentage || null,
-      floorPrice: dbCollection?.floorPrice || null,
-      totalVolume: dbCollection?.totalVolume || null,
-      totalSupply: result.total || dbCollection?.totalSupply || 0,
-      isVerified: dbCollection?.isVerified || false,
-      slug: dbCollection?.slug || null,
-      creator: dbCollection?.creator || (collectionAsset?.ownership?.owner ? { walletAddress: collectionAsset.ownership.owner } : null),
-      socialLinks: dbCollection?.socialLinks || null,
-      royalty: collectionAsset?.royalty || null
+      name: collectionAsset?.content?.metadata?.name || null,
+      description: collectionAsset?.content?.metadata?.description || null,
+      image: collectionAsset?.content?.links?.image || collectionAsset?.content?.files?.[0]?.uri || null,
+      attributes: collectionAsset?.content?.metadata?.attributes || [],
+      owner: collectionAsset?.ownership?.owner || null,
+      totalSupply: result.total || 0,
+      royalty: collectionAsset?.royalty || null,
+      compressed: collectionAsset?.compression?.compressed || false,
+      raw: collectionAsset
     };
 
     const nfts = (result.items || []).map(item => {
