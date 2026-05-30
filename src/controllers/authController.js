@@ -47,16 +47,8 @@ const generateReferralCode = async () => {
  * @returns {Promise<{user: Object, isNewUser: boolean}>}
  */
 const findOrCreateUserRecord = async ({ walletAddress, network = 'xrpl', refCode = null }) => {
-  // Check primary wallet, username, or referralCode on Users table
-  let user = await User.findOne({
-    where: {
-      [Op.or]: [
-        { walletAddress },
-        { username: walletAddress },
-        { referralCode: walletAddress }
-      ]
-    }
-  });
+  // Check primary wallet on Users table
+  let user = await User.findOne({ where: { walletAddress } });
 
   // If not found, check linked wallets
   if (!user) {
@@ -131,16 +123,8 @@ const findOrCreateUserRecord = async ({ walletAddress, network = 'xrpl', refCode
   } catch (createError) {
     // Handle race condition: if another request created the user between findOne and create
     if (createError.name === 'SequelizeUniqueConstraintError') {
-      logger.info(`Unique constraint conflict for wallet: ${walletAddress}, searching existing user`);
-      user = await User.findOne({
-        where: {
-          [Op.or]: [
-            { walletAddress },
-            { username: walletAddress },
-            { referralCode: walletAddress }
-          ]
-        }
-      });
+      logger.info(`Race condition detected for wallet: ${walletAddress}, fetching existing user`);
+      user = await User.findOne({ where: { walletAddress } });
       if (!user) {
         throw createError;
       }
