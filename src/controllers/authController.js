@@ -583,15 +583,25 @@ const getReferralInfo = async (req, res, next) => {
  */
 const linkWallet = async (req, res, next) => {
   try {
-    const { walletAddress, network, signature, label } = req.body;
-    const currentUser = req.user;
+    const { walletAddress, network, signature, label, primaryWalletAddress } = req.body;
 
-    if (!currentUser) {
-      throw new ApiError(401, 'Authentication required');
+    if (!primaryWalletAddress) {
+      throw new ApiError(400, 'Primary wallet address is required to identify the account');
     }
 
     if (!walletAddress) {
-      throw new ApiError(400, 'Wallet address is required');
+      throw new ApiError(400, 'Wallet address to link is required');
+    }
+
+    // Find the user by their primary or linked wallet
+    let currentUser = await User.findOne({ where: { walletAddress: primaryWalletAddress } });
+    if (!currentUser) {
+      const linked = await UserWallet.findOne({ where: { walletAddress: primaryWalletAddress } });
+      if (linked) currentUser = await User.findByPk(linked.userId);
+    }
+
+    if (!currentUser) {
+      throw new ApiError(404, 'User not found');
     }
 
     const resolvedNetwork = chainServiceFactory.normalizeNetwork(network);
@@ -660,15 +670,25 @@ const linkWallet = async (req, res, next) => {
  */
 const unlinkWallet = async (req, res, next) => {
   try {
-    const { walletAddress } = req.body;
-    const currentUser = req.user;
+    const { walletAddress, primaryWalletAddress } = req.body;
 
-    if (!currentUser) {
-      throw new ApiError(401, 'Authentication required');
+    if (!primaryWalletAddress) {
+      throw new ApiError(400, 'Primary wallet address is required to identify the account');
     }
 
     if (!walletAddress) {
-      throw new ApiError(400, 'Wallet address is required');
+      throw new ApiError(400, 'Wallet address to unlink is required');
+    }
+
+    // Find the user by their primary or linked wallet
+    let currentUser = await User.findOne({ where: { walletAddress: primaryWalletAddress } });
+    if (!currentUser) {
+      const linked = await UserWallet.findOne({ where: { walletAddress: primaryWalletAddress } });
+      if (linked) currentUser = await User.findByPk(linked.userId);
+    }
+
+    if (!currentUser) {
+      throw new ApiError(404, 'User not found');
     }
 
     // Cannot unlink primary wallet

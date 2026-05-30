@@ -14,7 +14,6 @@ const {
   unlinkWallet,
   getLinkedWallets
 } = require('../controllers/authController');
-const { authenticate } = require('../middleware/auth');
 // const { authLimiter } = require('../middleware/rateLimiter'); // Rate limiting disabled
 
 /**
@@ -93,17 +92,17 @@ router.get('/wallets', getLinkedWallets);
 
 /**
  * @route   POST /api/v1/auth/link-wallet
- * @desc    Link a new wallet to the authenticated user's account.
+ * @desc    Link a new wallet to a user account.
  *          Solana wallets require a signed nonce (get nonce first via GET /auth/solana/nonce).
- * @access  Authenticated (JWT)
+ * @access  Public
  */
-router.post('/link-wallet', authenticate, linkWallet);
+router.post('/link-wallet', linkWallet);
 
 /**
  * @route   DELETE /api/v1/auth/unlink-wallet
- * @desc    Unlink a wallet from the authenticated user's account (cannot unlink primary)
- * @access  Authenticated (JWT)
+ * @desc    Unlink a wallet from a user account (cannot unlink primary)
+ * @access  Public
  */
-router.delete('/unlink-wallet', authenticate, unlinkWallet);
+router.delete('/unlink-wallet', unlinkWallet);
 
 module.exports = router;
