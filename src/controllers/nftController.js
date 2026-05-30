@@ -694,11 +694,28 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
       throw new ApiError(400, 'Invalid Solana collection mint address');
     }
 
-    const result = await solanaService.getAssetsByCollection(
-      collectionMintAddress,
-      parseInt(page),
-      Math.min(parseInt(limit), 1000)
-    );
+    // Fetch collection detail and NFTs from blockchain in parallel
+    const [collectionAsset, result] = await Promise.all([
+      solanaService.getAsset(collectionMintAddress).catch(() => null),
+      solanaService.getAssetsByCollection(
+        collectionMintAddress,
+        parseInt(page),
+        Math.min(parseInt(limit), 1000)
+      )
+    ]);
+
+    const collection = {
+      mintAddress: collectionMintAddress,
+      name: collectionAsset?.content?.metadata?.name || null,
+      description: collectionAsset?.content?.metadata?.description || null,
+      image: collectionAsset?.content?.links?.image || collectionAsset?.content?.files?.[0]?.uri || null,
+      attributes: collectionAsset?.content?.metadata?.attributes || [],
+      owner: collectionAsset?.ownership?.owner || null,
+      totalSupply: result.total || 0,
+      royalty: collectionAsset?.royalty || null,
+      compressed: collectionAsset?.compression?.compressed || false,
+      raw: collectionAsset
+    };
 
     const nfts = (result.items || []).map(item => {
       const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
@@ -718,12 +735,12 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
 
     res.status(200).json(new ApiResponse(200, {
       network: 'solana',
-      collectionMintAddress,
+      collection,
       total: result.total,
       items: nfts,
       page: parseInt(page),
       limit: parseInt(limit)
-    }, 'Collection NFTs retrieved successfully'));
+    }, 'Collection detail and NFTs retrieved successfully'));
   } catch (error) {
     logger.error('Error getting Solana collection NFTs:', error);
     next(error);
