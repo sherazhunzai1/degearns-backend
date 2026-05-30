@@ -40,8 +40,19 @@ const ReferralReward = require('./ReferralReward')(sequelize, DataTypes);
 const ReferralClaim = require('./ReferralClaim')(sequelize, DataTypes);
 const ReferralAuditLog = require('./ReferralAuditLog')(sequelize, DataTypes);
 const MemeCoin = require('./MemeCoin')(sequelize, DataTypes);
+const UserWallet = require('./UserWallet')(sequelize, DataTypes);
 
 // Define associations
+// User and UserWallet
+User.hasMany(UserWallet, {
+  foreignKey: 'userId',
+  as: 'wallets'
+});
+UserWallet.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user'
+});
+
 // User and Collection
 User.hasMany(Collection, {
   foreignKey: 'creatorWalletAddress',
@@ -673,5 +684,6 @@ module.exports = {
   ReferralReward,
   ReferralClaim,
   ReferralAuditLog,
-  MemeCoin
+  MemeCoin,
+  UserWallet
 };

@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { Op } = require('sequelize');
-const { User, Subscription } = require('../models');
+const { User, Subscription, UserWallet } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -47,7 +47,16 @@ const generateReferralCode = async () => {
  * @returns {Promise<{user: Object, isNewUser: boolean}>}
  */
 const findOrCreateUserRecord = async ({ walletAddress, network = 'xrpl', refCode = null }) => {
+  // Check primary wallet on Users table
   let user = await User.findOne({ where: { walletAddress } });
+
+  // If not found as primary, check linked wallets
+  if (!user) {
+    const linkedWallet = await UserWallet.findOne({ where: { walletAddress } });
+    if (linkedWallet) {
+      user = await User.findByPk(linkedWallet.userId);
+    }
+  }
 
   // If user exists, check if they are banned
   if (user && user.isBanned) {
@@ -100,6 +109,14 @@ const findOrCreateUserRecord = async ({ walletAddress, network = 'xrpl', refCode
       referralCode: walletAddress,  // Use wallet address as referral code
       referredBy
     });
+
+    // Also insert into UserWallet as the primary wallet
+    await UserWallet.create({
+      userId: user.id,
+      walletAddress,
+      network,
+      isPrimary: true
+    }).catch(() => {});
 
     isNewUser = true;
     logger.info(`New ${network} user created with wallet: ${walletAddress}`);
@@ -559,6 +576,181 @@ const getReferralInfo = async (req, res, next) => {
   }
 };
 
+/**
+ * Link a new wallet to the authenticated user's account.
+ * For Solana wallets, requires a signed nonce to prove ownership.
+ * For XRPL wallets, ownership is verified client-side via XAMAN.
+ */
+const linkWallet = async (req, res, next) => {
+  try {
+    const { walletAddress, network, signature, label, primaryWalletAddress } = req.body;
+
+    if (!primaryWalletAddress) {
+      throw new ApiError(400, 'Primary wallet address is required to identify the account');
+    }
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address to link is required');
+    }
+
+    // Find the user by their primary or linked wallet
+    let currentUser = await User.findOne({ where: { walletAddress: primaryWalletAddress } });
+    if (!currentUser) {
+      const linked = await UserWallet.findOne({ where: { walletAddress: primaryWalletAddress } });
+      if (linked) currentUser = await User.findByPk(linked.userId);
+    }
+
+    if (!currentUser) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    const resolvedNetwork = chainServiceFactory.normalizeNetwork(network);
+    if (!chainServiceFactory.isSupportedNetwork(resolvedNetwork)) {
+      throw new ApiError(400, `Unsupported network: ${network}`);
+    }
+
+    // For Solana, verify wallet ownership via signed nonce
+    if (resolvedNetwork === 'solana') {
+      if (!signature) {
+        throw new ApiError(400, 'Signature is required to link a Solana wallet');
+      }
+      if (!solanaService.isValidAddress(walletAddress)) {
+        throw new ApiError(400, 'Invalid Solana wallet address');
+      }
+
+      const stored = solanaAuthNonces.get(walletAddress);
+      if (!stored || stored.expiresAt < Date.now()) {
+        solanaAuthNonces.delete(walletAddress);
+        throw new ApiError(401, 'Nonce expired or not found. Request a new nonce via GET /auth/solana/nonce');
+      }
+
+      const isValid = solanaService.verifySignature(walletAddress, stored.message, signature);
+      solanaAuthNonces.delete(walletAddress);
+
+      if (!isValid) {
+        throw new ApiError(401, 'Invalid signature');
+      }
+    }
+
+    // Check if wallet is already linked to any account
+    const existingUser = await User.findOne({ where: { walletAddress } });
+    if (existingUser) {
+      throw new ApiError(400, 'This wallet is already registered as a primary wallet on another account');
+    }
+
+    const existingLink = await UserWallet.findOne({ where: { walletAddress } });
+    if (existingLink) {
+      if (existingLink.userId === currentUser.id) {
+        throw new ApiError(400, 'This wallet is already linked to your account');
+      }
+      throw new ApiError(400, 'This wallet is already linked to another account');
+    }
+
+    const linkedWallet = await UserWallet.create({
+      userId: currentUser.id,
+      walletAddress,
+      network: resolvedNetwork,
+      isPrimary: false,
+      label: label || null
+    });
+
+    logger.info(`Wallet ${walletAddress} (${resolvedNetwork}) linked to user ${currentUser.walletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, linkedWallet, 'Wallet linked successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Unlink a wallet from the authenticated user's account.
+ * Cannot unlink the primary wallet.
+ */
+const unlinkWallet = async (req, res, next) => {
+  try {
+    const { walletAddress, primaryWalletAddress } = req.body;
+
+    if (!primaryWalletAddress) {
+      throw new ApiError(400, 'Primary wallet address is required to identify the account');
+    }
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address to unlink is required');
+    }
+
+    // Find the user by their primary or linked wallet
+    let currentUser = await User.findOne({ where: { walletAddress: primaryWalletAddress } });
+    if (!currentUser) {
+      const linked = await UserWallet.findOne({ where: { walletAddress: primaryWalletAddress } });
+      if (linked) currentUser = await User.findByPk(linked.userId);
+    }
+
+    if (!currentUser) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    // Cannot unlink primary wallet
+    if (walletAddress === currentUser.walletAddress) {
+      throw new ApiError(400, 'Cannot unlink your primary wallet');
+    }
+
+    const linkedWallet = await UserWallet.findOne({
+      where: { walletAddress, userId: currentUser.id, isPrimary: false }
+    });
+
+    if (!linkedWallet) {
+      throw new ApiError(404, 'Linked wallet not found');
+    }
+
+    await linkedWallet.destroy();
+
+    logger.info(`Wallet ${walletAddress} unlinked from user ${currentUser.walletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, null, 'Wallet unlinked successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get all wallets linked to the authenticated user's account.
+ */
+const getLinkedWallets = async (req, res, next) => {
+  try {
+    const { walletAddress } = req.query;
+
+    if (!walletAddress) {
+      throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Find user by primary or linked wallet
+    let user = await User.findOne({ where: { walletAddress } });
+    if (!user) {
+      const linked = await UserWallet.findOne({ where: { walletAddress } });
+      if (linked) user = await User.findByPk(linked.userId);
+    }
+
+    if (!user) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    const wallets = await UserWallet.findAll({
+      where: { userId: user.id },
+      order: [['isPrimary', 'DESC'], ['createdAt', 'ASC']]
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, { wallets }, 'Linked wallets retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getOrCreateUser,
   getSolanaAuthNonce,
@@ -568,5 +760,8 @@ module.exports = {
   updateProfilePicture,
   updateCoverPicture,
   canUpdateCoverImage,
-  getReferralInfo
+  getReferralInfo,
+  linkWallet,
+  unlinkWallet,
+  getLinkedWallets
 };
