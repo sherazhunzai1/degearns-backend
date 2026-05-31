@@ -5,7 +5,8 @@ const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const {
   getActiveSubscriptionsForWallets,
-  enrichItemsWithSubscriptions
+  enrichItemsWithSubscriptions,
+  resolvePrimaryWallet
 } = require('../utils/userHelpers');
 
 /**
@@ -14,11 +15,13 @@ const {
  */
 const getChatUsers = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Find all conversations where the user is a participant
     const conversations = await Conversation.findAll({
@@ -112,12 +115,15 @@ const getChatUsers = async (req, res, next) => {
  */
 const getMessages = async (req, res, next) => {
   try {
-    const { walletAddress, otherWalletAddress } = req.params;
+    let { walletAddress, otherWalletAddress } = req.params;
     const { page = 1, limit = 50 } = req.query;
 
     if (!walletAddress || !otherWalletAddress) {
       throw new ApiError(400, 'Both wallet addresses are required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
+    otherWalletAddress = await resolvePrimaryWallet(otherWalletAddress);
 
     // Normalize wallet addresses for conversation lookup
     const [addr1, addr2] = [walletAddress, otherWalletAddress].sort();
@@ -228,7 +234,7 @@ const getMessages = async (req, res, next) => {
  */
 const sendMessage = async (req, res, next) => {
   try {
-    const {
+    let {
       senderWalletAddress,
       receiverWalletAddress,
       content,
@@ -243,6 +249,9 @@ const sendMessage = async (req, res, next) => {
     if (!content || content.trim() === '') {
       throw new ApiError(400, 'Message content is required');
     }
+
+    senderWalletAddress = await resolvePrimaryWallet(senderWalletAddress);
+    receiverWalletAddress = await resolvePrimaryWallet(receiverWalletAddress);
 
     // Verify sender exists
     const sender = await User.findOne({
@@ -344,11 +353,14 @@ const sendMessage = async (req, res, next) => {
  */
 const markMessagesAsRead = async (req, res, next) => {
   try {
-    const { walletAddress, senderWalletAddress } = req.body;
+    let { walletAddress, senderWalletAddress } = req.body;
 
     if (!walletAddress || !senderWalletAddress) {
       throw new ApiError(400, 'Both wallet addresses are required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
+    senderWalletAddress = await resolvePrimaryWallet(senderWalletAddress);
 
     // Normalize wallet addresses for conversation lookup
     const [addr1, addr2] = [walletAddress, senderWalletAddress].sort();
@@ -398,11 +410,13 @@ const markMessagesAsRead = async (req, res, next) => {
  */
 const getUnreadCount = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Get total unread count
     const totalUnread = await Message.count({
@@ -484,12 +498,14 @@ const getUnreadCount = async (req, res, next) => {
  */
 const getAllUsers = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { search, page = 1, limit = 20 } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -554,11 +570,13 @@ const getAllUsers = async (req, res, next) => {
  */
 const getTotalUnreadCount = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Get total unread count only
     const count = await Message.count({
