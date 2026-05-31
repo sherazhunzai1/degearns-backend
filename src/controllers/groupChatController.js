@@ -5,7 +5,8 @@ const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
 const {
   getActiveSubscriptionsForWallets,
-  enrichItemsWithSubscriptions
+  enrichItemsWithSubscriptions,
+  resolvePrimaryWallet
 } = require('../utils/userHelpers');
 
 /**
@@ -184,12 +185,14 @@ const createGroup = async (req, res, next) => {
  */
 const getGroups = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { page = 1, limit = 20 } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -304,7 +307,8 @@ const getGroups = async (req, res, next) => {
  */
 const getGroupDetails = async (req, res, next) => {
   try {
-    const { groupId, walletAddress } = req.params;
+    const { groupId } = req.params;
+    let walletAddress = await resolvePrimaryWallet(req.params.walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -389,7 +393,8 @@ const getGroupDetails = async (req, res, next) => {
 const updateGroup = async (req, res, next) => {
   try {
     const { groupId } = req.params;
-    const { walletAddress, name, description, groupImage } = req.body;
+    let { walletAddress, name, description, groupImage } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -445,7 +450,8 @@ const updateGroup = async (req, res, next) => {
 const deleteGroup = async (req, res, next) => {
   try {
     const { groupId } = req.params;
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -492,7 +498,8 @@ const addMembers = async (req, res, next) => {
 
   try {
     const { groupId } = req.params;
-    const { walletAddress, memberWalletAddresses } = req.body;
+    let { walletAddress, memberWalletAddresses } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -612,7 +619,8 @@ const removeMember = async (req, res, next) => {
 
   try {
     const { groupId } = req.params;
-    const { walletAddress, memberWalletAddress } = req.body;
+    let { walletAddress, memberWalletAddress } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -705,7 +713,8 @@ const leaveGroup = async (req, res, next) => {
 
   try {
     const { groupId } = req.params;
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -777,7 +786,8 @@ const leaveGroup = async (req, res, next) => {
 const makeAdmin = async (req, res, next) => {
   try {
     const { groupId } = req.params;
-    const { walletAddress, memberWalletAddress } = req.body;
+    let { walletAddress, memberWalletAddress } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -846,7 +856,8 @@ const makeAdmin = async (req, res, next) => {
 const removeAdmin = async (req, res, next) => {
   try {
     const { groupId } = req.params;
-    const { walletAddress, memberWalletAddress } = req.body;
+    let { walletAddress, memberWalletAddress } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -1053,7 +1064,8 @@ const sendMessage = async (req, res, next) => {
  */
 const getMessages = async (req, res, next) => {
   try {
-    const { groupId, walletAddress } = req.params;
+    const { groupId } = req.params;
+    let walletAddress = await resolvePrimaryWallet(req.params.walletAddress);
     const { page = 1, limit = 50 } = req.query;
 
     if (!groupId) {
@@ -1189,7 +1201,8 @@ const getMessages = async (req, res, next) => {
  */
 const getGroupMembers = async (req, res, next) => {
   try {
-    const { groupId, walletAddress } = req.params;
+    const { groupId } = req.params;
+    let walletAddress = await resolvePrimaryWallet(req.params.walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -1257,7 +1270,8 @@ const getGroupMembers = async (req, res, next) => {
 const markMessagesAsRead = async (req, res, next) => {
   try {
     const { groupId } = req.params;
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!groupId) {
       throw new ApiError(400, 'Group ID is required');
@@ -1298,7 +1312,8 @@ const markMessagesAsRead = async (req, res, next) => {
  */
 const getUnreadCount = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
@@ -1371,7 +1386,8 @@ const getUnreadCount = async (req, res, next) => {
  */
 const getTotalUnreadCount = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
+    if (walletAddress) walletAddress = await resolvePrimaryWallet(walletAddress);
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');

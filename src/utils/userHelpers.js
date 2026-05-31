@@ -371,6 +371,29 @@ const checkPinPostEligibility = async (walletAddress, currentPinnedCount) => {
   };
 };
 
+/**
+ * Resolve any wallet address to the primary wallet address.
+ * If the wallet is linked to a user, returns the user's primary walletAddress.
+ * If not found, returns the original wallet address unchanged.
+ */
+const resolvePrimaryWallet = async (walletAddress) => {
+  const { User, UserWallet } = require('../models');
+
+  // Check if it's already a primary wallet
+  const user = await User.findOne({ where: { walletAddress }, attributes: ['walletAddress'] });
+  if (user) return user.walletAddress;
+
+  // Check if it's a linked wallet
+  const linked = await UserWallet.findOne({ where: { walletAddress } });
+  if (linked) {
+    const primaryUser = await User.findByPk(linked.userId, { attributes: ['walletAddress'] });
+    if (primaryUser) return primaryUser.walletAddress;
+  }
+
+  // Not found in DB — return as-is
+  return walletAddress;
+};
+
 module.exports = {
   USER_ATTRIBUTES,
   USER_ATTRIBUTES_WITH_BIO,
@@ -384,5 +407,6 @@ module.exports = {
   COVER_IMAGE_UPDATE_INTERVALS,
   checkCoverImageUpdateEligibility,
   PIN_POST_LIMITS,
-  checkPinPostEligibility
+  checkPinPostEligibility,
+  resolvePrimaryWallet
 };
