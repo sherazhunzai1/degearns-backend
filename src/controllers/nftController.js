@@ -33,13 +33,40 @@ exports.getNFTDetail = async (req, res) => {
         return res.status(404).json({ success: false, message: 'NFT not found' });
       }
 
-      // Look up owner and collection in DB
       const ownerAddress = asset.ownership?.owner;
       const collectionAddress = asset.grouping?.find(g => g.group_key === 'collection')?.group_value;
-      const [ownerUser, collection] = await Promise.all([
+      const creatorAddress = asset.creators?.[0]?.address || null;
+
+      const [ownerUser, creatorUser, collection] = await Promise.all([
         ownerAddress ? User.findOne({ where: { walletAddress: ownerAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
+        creatorAddress ? User.findOne({ where: { walletAddress: creatorAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
         collectionAddress ? Collection.findOne({ where: { mintAddress: collectionAddress, network: 'solana' }, include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }] }) : null
       ]);
+
+      // Check listing status: if the NFT is delegated, it's listed for sale
+      const isDelegated = asset.ownership?.delegated || false;
+      const delegate = asset.ownership?.delegate || null;
+      const marketplaceAuthority = solanaMarketplaceService.getMarketplaceAddress();
+      const isListedOnMarketplace = isDelegated && delegate === marketplaceAuthority;
+
+      // Get listing price from asset metadata if available
+      const listingPrice = asset.ownership?.listing_price || asset.content?.metadata?.listing_price || null;
+
+      // Build sale info matching XRPL format
+      const saleInfo = {
+        isOnSale: isListedOnMarketplace,
+        currentPrice: listingPrice,
+        delegate: delegate,
+        marketplaceAuthority: marketplaceAuthority
+      };
+
+      // Subscription plans
+      const walletAddresses = [ownerAddress, creatorAddress].filter(Boolean);
+      const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+      // Royalty info
+      const royaltyBasisPoints = asset.royalty?.basis_points || 0;
+      const royaltyPercentage = royaltyBasisPoints / 100;
 
       return res.status(200).json(new ApiResponse(200, {
         nftTokenId,
@@ -48,12 +75,24 @@ exports.getNFTDetail = async (req, res) => {
         description: asset.content?.metadata?.description || null,
         image: asset.content?.links?.image || asset.content?.files?.[0]?.uri || null,
         attributes: asset.content?.metadata?.attributes || [],
-        owner: ownerUser ? ownerUser.toJSON() : (ownerAddress ? { walletAddress: ownerAddress } : null),
+        issuer: creatorAddress,
+        issuerInfo: creatorUser ? {
+          ...creatorUser.toJSON(),
+          subscriptionPlan: subscriptionMap[creatorAddress] || 'free'
+        } : (creatorAddress ? { walletAddress: creatorAddress } : null),
         collection: collection ? collection.toJSON() : (collectionAddress ? { mintAddress: collectionAddress } : null),
-        royalty: asset.royalty || null,
+        owner: ownerAddress,
+        ownerInfo: ownerUser ? {
+          ...ownerUser.toJSON(),
+          subscriptionPlan: subscriptionMap[ownerAddress] || 'free'
+        } : (ownerAddress ? { walletAddress: ownerAddress } : null),
+        saleInfo,
+        royalty: {
+          basisPoints: royaltyBasisPoints,
+          percentage: royaltyPercentage
+        },
         compressed: asset.compression?.compressed || false,
-        mintAddress: nftTokenId,
-        raw: asset
+        mintAddress: nftTokenId
       }, 'Solana NFT detail retrieved successfully'));
     }
 
