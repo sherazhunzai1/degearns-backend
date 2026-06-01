@@ -32,6 +32,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/umi": "^1.5.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.5.1",
     "@solana/web3.js": "^1.98.4",
     "axios": "^1.6.0",
     "bs58": "^5.0.0",
