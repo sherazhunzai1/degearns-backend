@@ -1,4 +1,4 @@
-const { Collection, User, UserWallet, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost } = require('../models');
+const { Collection, User, UserWallet, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost, SolanaNftListing } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const solanaService = require('../services/solanaService');
@@ -243,87 +243,103 @@ const getCollections = async (req, res, next) => {
       offset: parseInt(offset)
     });
 
-    // Calculate stats from XRPL for each collection
-    const collectionsWithStats = [];
+    // Split collections by network
+    const xrplCollections = collections.filter(c => c.network !== 'solana');
+    const solanaCollections = collections.filter(c => c.network === 'solana');
 
-    for (const collection of collections) {
+    // --- Calculate stats for XRPL collections ---
+    const xrplWithStats = [];
+    for (const collection of xrplCollections) {
       try {
         const taxon = collection.taxon;
         const creatorWallet = collection.creatorWalletAddress;
 
-        // Fetch NFTs from XRPL for this collection
         const accountNFTs = await xrplService.getAccountNFTs(creatorWallet);
-        const collectionNFTs = accountNFTs.filter(nft => {
-          const nftTaxon = nft.NFTokenTaxon || 0;
-          return nftTaxon === taxon;
-        });
+        const collectionNFTs = accountNFTs.filter(nft => (nft.NFTokenTaxon || 0) === taxon);
 
-        // Calculate accurate stats from XRPL
         const totalSupply = collectionNFTs.length;
         let listedCount = 0;
         const prices = [];
 
-        // Check each NFT for sell offers to calculate floor price and listed count
         for (const nft of collectionNFTs) {
           try {
             const sellOffers = await xrplService.getNFTSellOffers(nft.NFTokenID);
             if (sellOffers && sellOffers.length > 0) {
               listedCount++;
-
-              // Collect prices for floor price calculation
               sellOffers.forEach(offer => {
                 const amount = parseInt(offer.amount);
-                if (!isNaN(amount) && amount > 0) {
-                  prices.push(amount);
-                }
+                if (!isNaN(amount) && amount > 0) prices.push(amount);
               });
             }
-          } catch (err) {
-            // Continue checking other NFTs
-          }
+          } catch (err) {}
         }
 
-        // Calculate floor price
         const floorPrice = prices.length > 0 ? Math.min(...prices).toString() : null;
+        const listingPercentage = totalSupply > 0 ? ((listedCount / totalSupply) * 100).toFixed(2) : '0.00';
 
-        // Calculate listing percentage
-        const listingPercentage = totalSupply > 0
-          ? ((listedCount / totalSupply) * 100).toFixed(2)
-          : '0.00';
-
-        collectionsWithStats.push({
-          collection,
-          stats: {
-            totalSupply,
-            floorPrice,
-            totalVolume: collection.totalVolume || '0',
-            listedCount,
-            listingPercentage
-          }
-        });
-
-        // Update collection stats in database
         collection.totalSupply = totalSupply;
         collection.floorPrice = floorPrice;
         await collection.save();
 
+        xrplWithStats.push({
+          collection,
+          stats: { totalSupply, floorPrice, floorPriceFormatted: floorPrice ? (parseInt(floorPrice) / 1000000).toFixed(6) + ' XRP' : null, totalVolume: collection.totalVolume || '0', listedCount, listingPercentage, currency: 'XRP' }
+        });
       } catch (error) {
         logger.error(`Error checking collection ${collection.name} on XRPL:`, error.message);
-        // On error, keep the collection with database stats
-        collectionsWithStats.push({
+        xrplWithStats.push({
           collection,
-          stats: {
-            totalSupply: collection.totalSupply || 0,
-            floorPrice: collection.floorPrice,
-            totalVolume: collection.totalVolume || '0',
-            listedCount: 0,
-            listingPercentage: '0.00'
-          }
+          stats: { totalSupply: collection.totalSupply || 0, floorPrice: collection.floorPrice, floorPriceFormatted: null, totalVolume: collection.totalVolume || '0', listedCount: 0, listingPercentage: '0.00', currency: 'XRP' }
         });
       }
     }
 
-    // Format response with stats
+    // --- Calculate stats for Solana collections from SolanaNftListing table ---
+    const solanaWithStats = [];
+    for (const collection of solanaCollections) {
+      try {
+        const mintAddr = collection.mintAddress;
+
+        const [activeListings, soldListings] = await Promise.all([
+          SolanaNftListing.findAll({ where: { collectionMintAddress: mintAddr, status: 'active' }, attributes: ['price'], raw: true }),
+          SolanaNftListing.findAll({ where: { collectionMintAddress: mintAddr, status: 'sold' }, attributes: ['price'], raw: true })
+        ]);
+
+        const listedCount = activeListings.length;
+        const activePrices = activeListings.map(l => BigInt(l.price)).filter(p => p > 0n);
+        const floorPrice = activePrices.length > 0 ? activePrices.reduce((min, p) => p < min ? p : min).toString() : null;
+        const totalVolume = soldListings.reduce((sum, l) => sum + BigInt(l.price), 0n).toString();
+
+        // Try to get total supply from DAS
+        let totalSupply = collection.totalSupply || 0;
+        if (mintAddr) {
+          try {
+            const dasResult = await solanaService.getAssetsByCollection(mintAddr, 1, 1);
+            totalSupply = dasResult.total || totalSupply;
+          } catch (e) {}
+        }
+
+        collection.totalSupply = totalSupply;
+        collection.floorPrice = floorPrice;
+        collection.totalVolume = totalVolume;
+        await collection.save();
+
+        solanaWithStats.push({
+          collection,
+          stats: { totalSupply, floorPrice, floorPriceFormatted: floorPrice ? (Number(BigInt(floorPrice)) / 1e9).toFixed(4) + ' SOL' : null, totalVolume, listedCount, listingPercentage: totalSupply > 0 ? ((listedCount / totalSupply) * 100).toFixed(2) : '0.00', currency: 'SOL' }
+        });
+      } catch (error) {
+        logger.error(`Error checking Solana collection ${collection.name}:`, error.message);
+        solanaWithStats.push({
+          collection,
+          stats: { totalSupply: collection.totalSupply || 0, floorPrice: collection.floorPrice, floorPriceFormatted: null, totalVolume: collection.totalVolume || '0', listedCount: 0, listingPercentage: '0.00', currency: 'SOL' }
+        });
+      }
+    }
+
+    // Merge all collections with uniform format
+    const collectionsWithStats = [...xrplWithStats, ...solanaWithStats];
+
     let formattedCollections = collectionsWithStats.map(item => ({
       ...item.collection.toJSON(),
       stats: item.stats
