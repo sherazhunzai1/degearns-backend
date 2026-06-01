@@ -87,4 +87,18 @@ router.post('/notify-listing', notifyNFTListing);
  */
 router.post('/notify-purchase', notifyNFTPurchase);
 
+/**
+ * @route   GET /api/v1/nfts/solana/marketplace-authority
+ * @desc    Get the marketplace authority public key (for frontend delegation)
+ * @access  Public
+ */
+router.get('/solana/marketplace-authority', (req, res) => {
+  const solanaMarketplaceService = require('../services/solanaMarketplaceService');
+  const address = solanaMarketplaceService.getMarketplaceAddress();
+  if (!address) {
+    return res.status(503).json({ success: false, message: 'Marketplace authority not configured' });
+  }
+  res.status(200).json({ success: true, data: { marketplaceAuthority: address } });
+});
+
 module.exports = router;

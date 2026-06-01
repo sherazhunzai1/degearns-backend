@@ -1,6 +1,7 @@
 const xrplService = require('../services/xrplService');
 const bithompService = require('../services/bithompService');
 const solanaService = require('../services/solanaService');
+const solanaMarketplaceService = require('../services/solanaMarketplaceService');
 const { User, Collection, NftBoost } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
@@ -473,7 +474,8 @@ exports.notifyNFTPurchase = async (req, res, next) => {
       price,
       collectionId,
       collectionName,
-      transactionHash
+      transactionHash,
+      network
     } = req.body;
 
     if (!sellerWalletAddress) {
@@ -488,20 +490,54 @@ exports.notifyNFTPurchase = async (req, res, next) => {
       throw new ApiError(400, 'NFT token ID is required');
     }
 
+    // --- Solana marketplace: verify payment + transfer NFT ---
+    let transferResult = null;
+    if (network === 'solana') {
+      if (!transactionHash) {
+        throw new ApiError(400, 'Transaction hash is required for Solana purchases');
+      }
+      if (!price) {
+        throw new ApiError(400, 'Price (in lamports) is required for Solana purchases');
+      }
+
+      // Step 1: Verify the SOL payment on-chain
+      const payment = await solanaMarketplaceService.verifyPayment(
+        transactionHash,
+        buyerWalletAddress,
+        sellerWalletAddress,
+        price
+      );
+
+      if (!payment.verified) {
+        throw new ApiError(400, `Payment verification failed: ${payment.error}`);
+      }
+
+      logger.info(`Solana payment verified: ${transactionHash} (${price} lamports from ${buyerWalletAddress} to ${sellerWalletAddress})`);
+
+      // Step 2: Transfer NFT from seller to buyer using marketplace delegate authority
+      transferResult = await solanaMarketplaceService.transferNft(
+        nftTokenId,
+        sellerWalletAddress,
+        buyerWalletAddress
+      );
+
+      if (!transferResult.success) {
+        throw new ApiError(500, `NFT transfer failed: ${transferResult.error}`);
+      }
+
+      logger.info(`Solana NFT transferred: ${nftTokenId} → ${buyerWalletAddress} (tx: ${transferResult.signature})`);
+    }
+
     // Verify buyer exists
     const buyer = await User.findOne({
       where: { walletAddress: buyerWalletAddress }
     });
 
-    if (!buyer) {
-      throw new ApiError(404, 'Buyer not found');
-    }
-
     // Create notification for seller
     const notification = await notificationService.createNFTPurchaseNotification({
       sellerWalletAddress,
       buyerWalletAddress,
-      buyerUsername: buyer.username,
+      buyerUsername: buyer?.username || buyerWalletAddress.slice(0, 8) + '...',
       nftTokenId,
       nftName: nftName || 'NFT',
       nftDescription: nftDescription || null,
@@ -509,7 +545,7 @@ exports.notifyNFTPurchase = async (req, res, next) => {
       price: price || null,
       collectionId: collectionId || null,
       collectionName: collectionName || null,
-      transactionHash: transactionHash || null
+      transactionHash: transferResult?.signature || transactionHash || null
     });
 
     logger.info(`NFT purchase notification sent for ${nftTokenId} - seller: ${sellerWalletAddress}, buyer: ${buyerWalletAddress}`);
@@ -519,8 +555,13 @@ exports.notifyNFTPurchase = async (req, res, next) => {
         notificationSent: notification !== null,
         nftTokenId,
         sellerWalletAddress,
-        buyerWalletAddress
-      }, 'NFT purchase notification sent successfully')
+        buyerWalletAddress,
+        network: network || 'xrpl',
+        transfer: transferResult ? {
+          success: true,
+          signature: transferResult.signature
+        } : null
+      }, network === 'solana' ? 'Solana NFT purchase completed successfully' : 'NFT purchase notification sent successfully')
     );
   } catch (error) {
     next(error);
