@@ -8,7 +8,11 @@ const {
   notifyNFTPurchase,
   getIncomingOffers,
   getSolanaNFTsByOwner,
-  getSolanaNFTsByCollection
+  getSolanaNFTsByCollection,
+  createSolanaListing,
+  cancelSolanaListing,
+  getSolanaListings,
+  getSolanaNftHistory
 } = require('../controllers/nftController');
 
 /**
@@ -86,6 +90,35 @@ router.post('/notify-listing', notifyNFTListing);
  * @access  Public
  */
 router.post('/notify-purchase', notifyNFTPurchase);
+
+/**
+ * @route   POST /api/v1/nfts/solana/listing
+ * @desc    Create a Solana NFT listing (called after delegateSaleV1)
+ * @access  Public
+ */
+router.post('/solana/listing', createSolanaListing);
+
+/**
+ * @route   DELETE /api/v1/nfts/solana/listing
+ * @desc    Cancel a Solana NFT listing
+ * @access  Public
+ */
+router.delete('/solana/listing', cancelSolanaListing);
+
+/**
+ * @route   GET /api/v1/nfts/solana/listings
+ * @desc    Get all active Solana NFT listings (marketplace browse)
+ * @access  Public
+ * @query   page, limit, collectionMintAddress, sellerWalletAddress, sortBy, order
+ */
+router.get('/solana/listings', getSolanaListings);
+
+/**
+ * @route   GET /api/v1/nfts/solana/history/:mintAddress
+ * @desc    Get sale history for a Solana NFT
+ * @access  Public
+ */
+router.get('/solana/history/:mintAddress', getSolanaNftHistory);
 
 /**
  * @route   GET /api/v1/nfts/solana/marketplace-authority

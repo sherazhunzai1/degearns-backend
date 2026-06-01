@@ -2,7 +2,7 @@ const xrplService = require('../services/xrplService');
 const bithompService = require('../services/bithompService');
 const solanaService = require('../services/solanaService');
 const solanaMarketplaceService = require('../services/solanaMarketplaceService');
-const { User, Collection, NftBoost } = require('../models');
+const { User, Collection, NftBoost, SolanaNftListing } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
@@ -33,13 +33,40 @@ exports.getNFTDetail = async (req, res) => {
         return res.status(404).json({ success: false, message: 'NFT not found' });
       }
 
-      // Look up owner and collection in DB
       const ownerAddress = asset.ownership?.owner;
       const collectionAddress = asset.grouping?.find(g => g.group_key === 'collection')?.group_value;
-      const [ownerUser, collection] = await Promise.all([
+      const creatorAddress = asset.creators?.[0]?.address || null;
+
+      const [ownerUser, creatorUser, collection] = await Promise.all([
         ownerAddress ? User.findOne({ where: { walletAddress: ownerAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
+        creatorAddress ? User.findOne({ where: { walletAddress: creatorAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
         collectionAddress ? Collection.findOne({ where: { mintAddress: collectionAddress, network: 'solana' }, include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }] }) : null
       ]);
+
+      // Get active listing from DB
+      const activeListing = await SolanaNftListing.findOne({
+        where: { mintAddress: nftTokenId, status: 'active' }
+      });
+
+      const marketplaceAuthority = solanaMarketplaceService.getMarketplaceAddress();
+
+      const saleInfo = {
+        isOnSale: !!activeListing,
+        currentPrice: activeListing?.price || null,
+        currentPriceSol: activeListing ? (Number(BigInt(activeListing.price)) / 1e9).toFixed(9) : null,
+        listingId: activeListing?.id || null,
+        listedAt: activeListing?.createdAt || null,
+        delegate: asset.ownership?.delegate || null,
+        marketplaceAuthority
+      };
+
+      // Subscription plans
+      const walletAddresses = [ownerAddress, creatorAddress].filter(Boolean);
+      const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+
+      // Royalty info
+      const royaltyBasisPoints = asset.royalty?.basis_points || 0;
+      const royaltyPercentage = royaltyBasisPoints / 100;
 
       return res.status(200).json(new ApiResponse(200, {
         nftTokenId,
@@ -48,12 +75,24 @@ exports.getNFTDetail = async (req, res) => {
         description: asset.content?.metadata?.description || null,
         image: asset.content?.links?.image || asset.content?.files?.[0]?.uri || null,
         attributes: asset.content?.metadata?.attributes || [],
-        owner: ownerUser ? ownerUser.toJSON() : (ownerAddress ? { walletAddress: ownerAddress } : null),
+        issuer: creatorAddress,
+        issuerInfo: creatorUser ? {
+          ...creatorUser.toJSON(),
+          subscriptionPlan: subscriptionMap[creatorAddress] || 'free'
+        } : (creatorAddress ? { walletAddress: creatorAddress } : null),
         collection: collection ? collection.toJSON() : (collectionAddress ? { mintAddress: collectionAddress } : null),
-        royalty: asset.royalty || null,
+        owner: ownerAddress,
+        ownerInfo: ownerUser ? {
+          ...ownerUser.toJSON(),
+          subscriptionPlan: subscriptionMap[ownerAddress] || 'free'
+        } : (ownerAddress ? { walletAddress: ownerAddress } : null),
+        saleInfo,
+        royalty: {
+          basisPoints: royaltyBasisPoints,
+          percentage: royaltyPercentage
+        },
         compressed: asset.compression?.compressed || false,
-        mintAddress: nftTokenId,
-        raw: asset
+        mintAddress: nftTokenId
       }, 'Solana NFT detail retrieved successfully'));
     }
 
@@ -526,6 +565,19 @@ exports.notifyNFTPurchase = async (req, res, next) => {
       }
 
       logger.info(`Solana NFT transferred: ${nftTokenId} → ${buyerWalletAddress} (tx: ${transferResult.signature})`);
+
+      // Mark listing as sold
+      const activeListing = await SolanaNftListing.findOne({
+        where: { mintAddress: nftTokenId, status: 'active' }
+      });
+      if (activeListing) {
+        await activeListing.update({
+          status: 'sold',
+          buyerWalletAddress,
+          saleTxHash: transferResult.signature,
+          soldAt: new Date()
+        });
+      }
     }
 
     // Verify buyer exists
@@ -784,6 +836,192 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
     }, 'Collection detail and NFTs retrieved successfully'));
   } catch (error) {
     logger.error('Error getting Solana collection NFTs:', error);
+    next(error);
+  }
+};
+
+/**
+ * Create a Solana NFT listing (called after seller delegates via delegateSaleV1)
+ * @route POST /api/v1/nfts/solana/listing
+ */
+exports.createSolanaListing = async (req, res, next) => {
+  try {
+    const {
+      mintAddress,
+      sellerWalletAddress,
+      price,
+      collectionMintAddress,
+      nftName,
+      nftImage,
+      nftDescription,
+      nftAttributes,
+      delegateTxHash
+    } = req.body;
+
+    if (!mintAddress || !sellerWalletAddress || !price) {
+      throw new ApiError(400, 'mintAddress, sellerWalletAddress, and price are required');
+    }
+
+    if (!solanaService.isValidAddress(mintAddress)) {
+      throw new ApiError(400, 'Invalid mint address');
+    }
+
+    // Cancel any existing active listing for this NFT
+    await SolanaNftListing.update(
+      { status: 'cancelled' },
+      { where: { mintAddress, status: 'active' } }
+    );
+
+    const listing = await SolanaNftListing.create({
+      mintAddress,
+      sellerWalletAddress,
+      price,
+      collectionMintAddress: collectionMintAddress || null,
+      nftName: nftName || null,
+      nftImage: nftImage || null,
+      nftDescription: nftDescription || null,
+      nftAttributes: nftAttributes || null,
+      delegateTxHash: delegateTxHash || null,
+      status: 'active'
+    });
+
+    logger.info(`Solana NFT listed: ${mintAddress} by ${sellerWalletAddress} for ${price} lamports`);
+
+    res.status(201).json(
+      new ApiResponse(201, listing, 'NFT listed successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Cancel a Solana NFT listing
+ * @route DELETE /api/v1/nfts/solana/listing
+ */
+exports.cancelSolanaListing = async (req, res, next) => {
+  try {
+    const { mintAddress, sellerWalletAddress } = req.body;
+
+    if (!mintAddress || !sellerWalletAddress) {
+      throw new ApiError(400, 'mintAddress and sellerWalletAddress are required');
+    }
+
+    const listing = await SolanaNftListing.findOne({
+      where: { mintAddress, sellerWalletAddress, status: 'active' }
+    });
+
+    if (!listing) {
+      throw new ApiError(404, 'Active listing not found');
+    }
+
+    await listing.update({ status: 'cancelled' });
+
+    logger.info(`Solana NFT listing cancelled: ${mintAddress} by ${sellerWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, null, 'Listing cancelled successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get all active Solana NFT listings (marketplace browse)
+ * @route GET /api/v1/nfts/solana/listings
+ */
+exports.getSolanaListings = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      collectionMintAddress,
+      sellerWalletAddress,
+      sortBy = 'createdAt',
+      order = 'DESC'
+    } = req.query;
+
+    const where = { status: 'active' };
+    if (collectionMintAddress) where.collectionMintAddress = collectionMintAddress;
+    if (sellerWalletAddress) where.sellerWalletAddress = sellerWalletAddress;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const { count, rows: listings } = await SolanaNftListing.findAndCountAll({
+      where,
+      order: [[sortBy, order]],
+      limit: parseInt(limit),
+      offset
+    });
+
+    // Enrich with seller info
+    const sellerAddresses = [...new Set(listings.map(l => l.sellerWalletAddress))];
+    const [sellers, subscriptionMap] = await Promise.all([
+      User.findAll({ where: { walletAddress: { [Op.in]: sellerAddresses } }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }),
+      getActiveSubscriptionsForWallets(sellerAddresses)
+    ]);
+    const sellerMap = {};
+    sellers.forEach(s => { sellerMap[s.walletAddress] = { ...s.toJSON(), subscriptionPlan: subscriptionMap[s.walletAddress] || 'free' }; });
+
+    const enrichedListings = listings.map(l => ({
+      ...l.toJSON(),
+      seller: sellerMap[l.sellerWalletAddress] || { walletAddress: l.sellerWalletAddress }
+    }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        listings: enrichedListings,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Listings retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get sale history for a Solana NFT
+ * @route GET /api/v1/nfts/solana/history/:mintAddress
+ */
+exports.getSolanaNftHistory = async (req, res, next) => {
+  try {
+    const { mintAddress } = req.params;
+
+    if (!solanaService.isValidAddress(mintAddress)) {
+      throw new ApiError(400, 'Invalid mint address');
+    }
+
+    const history = await SolanaNftListing.findAll({
+      where: { mintAddress, status: 'sold' },
+      order: [['soldAt', 'DESC']]
+    });
+
+    // Enrich with buyer/seller info
+    const addresses = [...new Set(history.flatMap(h => [h.sellerWalletAddress, h.buyerWalletAddress].filter(Boolean)))];
+    const users = await User.findAll({ where: { walletAddress: { [Op.in]: addresses } }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] });
+    const userMap = {};
+    users.forEach(u => { userMap[u.walletAddress] = u.toJSON(); });
+
+    const enrichedHistory = history.map(h => ({
+      ...h.toJSON(),
+      seller: userMap[h.sellerWalletAddress] || { walletAddress: h.sellerWalletAddress },
+      buyer: userMap[h.buyerWalletAddress] || { walletAddress: h.buyerWalletAddress }
+    }));
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        mintAddress,
+        totalSales: history.length,
+        history: enrichedHistory
+      }, 'NFT sale history retrieved successfully')
+    );
+  } catch (error) {
     next(error);
   }
 };

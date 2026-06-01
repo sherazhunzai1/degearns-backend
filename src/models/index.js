@@ -41,6 +41,7 @@ const ReferralClaim = require('./ReferralClaim')(sequelize, DataTypes);
 const ReferralAuditLog = require('./ReferralAuditLog')(sequelize, DataTypes);
 const MemeCoin = require('./MemeCoin')(sequelize, DataTypes);
 const UserWallet = require('./UserWallet')(sequelize, DataTypes);
+const SolanaNftListing = require('./SolanaNftListing')(sequelize, DataTypes);
 
 // Define associations
 // User and UserWallet
@@ -685,5 +686,6 @@ module.exports = {
   ReferralClaim,
   ReferralAuditLog,
   MemeCoin,
-  UserWallet
+  UserWallet,
+  SolanaNftListing
 };
