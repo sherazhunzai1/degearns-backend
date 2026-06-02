@@ -810,8 +810,23 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
       raw: collectionAsset
     };
 
+    const nftMintAddresses = (result.items || []).map(item => item.id);
+
+    // Fetch active listings for all NFTs in this collection
+    const activeListings = nftMintAddresses.length > 0
+      ? await SolanaNftListing.findAll({
+          where: { mintAddress: { [Op.in]: nftMintAddresses }, status: 'active' },
+          raw: true
+        })
+      : [];
+    const listingMap = {};
+    activeListings.forEach(l => { listingMap[l.mintAddress] = l; });
+
+    const marketplaceAuthority = solanaMarketplaceService.getMarketplaceAddress();
+
     const nfts = (result.items || []).map(item => {
       const collectionGroup = item.grouping?.find(g => g.group_key === 'collection');
+      const listing = listingMap[item.id];
       return {
         mintAddress: item.id,
         name: item.content?.metadata?.name || null,
@@ -822,7 +837,15 @@ exports.getSolanaNFTsByCollection = async (req, res, next) => {
         owner: item.ownership?.owner || null,
         compressed: item.compression?.compressed || false,
         royalty: item.royalty || null,
-        raw: item
+        saleInfo: {
+          isOnSale: !!listing,
+          currentPrice: listing?.price || null,
+          currentPriceSol: listing ? (Number(BigInt(listing.price)) / 1e9).toFixed(9) : null,
+          listingId: listing?.id || null,
+          sellerWalletAddress: listing?.sellerWalletAddress || null,
+          listedAt: listing?.createdAt || null,
+          marketplaceAuthority
+        }
       };
     });
 
