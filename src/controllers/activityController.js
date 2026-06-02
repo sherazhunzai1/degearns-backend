@@ -13,6 +13,26 @@ const { ActivityLog, LuckyDraw, LuckyDrawParticipant } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { resolvePrimaryWallet } = require('../utils/userHelpers');
+
+/**
+ * Normalize a transaction amount from any supported field.
+ * Accepts xrpAmount (XRP drops) or price (Solana lamports) or solAmount (SOL).
+ * Returns the amount as a string in the smallest unit (drops or lamports).
+ */
+const normalizeAmount = ({ xrpAmount, price, solAmount }) => {
+  if (xrpAmount !== undefined && xrpAmount !== null && xrpAmount !== '') {
+    return String(xrpAmount);
+  }
+  if (price !== undefined && price !== null && price !== '') {
+    return String(price);
+  }
+  if (solAmount !== undefined && solAmount !== null && solAmount !== '') {
+    // Convert SOL to lamports (1 SOL = 1,000,000,000 lamports)
+    return String(Math.round(Number(solAmount) * 1e9));
+  }
+  return null;
+};
 
 /**
  * Get current month in YYYY-MM format for lucky draw
@@ -124,9 +144,12 @@ const addToLuckyDraw = async (buyerWalletAddress, nftTokenId, purchasePrice, pur
  */
 exports.logCollectionCreate = async (req, res) => {
   try {
-    const {
+    let {
       walletAddress,
       taxon,
+      mintAddress,
+      collectionMintAddress,
+      network,
       collectionName,
       transactionHash,
       metadata
@@ -137,22 +160,21 @@ exports.logCollectionCreate = async (req, res) => {
       throw new ApiError(400, 'Wallet address is required');
     }
 
-    if (!taxon && taxon !== 0) {
-      throw new ApiError(400, 'Taxon is required');
+    // Solana collections use a mint address, XRPL collections use a taxon
+    const solanaMint = mintAddress || collectionMintAddress || null;
+    const isSolana = network === 'solana' || !!solanaMint;
+
+    if (!isSolana && (taxon === undefined || taxon === null)) {
+      throw new ApiError(400, 'Taxon (XRPL) or mintAddress (Solana) is required');
+    }
+    if (isSolana && !solanaMint) {
+      throw new ApiError(400, 'mintAddress is required for Solana collections');
     }
 
-    // Check if activity already logged for this collection (by wallet + taxon)
-    const existingActivity = await ActivityLog.findOne({
-      where: {
-        userWalletAddress: walletAddress,
-        activityType: 'collection_create',
-        metadata: {
-          taxon: taxon
-        }
-      }
-    });
+    // Resolve linked wallet to primary user wallet for scoring
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
-    // Alternative check using transactionHash if provided
+    // Check for duplicate by transactionHash
     let existingByTxHash = null;
     if (transactionHash) {
       existingByTxHash = await ActivityLog.findOne({
@@ -164,10 +186,10 @@ exports.logCollectionCreate = async (req, res) => {
       });
     }
 
-    if (existingActivity || existingByTxHash) {
+    if (existingByTxHash) {
       return res.status(200).json(
         new ApiResponse(200, {
-          activity: existingActivity || existingByTxHash,
+          activity: existingByTxHash,
           alreadyLogged: true
         }, 'Activity already logged for this collection')
       );
@@ -181,14 +203,16 @@ exports.logCollectionCreate = async (req, res) => {
       relatedType: 'collection',
       transactionHash: transactionHash || null,
       metadata: {
-        taxon: taxon,
+        taxon: isSolana ? null : taxon,
+        mintAddress: solanaMint,
+        network: isSolana ? 'solana' : 'xrpl',
         collectionName: collectionName || null,
         issuerAddress: walletAddress,
         ...metadata
       }
     });
 
-    logger.info(`Collection create activity logged: ${walletAddress} created collection with taxon ${taxon}`);
+    logger.info(`Collection create activity logged: ${walletAddress} created ${isSolana ? 'Solana' : 'XRPL'} collection (${solanaMint || taxon})`);
 
     res.status(201).json(
       new ApiResponse(201, { activity }, 'Collection creation activity logged successfully')
@@ -295,13 +319,18 @@ exports.logDropCreate = async (req, res) => {
  */
 exports.logNftMint = async (req, res) => {
   try {
-    const {
+    let {
       walletAddress,
       nftTokenId,
+      mintAddress,
       taxon,
+      collectionMintAddress,
+      network,
       issuerAddress,
       transactionHash,
       xrpAmount,
+      price,
+      solAmount,
       metadata
     } = req.body;
 
@@ -312,6 +341,12 @@ exports.logNftMint = async (req, res) => {
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
     }
+
+    // Resolve linked wallet to primary user wallet for scoring
+    walletAddress = await resolvePrimaryWallet(walletAddress);
+
+    const amount = normalizeAmount({ xrpAmount, price, solAmount }) || '0';
+    const resolvedNetwork = network === 'solana' || mintAddress || collectionMintAddress ? 'solana' : 'xrpl';
 
     // Check for duplicate
     const existingActivity = await ActivityLog.findOne({
@@ -337,16 +372,19 @@ exports.logNftMint = async (req, res) => {
       relatedId: null,
       relatedType: 'nft',
       transactionHash: transactionHash,
-      xrpAmount: xrpAmount || 0,
+      xrpAmount: amount,
       metadata: {
-        nftTokenId: nftTokenId || null,
+        nftTokenId: nftTokenId || mintAddress || null,
+        mintAddress: mintAddress || nftTokenId || null,
         taxon: taxon || null,
+        collectionMintAddress: collectionMintAddress || null,
+        network: resolvedNetwork,
         issuerAddress: issuerAddress || null,
         ...metadata
       }
     });
 
-    logger.info(`NFT mint activity logged: ${walletAddress} minted NFT, tx: ${transactionHash}`);
+    logger.info(`NFT mint activity logged: ${walletAddress} minted ${resolvedNetwork} NFT, tx: ${transactionHash}`);
 
     res.status(201).json(
       new ApiResponse(201, { activity }, 'NFT mint activity logged successfully')
@@ -374,13 +412,18 @@ exports.logNftMint = async (req, res) => {
  */
 exports.logNftBuy = async (req, res) => {
   try {
-    const {
+    let {
       walletAddress,
       nftTokenId,
+      mintAddress,
       taxon,
+      collectionMintAddress,
+      network,
       issuerAddress,
       transactionHash,
       xrpAmount,
+      price,
+      solAmount,
       sellerWalletAddress,
       metadata
     } = req.body;
@@ -393,9 +436,16 @@ exports.logNftBuy = async (req, res) => {
       throw new ApiError(400, 'Transaction hash is required');
     }
 
-    if (!xrpAmount) {
-      throw new ApiError(400, 'XRP amount is required');
+    const amount = normalizeAmount({ xrpAmount, price, solAmount });
+    if (!amount) {
+      throw new ApiError(400, 'Amount is required (xrpAmount, price, or solAmount)');
     }
+
+    const resolvedNetwork = network === 'solana' || mintAddress || collectionMintAddress ? 'solana' : 'xrpl';
+    const nftId = nftTokenId || mintAddress || null;
+
+    // Resolve linked wallet to primary user wallet for scoring
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Check for duplicate
     const existingActivity = await ActivityLog.findOne({
@@ -421,26 +471,29 @@ exports.logNftBuy = async (req, res) => {
       relatedId: null,
       relatedType: 'nft',
       transactionHash: transactionHash,
-      xrpAmount: xrpAmount,
+      xrpAmount: amount,
       counterpartyWalletAddress: sellerWalletAddress || null,
       metadata: {
-        nftTokenId: nftTokenId || null,
+        nftTokenId: nftId,
+        mintAddress: mintAddress || nftTokenId || null,
         taxon: taxon || null,
+        collectionMintAddress: collectionMintAddress || null,
+        network: resolvedNetwork,
         issuerAddress: issuerAddress || null,
         ...metadata
       }
     });
 
-    logger.info(`NFT buy activity logged: ${walletAddress} bought NFT for ${xrpAmount} drops, tx: ${transactionHash}`);
+    logger.info(`NFT buy activity logged: ${walletAddress} bought ${resolvedNetwork} NFT for ${amount}, tx: ${transactionHash}`);
 
     // Automatically add buyer to lucky draw participation
     let luckyDrawResult = null;
-    if (nftTokenId) {
+    if (nftId) {
       luckyDrawResult = await addToLuckyDraw(
         walletAddress,
-        nftTokenId,
-        xrpAmount,
-        'XRP',
+        nftId,
+        amount,
+        resolvedNetwork === 'solana' ? 'SOL' : 'XRP',
         transactionHash
       );
     }
@@ -474,13 +527,18 @@ exports.logNftBuy = async (req, res) => {
  */
 exports.logNftSell = async (req, res) => {
   try {
-    const {
+    let {
       walletAddress,
       nftTokenId,
+      mintAddress,
       taxon,
+      collectionMintAddress,
+      network,
       issuerAddress,
       transactionHash,
       xrpAmount,
+      price,
+      solAmount,
       buyerWalletAddress,
       metadata
     } = req.body;
@@ -493,9 +551,15 @@ exports.logNftSell = async (req, res) => {
       throw new ApiError(400, 'Transaction hash is required');
     }
 
-    if (!xrpAmount) {
-      throw new ApiError(400, 'XRP amount is required');
+    const amount = normalizeAmount({ xrpAmount, price, solAmount });
+    if (!amount) {
+      throw new ApiError(400, 'Amount is required (xrpAmount, price, or solAmount)');
     }
+
+    const resolvedNetwork = network === 'solana' || mintAddress || collectionMintAddress ? 'solana' : 'xrpl';
+
+    // Resolve linked wallet to primary user wallet for scoring
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Check for duplicate
     const existingActivity = await ActivityLog.findOne({
@@ -521,17 +585,20 @@ exports.logNftSell = async (req, res) => {
       relatedId: null,
       relatedType: 'nft',
       transactionHash: transactionHash,
-      xrpAmount: xrpAmount,
+      xrpAmount: amount,
       counterpartyWalletAddress: buyerWalletAddress || null,
       metadata: {
-        nftTokenId: nftTokenId || null,
+        nftTokenId: nftTokenId || mintAddress || null,
+        mintAddress: mintAddress || nftTokenId || null,
         taxon: taxon || null,
+        collectionMintAddress: collectionMintAddress || null,
+        network: resolvedNetwork,
         issuerAddress: issuerAddress || null,
         ...metadata
       }
     });
 
-    logger.info(`NFT sell activity logged: ${walletAddress} sold NFT for ${xrpAmount} drops, tx: ${transactionHash}`);
+    logger.info(`NFT sell activity logged: ${walletAddress} sold ${resolvedNetwork} NFT for ${amount}, tx: ${transactionHash}`);
 
     res.status(201).json(
       new ApiResponse(201, { activity }, 'NFT sell activity logged successfully')
@@ -559,13 +626,18 @@ exports.logNftSell = async (req, res) => {
  */
 exports.logNftList = async (req, res) => {
   try {
-    const {
+    let {
       walletAddress,
       nftTokenId,
+      mintAddress,
       taxon,
+      collectionMintAddress,
+      network,
       issuerAddress,
       transactionHash,
       xrpAmount,
+      price,
+      solAmount,
       offerId,
       metadata
     } = req.body;
@@ -577,6 +649,12 @@ exports.logNftList = async (req, res) => {
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
     }
+
+    const amount = normalizeAmount({ xrpAmount, price, solAmount }) || '0';
+    const resolvedNetwork = network === 'solana' || mintAddress || collectionMintAddress ? 'solana' : 'xrpl';
+
+    // Resolve linked wallet to primary user wallet for scoring
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Check for duplicate
     const existingActivity = await ActivityLog.findOne({
@@ -602,13 +680,16 @@ exports.logNftList = async (req, res) => {
       relatedId: null,
       relatedType: 'nft',
       transactionHash: transactionHash,
-      xrpAmount: xrpAmount || 0,
+      xrpAmount: amount,
       metadata: {
-        nftTokenId: nftTokenId || null,
+        nftTokenId: nftTokenId || mintAddress || null,
+        mintAddress: mintAddress || nftTokenId || null,
         taxon: taxon || null,
+        collectionMintAddress: collectionMintAddress || null,
+        network: resolvedNetwork,
         issuerAddress: issuerAddress || null,
         offerId: offerId || null,
-        listPrice: xrpAmount,
+        listPrice: amount,
         ...metadata
       }
     });
@@ -1192,7 +1273,7 @@ exports.logFollowReceive = async (req, res) => {
  */
 exports.getUserActivities = async (req, res) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const {
       page = 1,
       limit = 20,
@@ -1204,6 +1285,8 @@ exports.getUserActivities = async (req, res) => {
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
     const where = { userWalletAddress: walletAddress };
@@ -1260,12 +1343,14 @@ exports.getUserActivities = async (req, res) => {
  */
 exports.getUserActivitySummary = async (req, res) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { month, year } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const now = new Date();
     const targetMonth = month ? parseInt(month) : now.getMonth() + 1;
