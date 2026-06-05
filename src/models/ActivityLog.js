@@ -159,6 +159,41 @@ module.exports = (sequelize, DataTypes) => {
     return aggregated;
   };
 
+  /**
+   * Aggregate activities per network for USD conversion.
+   * Returns { activityType: { xrpl: { totalAmount, count }, solana: { totalAmount, count } } }
+   */
+  ActivityLog.aggregateForUserByNetwork = async function(walletAddress, startDate, endDate) {
+    const { Op } = sequelize.Sequelize;
+
+    const activities = await this.findAll({
+      attributes: ['activityType', 'xrpAmount', 'metadata'],
+      where: {
+        userWalletAddress: walletAddress,
+        createdAt: { [Op.between]: [startDate, endDate] }
+      },
+      raw: true
+    });
+
+    const aggregated = {};
+    for (const a of activities) {
+      const type = a.activityType;
+      let meta = a.metadata;
+      if (typeof meta === 'string') {
+        try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
+      }
+      const network = meta?.network || 'xrpl';
+
+      if (!aggregated[type]) {
+        aggregated[type] = { xrpl: { totalAmount: 0, count: 0 }, solana: { totalAmount: 0, count: 0 } };
+      }
+      aggregated[type][network].totalAmount += parseFloat(a.xrpAmount) || 0;
+      aggregated[type][network].count += 1;
+    }
+
+    return aggregated;
+  };
+
   // Static method to get unique collections traded
   ActivityLog.getUniqueCollectionsTraded = async function(walletAddress, startDate, endDate) {
     const { Op } = sequelize.Sequelize;
