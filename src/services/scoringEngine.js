@@ -7,6 +7,7 @@
 
 const { Op } = require('sequelize');
 const scoringConfig = require('../config/scoring');
+const priceService = require('./priceService');
 const {
   getActiveSubscriptionsForWallets
 } = require('../utils/userHelpers');
@@ -132,13 +133,35 @@ class ScoringEngine {
   async gatherRawMetrics(walletAddress, startDate, endDate) {
     const { ActivityLog, Follow, Post, PostLike, PostComment, DropMint, Drop, Collection } = this.models;
 
-    // Get aggregated activities
-    const activities = await ActivityLog.aggregateForUser(walletAddress, startDate, endDate);
+    // Get aggregated activities per network for USD conversion
+    const activitiesByNetwork = await ActivityLog.aggregateForUserByNetwork(walletAddress, startDate, endDate);
 
-    // Trader metrics
-    const volumeBought = (activities.nft_buy?.totalAmount || 0) + (activities.nft_mint?.totalAmount || 0);
-    const volumeSold = activities.nft_sell?.totalAmount || 0;
-    const trades = (activities.nft_buy?.count || 0) + (activities.nft_sell?.count || 0);
+    // Helper: convert per-network amounts to USD and sum
+    const toUsdTotal = async (activityType) => {
+      const data = activitiesByNetwork[activityType];
+      if (!data) return { usd: 0, count: 0 };
+
+      const [xrplUsd, solanaUsd] = await Promise.all([
+        priceService.dropsToUsd(data.xrpl.totalAmount),
+        priceService.lamportsToUsd(data.solana.totalAmount)
+      ]);
+
+      return {
+        usd: xrplUsd + solanaUsd,
+        count: data.xrpl.count + data.solana.count
+      };
+    };
+
+    const [buyData, mintData, sellData] = await Promise.all([
+      toUsdTotal('nft_buy'),
+      toUsdTotal('nft_mint'),
+      toUsdTotal('nft_sell')
+    ]);
+
+    // Trader metrics (all in USD)
+    const volumeBought = buyData.usd + mintData.usd;
+    const volumeSold = sellData.usd;
+    const trades = buyData.count + sellData.count;
     const uniqueCollections = await ActivityLog.getUniqueCollectionsTraded(walletAddress, startDate, endDate);
 
     // Calculate profit margin
@@ -525,9 +548,9 @@ class ScoringEngine {
       case 'trader':
         return {
           volumeBought: parseFloat(stats.totalVolumeBought),
-          volumeBoughtXrp: (parseFloat(stats.totalVolumeBought) / 1000000).toFixed(6),
+          volumeBoughtUsd: '$' + parseFloat(stats.totalVolumeBought).toFixed(2),
           volumeSold: parseFloat(stats.totalVolumeSold),
-          volumeSoldXrp: (parseFloat(stats.totalVolumeSold) / 1000000).toFixed(6),
+          volumeSoldUsd: '$' + parseFloat(stats.totalVolumeSold).toFixed(2),
           trades: parseInt(stats.numberOfTrades),
           uniqueCollections: parseInt(stats.uniqueCollectionsTraded),
           profitMargin: parseFloat(stats.profitMargin)
@@ -535,11 +558,11 @@ class ScoringEngine {
       case 'creator':
         return {
           salesVolume: parseFloat(stats.totalSalesVolume),
-          salesVolumeXrp: (parseFloat(stats.totalSalesVolume) / 1000000).toFixed(6),
+          salesVolumeUsd: '$' + parseFloat(stats.totalSalesVolume).toFixed(2),
           nftsSold: parseInt(stats.nftsSold),
           collections: parseInt(stats.collectionsCreated),
           avgPrice: parseFloat(stats.averageNftPrice),
-          avgPriceXrp: (parseFloat(stats.averageNftPrice) / 1000000).toFixed(6),
+          avgPriceUsd: '$' + parseFloat(stats.averageNftPrice).toFixed(2),
           uniqueBuyers: parseInt(stats.uniqueBuyers)
         };
       case 'influencer':
