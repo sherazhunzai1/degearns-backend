@@ -115,6 +115,18 @@ async function getAssetsByOwner(walletAddress, page = 1, limit = 100) {
 }
 
 /**
+ * Get all fungible tokens (meme coins, SPL tokens) owned by a wallet.
+ */
+async function getTokensByOwner(walletAddress, page = 1, limit = 100) {
+  return dasRequest('getAssetsByOwner', {
+    ownerAddress: walletAddress,
+    page,
+    limit,
+    displayOptions: { showFungible: true, showNativeBalance: true }
+  });
+}
+
+/**
  * Get all NFTs in a collection by the collection's mint address.
  */
 async function getAssetsByCollection(collectionMintAddress, page = 1, limit = 100) {
@@ -172,6 +184,7 @@ module.exports = {
   getNftMints,
   getAsset,
   getAssetsByOwner,
+  getTokensByOwner,
   getAssetsByCollection,
   searchAssets,
   verifyTransaction,

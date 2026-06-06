@@ -558,7 +558,7 @@ const getMyMemeCoins = async (req, res, next) => {
     // Fetch Solana tokens from on-chain via Helius DAS (full metadata included)
     for (const w of solanaWallets) {
       try {
-        const result = await solanaService.getAssetsByOwner(w.address, 1, 1000).catch(() => ({ items: [] }));
+        const result = await solanaService.getTokensByOwner(w.address, 1, 1000).catch(() => ({ items: [] }));
         for (const item of (result.items || [])) {
           if (item.interface !== 'FungibleToken' && item.interface !== 'FungibleAsset') continue;
 
