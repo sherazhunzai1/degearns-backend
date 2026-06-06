@@ -40,6 +40,8 @@ const ReferralReward = require('./ReferralReward')(sequelize, DataTypes);
 const ReferralClaim = require('./ReferralClaim')(sequelize, DataTypes);
 const ReferralAuditLog = require('./ReferralAuditLog')(sequelize, DataTypes);
 const MemeCoin = require('./MemeCoin')(sequelize, DataTypes);
+const MemeCoinPool = require('./MemeCoinPool')(sequelize, DataTypes);
+const MemeCoinTrade = require('./MemeCoinTrade')(sequelize, DataTypes);
 const UserWallet = require('./UserWallet')(sequelize, DataTypes);
 const SolanaNftListing = require('./SolanaNftListing')(sequelize, DataTypes);
 
@@ -638,6 +640,36 @@ MemeCoin.belongsTo(User, {
   as: 'creator'
 });
 
+// MemeCoin and MemeCoinPool associations
+MemeCoin.hasMany(MemeCoinPool, {
+  foreignKey: 'memeCoinId',
+  as: 'pools'
+});
+MemeCoinPool.belongsTo(MemeCoin, {
+  foreignKey: 'memeCoinId',
+  as: 'memeCoin'
+});
+
+// MemeCoin and MemeCoinTrade associations
+MemeCoin.hasMany(MemeCoinTrade, {
+  foreignKey: 'memeCoinId',
+  as: 'trades'
+});
+MemeCoinTrade.belongsTo(MemeCoin, {
+  foreignKey: 'memeCoinId',
+  as: 'memeCoin'
+});
+
+// MemeCoinPool and MemeCoinTrade associations
+MemeCoinPool.hasMany(MemeCoinTrade, {
+  foreignKey: 'poolId',
+  as: 'trades'
+});
+MemeCoinTrade.belongsTo(MemeCoinPool, {
+  foreignKey: 'poolId',
+  as: 'pool'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -686,6 +718,8 @@ module.exports = {
   ReferralClaim,
   ReferralAuditLog,
   MemeCoin,
+  MemeCoinPool,
+  MemeCoinTrade,
   UserWallet,
   SolanaNftListing
 };

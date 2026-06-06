@@ -14,12 +14,23 @@ module.exports = (sequelize, DataTypes) => {
     tokenSymbol: {
       type: DataTypes.STRING(15),
       allowNull: false,
-      comment: 'Currency code on XRPL (3 chars for standard, up to 15 hex-encoded for non-standard)'
+      comment: 'Token symbol (3-15 chars)'
+    },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      defaultValue: 'xrpl',
+      allowNull: false,
+      comment: 'Blockchain network for this meme coin'
+    },
+    mintAddress: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Solana SPL token mint address (null for XRPL coins)'
     },
     currencyHex: {
       type: DataTypes.STRING(40),
-      allowNull: false,
-      comment: 'Hex-encoded currency code used on XRPL ledger'
+      allowNull: true,
+      comment: 'Hex-encoded currency code on XRPL (null for Solana coins)'
     },
     totalSupply: {
       type: DataTypes.DECIMAL(30, 6),
@@ -57,8 +68,8 @@ module.exports = (sequelize, DataTypes) => {
     },
     issuerWalletAddress: {
       type: DataTypes.STRING(100),
-      allowNull: false,
-      comment: 'XRPL wallet address of the token issuer'
+      allowNull: true,
+      comment: 'XRPL token issuer address (null for Solana coins)'
     },
     creatorWalletAddress: {
       type: DataTypes.STRING(100),
@@ -66,7 +77,7 @@ module.exports = (sequelize, DataTypes) => {
       comment: 'Wallet address of the user who created the token'
     },
     status: {
-      type: DataTypes.ENUM('pending', 'trust_set', 'issued', 'failed'),
+      type: DataTypes.ENUM('pending', 'trust_set', 'issued', 'failed', 'minted'),
       defaultValue: 'pending',
       comment: 'Token creation status'
     },
@@ -93,6 +104,8 @@ module.exports = (sequelize, DataTypes) => {
       { fields: ['issuerWalletAddress'], name: 'idx_memecoin_issuer' },
       { fields: ['tokenSymbol'], name: 'idx_memecoin_symbol' },
       { fields: ['status'], name: 'idx_memecoin_status' },
+      { fields: ['network'], name: 'idx_memecoin_network' },
+      { fields: ['mintAddress'], name: 'idx_memecoin_mint' },
       {
         unique: true,
         fields: ['currencyHex', 'issuerWalletAddress'],
