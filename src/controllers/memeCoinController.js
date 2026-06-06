@@ -453,15 +453,14 @@ const getMemeCoins = async (req, res, next) => {
 };
 
 /**
- * Get meme coins for a user profile.
- * Returns coins the user CREATED + coins the user HOLDS on-chain.
- * Resolves linked wallets to query all connected wallets across both networks.
+ * Get meme coins for a user profile — fetched directly from blockchain.
+ * Returns coins the user HOLDS on-chain across all linked wallets.
+ * XRPL: trustlines with balance > 0. Solana: SPL fungible tokens via Helius DAS.
  */
 const getMyMemeCoins = async (req, res, next) => {
   try {
     let { walletAddress } = req.params;
 
-    // Resolve linked wallet to primary, then get all linked wallets
     const primaryWallet = await resolvePrimaryWallet(walletAddress);
     const user = await User.findOne({ where: { walletAddress: primaryWallet } });
 
@@ -474,54 +473,12 @@ const getMyMemeCoins = async (req, res, next) => {
       }
     }
 
-    const walletAddresses = allWallets.map(w => w.address);
     const xrplWallets = allWallets.filter(w => w.network === 'xrpl');
     const solanaWallets = allWallets.filter(w => w.network === 'solana');
 
-    // 1. Coins CREATED by this user (from DB)
-    const createdCoins = await MemeCoin.findAll({
-      where: { creatorWalletAddress: { [Op.in]: walletAddresses } },
-      include: [
-        { association: 'pools', where: { status: 'active' }, required: false },
-        { association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
+    const allCoins = [];
 
-    // 2. Coins HELD on Solana (SPL tokens in wallet)
-    const heldSolanaMintsSet = new Set();
-    for (const w of solanaWallets) {
-      try {
-        const mints = await solanaService.getNftMints(w.address).catch(() => []);
-        // getNftMints returns NFTs (decimals=0, amount=1). For fungible tokens we need a different query.
-        // Use getAssetsByOwner which returns all tokens
-        const result = await solanaService.getAssetsByOwner(w.address, 1, 1000).catch(() => ({ items: [] }));
-        (result.items || []).forEach(item => {
-          // Include fungible tokens (not NFTs)
-          if (item.interface === 'FungibleToken' || item.interface === 'FungibleAsset') {
-            heldSolanaMintsSet.add(item.id);
-          }
-        });
-      } catch (err) {
-        logger.warn(`Error fetching Solana tokens for ${w.address}: ${err.message}`);
-      }
-    }
-
-    // Match held Solana mints against registered meme coins
-    const heldSolanaMints = [...heldSolanaMintsSet];
-    let heldSolanaCoins = [];
-    if (heldSolanaMints.length > 0) {
-      heldSolanaCoins = await MemeCoin.findAll({
-        where: { mintAddress: { [Op.in]: heldSolanaMints }, network: 'solana' },
-        include: [
-          { association: 'pools', where: { status: 'active' }, required: false },
-          { association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }
-        ]
-      });
-    }
-
-    // 3. Coins HELD on XRPL (trustlines with balance > 0)
-    let heldXrplCoins = [];
+    // Fetch XRPL tokens from on-chain trustlines
     for (const w of xrplWallets) {
       try {
         const client = await xrplConfig.getClientAsync();
@@ -531,49 +488,59 @@ const getMyMemeCoins = async (req, res, next) => {
           ledger_index: 'validated'
         });
         const lines = response.result.lines || [];
-        const activeTrustlines = lines.filter(l => parseFloat(l.balance) > 0);
 
-        if (activeTrustlines.length > 0) {
-          // Match against registered meme coins by currencyHex + issuer
-          for (const line of activeTrustlines) {
-            const currencyHex = line.currency;
-            const issuer = line.account;
-            const coin = await MemeCoin.findOne({
-              where: { currencyHex, issuerWalletAddress: issuer, network: 'xrpl' },
-              include: [
-                { association: 'pools', where: { status: 'active' }, required: false },
-                { association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }
-              ]
-            });
-            if (coin) {
-              heldXrplCoins.push({ coin, balance: line.balance });
-            }
+        for (const line of lines) {
+          const balance = parseFloat(line.balance);
+          if (balance <= 0) continue;
+
+          let currencyName = line.currency;
+          if (line.currency.length > 3) {
+            try {
+              currencyName = Buffer.from(line.currency, 'hex').toString('utf-8').replace(/\0/g, '');
+            } catch (e) {}
           }
+
+          allCoins.push({
+            network: 'xrpl',
+            walletAddress: w.address,
+            tokenSymbol: currencyName,
+            currencyHex: line.currency,
+            issuer: line.account,
+            balance: line.balance,
+            limit: line.limit
+          });
         }
       } catch (err) {
         logger.warn(`Error fetching XRPL trustlines for ${w.address}: ${err.message}`);
       }
     }
 
-    // Merge: deduplicate by coin ID
-    const seenIds = new Set();
-    const allCoins = [];
+    // Fetch Solana tokens from on-chain via Helius DAS
+    for (const w of solanaWallets) {
+      try {
+        const result = await solanaService.getAssetsByOwner(w.address, 1, 1000).catch(() => ({ items: [] }));
+        for (const item of (result.items || [])) {
+          if (item.interface !== 'FungibleToken' && item.interface !== 'FungibleAsset') continue;
 
-    const addCoin = (coin, source, balance = null) => {
-      if (seenIds.has(coin.id)) return;
-      seenIds.add(coin.id);
-      const json = coin.toJSON();
-      allCoins.push({
-        ...json,
-        source,
-        balance,
-        isListed: json.pools && json.pools.length > 0
-      });
-    };
-
-    createdCoins.forEach(c => addCoin(c, 'created'));
-    heldSolanaCoins.forEach(c => addCoin(c, 'held'));
-    heldXrplCoins.forEach(({ coin, balance }) => addCoin(coin, 'held', balance));
+          allCoins.push({
+            network: 'solana',
+            walletAddress: w.address,
+            tokenSymbol: item.content?.metadata?.symbol || null,
+            tokenName: item.content?.metadata?.name || null,
+            mintAddress: item.id,
+            image: item.content?.links?.image || item.content?.files?.[0]?.uri || null,
+            balance: item.token_info?.balance || null,
+            decimals: item.token_info?.decimals || null,
+            supply: item.token_info?.supply || null,
+            priceUsd: item.token_info?.price_info?.price_per_token || null,
+            totalPriceUsd: item.token_info?.price_info?.total_price || null,
+            currency: item.token_info?.price_info?.currency || null
+          });
+        }
+      } catch (err) {
+        logger.warn(`Error fetching Solana tokens for ${w.address}: ${err.message}`);
+      }
+    }
 
     res.status(200).json(
       new ApiResponse(200, {
