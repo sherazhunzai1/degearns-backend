@@ -478,7 +478,7 @@ const getMyMemeCoins = async (req, res, next) => {
 
     const allCoins = [];
 
-    // Fetch XRPL tokens from on-chain trustlines
+    // Fetch XRPL tokens from on-chain trustlines + enrich with metadata
     for (const w of xrplWallets) {
       try {
         const client = await xrplConfig.getClientAsync();
@@ -488,26 +488,66 @@ const getMyMemeCoins = async (req, res, next) => {
           ledger_index: 'validated'
         });
         const lines = response.result.lines || [];
+        const activeLines = lines.filter(l => parseFloat(l.balance) > 0);
 
-        for (const line of lines) {
-          const balance = parseFloat(line.balance);
-          if (balance <= 0) continue;
+        // Batch fetch metadata from DB for all held tokens
+        const dbCoins = activeLines.length > 0 ? await MemeCoin.findAll({
+          where: {
+            network: 'xrpl',
+            [Op.or]: activeLines.map(l => ({
+              currencyHex: l.currency,
+              issuerWalletAddress: l.account
+            }))
+          },
+          raw: true
+        }) : [];
+        const dbMap = {};
+        dbCoins.forEach(c => { dbMap[`${c.currencyHex}_${c.issuerWalletAddress}`] = c; });
 
-          let currencyName = line.currency;
+        // Also fetch issuer's total supply via gateway_balances
+        const issuerSupplyMap = {};
+        const uniqueIssuers = [...new Set(activeLines.map(l => l.account))];
+        await Promise.all(uniqueIssuers.map(async (issuer) => {
+          try {
+            const gwRes = await client.request({
+              command: 'gateway_balances',
+              account: issuer,
+              ledger_index: 'validated'
+            });
+            const obligations = gwRes.result.obligations || {};
+            for (const [cur, amount] of Object.entries(obligations)) {
+              issuerSupplyMap[`${cur}_${issuer}`] = amount;
+            }
+          } catch (e) {}
+        }));
+
+        for (const line of activeLines) {
+          let tokenSymbol = line.currency;
           if (line.currency.length > 3) {
             try {
-              currencyName = Buffer.from(line.currency, 'hex').toString('utf-8').replace(/\0/g, '');
+              tokenSymbol = Buffer.from(line.currency, 'hex').toString('utf-8').replace(/\0/g, '');
             } catch (e) {}
           }
+
+          const key = `${line.currency}_${line.account}`;
+          const dbCoin = dbMap[key];
+          const totalSupply = issuerSupplyMap[key] || dbCoin?.totalSupply || null;
 
           allCoins.push({
             network: 'xrpl',
             walletAddress: w.address,
-            tokenSymbol: currencyName,
+            tokenName: dbCoin?.tokenName || tokenSymbol,
+            tokenSymbol,
+            description: dbCoin?.description || null,
+            image: dbCoin?.logo || null,
             currencyHex: line.currency,
             issuer: line.account,
             balance: line.balance,
-            limit: line.limit
+            totalSupply,
+            decimals: dbCoin?.decimals || null,
+            limit: line.limit,
+            website: dbCoin?.website || null,
+            socialLinks: dbCoin?.socialLinks || null
           });
         }
       } catch (err) {
@@ -515,7 +555,7 @@ const getMyMemeCoins = async (req, res, next) => {
       }
     }
 
-    // Fetch Solana tokens from on-chain via Helius DAS
+    // Fetch Solana tokens from on-chain via Helius DAS (full metadata included)
     for (const w of solanaWallets) {
       try {
         const result = await solanaService.getAssetsByOwner(w.address, 1, 1000).catch(() => ({ items: [] }));
@@ -525,16 +565,18 @@ const getMyMemeCoins = async (req, res, next) => {
           allCoins.push({
             network: 'solana',
             walletAddress: w.address,
-            tokenSymbol: item.content?.metadata?.symbol || null,
             tokenName: item.content?.metadata?.name || null,
-            mintAddress: item.id,
+            tokenSymbol: item.content?.metadata?.symbol || null,
+            description: item.content?.metadata?.description || null,
             image: item.content?.links?.image || item.content?.files?.[0]?.uri || null,
+            mintAddress: item.id,
             balance: item.token_info?.balance || null,
+            totalSupply: item.token_info?.supply || null,
             decimals: item.token_info?.decimals || null,
-            supply: item.token_info?.supply || null,
             priceUsd: item.token_info?.price_info?.price_per_token || null,
             totalPriceUsd: item.token_info?.price_info?.total_price || null,
-            currency: item.token_info?.price_info?.currency || null
+            currency: item.token_info?.price_info?.currency || null,
+            attributes: item.content?.metadata?.attributes || []
           });
         }
       } catch (err) {
