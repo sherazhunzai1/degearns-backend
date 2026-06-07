@@ -13,6 +13,9 @@ const {
   recordTrade,
   getTrades,
   getPriceHistory,
+  buildBuyToken,
+  buildSellToken,
+  confirmSwap,
   buildAMMCreate,
   confirmAMMCreate,
   getAMMInfo
@@ -118,6 +121,29 @@ router.get('/:id/trades', getTrades);
  * @access  Public
  */
 router.get('/:id/price-history', getPriceHistory);
+
+/**
+ * @route   POST /api/v1/memecoins/swap/buy
+ * @desc    XRPL: Build a buy transaction (spend XRP → get meme coins).
+ *          Returns unsigned tx for Xaman signing.
+ * @access  Public
+ */
+router.post('/swap/buy', buildBuyToken);
+
+/**
+ * @route   POST /api/v1/memecoins/swap/sell
+ * @desc    XRPL: Build a sell transaction (sell meme coins → get XRP).
+ *          Returns unsigned tx for Xaman signing.
+ * @access  Public
+ */
+router.post('/swap/sell', buildSellToken);
+
+/**
+ * @route   POST /api/v1/memecoins/confirm-swap
+ * @desc    Confirm a swap tx. Verifies on-chain + records as trade for price history.
+ * @access  Public
+ */
+router.post('/confirm-swap', confirmSwap);
 
 /**
  * @route   POST /api/v1/memecoins/amm/create
