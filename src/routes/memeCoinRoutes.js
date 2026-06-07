@@ -87,15 +87,33 @@ router.get('/:id/pools', getMemeCoinPools);
 router.post('/:id/trade', recordTrade);
 
 /**
+ * @route   GET /api/v1/memecoins/trades
+ * @desc    Get trade history using on-chain identifiers.
+ *          Query: currencyHex+issuerWalletAddress (XRPL) or mintAddress (Solana)
+ *          Also: page, limit, type (buy/sell)
+ * @access  Public
+ */
+router.get('/trades', getTrades);
+
+/**
+ * @route   GET /api/v1/memecoins/price-history
+ * @desc    Get OHLC candle data for price graph using on-chain identifiers.
+ *          Query: currencyHex+issuerWalletAddress (XRPL) or mintAddress (Solana)
+ *          Also: interval (5m/15m/30m/1h/4h/1d), from, to
+ * @access  Public
+ */
+router.get('/price-history', getPriceHistory);
+
+/**
  * @route   GET /api/v1/memecoins/:id/trades
- * @desc    Get trade history for a meme coin.
+ * @desc    Get trade history for a meme coin by DB ID.
  * @access  Public
  */
 router.get('/:id/trades', getTrades);
 
 /**
  * @route   GET /api/v1/memecoins/:id/price-history
- * @desc    Get OHLC candle data for price graph.
+ * @desc    Get OHLC candle data by DB ID.
  *          Query: interval (5m/15m/30m/1h/4h/1d), from, to
  * @access  Public
  */

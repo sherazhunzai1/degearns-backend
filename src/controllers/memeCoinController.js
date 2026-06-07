@@ -1027,19 +1027,46 @@ const recordTrade = async (req, res, next) => {
 };
 
 /**
+ * Helper: find a meme coin by on-chain identifiers or DB ID.
+ * Accepts id, or currencyHex+issuerWalletAddress (XRPL), or mintAddress (Solana).
+ */
+const findMemeCoinByIdentifier = async (query) => {
+  const { id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = query;
+
+  // By DB ID
+  if (id && id.length === 36) {
+    return MemeCoin.findByPk(id);
+  }
+
+  // By Solana mint address
+  if (mintAddress) {
+    return MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
+  }
+
+  // By XRPL currency + issuer
+  const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+  if (resolvedHex && issuerWalletAddress) {
+    return MemeCoin.findOne({ where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' } });
+  }
+
+  return null;
+};
+
+/**
  * Get trade history for a meme coin (paginated, most recent first).
+ * Accepts DB id, or query params: currencyHex+issuerWalletAddress, or mintAddress
  */
 const getTrades = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { page = 1, limit = 50, type } = req.query;
+    const { page = 1, limit = 50, type, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await MemeCoin.findByPk(id);
+    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
     }
 
-    const where = { memeCoinId: id };
+    const where = { memeCoinId: memeCoin.id };
     if (type) where.type = type;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -1079,9 +1106,9 @@ const getTrades = async (req, res, next) => {
 const getPriceHistory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { interval = '1h', from, to } = req.query;
+    const { interval = '1h', from, to, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await MemeCoin.findByPk(id);
+    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
     }
@@ -1117,7 +1144,7 @@ const getPriceHistory = async (req, res, next) => {
       ORDER BY bucket ASC
     `, {
       replacements: {
-        coinId: id,
+        coinId: memeCoin.id,
         intervalSeconds,
         fromDate,
         toDate
@@ -1138,10 +1165,14 @@ const getPriceHistory = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        memeCoinId: id,
+        memeCoinId: memeCoin.id,
+        tokenName: memeCoin.tokenName,
+        tokenSymbol: memeCoin.tokenSymbol,
+        network: memeCoin.network,
         interval,
         from: fromDate,
         to: toDate,
+        totalCandles: candles.length,
         candles
       }, 'Price history retrieved successfully')
     );
