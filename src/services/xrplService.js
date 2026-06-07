@@ -1164,10 +1164,7 @@ class XRPLService {
    */
   currencyToHex(symbol) {
     const cleaned = symbol.toUpperCase().trim();
-    if (cleaned.length <= 3) {
-      return cleaned;
-    }
-    // Hex-encode and pad to 40 characters (20 bytes)
+    // Always hex-encode for Xaman compatibility (Xaman rejects short currency codes)
     const hex = Buffer.from(cleaned, 'ascii').toString('hex').toUpperCase();
     return hex.padEnd(40, '0');
   }
