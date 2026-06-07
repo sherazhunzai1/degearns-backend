@@ -116,10 +116,12 @@ const createMemeCoin = async (req, res, next) => {
       );
     }
 
-    // --- XRPL meme coin (frontend creates on-chain, backend stores metadata) ---
-    const currencyHex = req.body.currencyHex || xrplService.currencyToHex(symbolCleaned);
-    const issuerAddress = req.body.issuerWalletAddress || walletAddress;
-    const issuanceTxHash = req.body.issuanceTxHash || req.body.txHash || null;
+    // --- XRPL meme coin ---
+    // Step 1: Backend saves record + builds TrustSet tx for user to sign via Xaman
+    // Step 2: User signs TrustSet (frontend → Xaman QR)
+    // Step 3: Frontend calls /confirm-trustline → backend verifies + issues tokens
+    const currencyHex = xrplService.currencyToHex(symbolCleaned);
+    const issuerAddress = xrplConfig.getAdminWallet().address;
 
     // Check duplicate
     const existing = await MemeCoin.findOne({
@@ -144,18 +146,46 @@ const createMemeCoin = async (req, res, next) => {
       socialLinks: socialLinks || null,
       issuerWalletAddress: issuerAddress,
       creatorWalletAddress: walletAddress,
-      status: issuanceTxHash ? 'issued' : 'pending',
-      issuanceTxHash,
+      status: 'pending',
       metadata: {
-        createdVia: 'frontend',
+        createdVia: 'backend',
         originalSymbol: tokenSymbol
       }
     });
 
-    logger.info(`XRPL MemeCoin registered: ${tokenName} (${symbolCleaned}) by ${walletAddress}, id: ${memeCoin.id}`);
+    // Build TrustSet transaction for the user to sign via Xaman
+    // Do NOT autofill — Xaman handles Sequence, Fee, LastLedgerSequence
+    const trustSetTransaction = xrplService.buildTrustSetPayload({
+      creatorWallet: walletAddress,
+      issuerAddress,
+      currencyHex,
+      totalSupply: supply
+    });
+
+    logger.info(`XRPL MemeCoin created: ${tokenName} (${symbolCleaned}) by ${walletAddress}, id: ${memeCoin.id}`);
 
     res.status(201).json(
-      new ApiResponse(201, memeCoin, 'XRPL meme coin registered successfully')
+      new ApiResponse(201, {
+        id: memeCoin.id,
+        tokenName: memeCoin.tokenName,
+        tokenSymbol: memeCoin.tokenSymbol,
+        network: 'xrpl',
+        currencyHex,
+        totalSupply: memeCoin.totalSupply,
+        decimals: memeCoin.decimals,
+        logo: memeCoin.logo,
+        description: memeCoin.description,
+        issuerWalletAddress: issuerAddress,
+        creatorWalletAddress: walletAddress,
+        status: 'pending',
+        trustSetTransaction,
+        instructions: {
+          step: 1,
+          action: 'Sign this TrustSet transaction with your XRPL wallet (Xaman QR code)',
+          nextStep: 'After signing, call POST /api/v1/memecoins/:id/confirm-trustline with { trustSetTxHash }',
+          nextEndpoint: `/api/v1/memecoins/${memeCoin.id}/confirm-trustline`
+        }
+      }, 'Meme coin created. Sign the TrustSet to proceed.')
     );
   } catch (error) {
     next(error);
