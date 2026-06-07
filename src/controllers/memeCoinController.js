@@ -456,20 +456,78 @@ const getMyMemeCoins = async (req, res, next) => {
 
     const allCoins = [];
 
-    // Fetch XRPL tokens from on-chain trustlines + enrich with metadata
+    // Fetch XRPL tokens: account_lines (tokens you HOLD) + gateway_balances (tokens you ISSUED)
     for (const w of xrplWallets) {
       try {
         const client = await xrplConfig.getClientAsync();
+        const seenKeys = new Set();
+
+        // 1. Tokens you ISSUED — check gateway_balances for obligations
+        try {
+          const gwRes = await client.request({
+            command: 'gateway_balances',
+            account: w.address,
+            ledger_index: 'validated'
+          });
+          const obligations = gwRes.result.obligations || {};
+
+          // Fetch DB metadata for issued tokens
+          const issuedCurrencies = Object.keys(obligations);
+          const issuedDbCoins = issuedCurrencies.length > 0 ? await MemeCoin.findAll({
+            where: {
+              network: 'xrpl',
+              issuerWalletAddress: w.address,
+              currencyHex: { [Op.in]: issuedCurrencies }
+            },
+            raw: true
+          }) : [];
+          const issuedDbMap = {};
+          issuedDbCoins.forEach(c => { issuedDbMap[c.currencyHex] = c; });
+
+          for (const [currency, amount] of Object.entries(obligations)) {
+            let tokenSymbol = currency;
+            if (currency.length > 3) {
+              try {
+                tokenSymbol = Buffer.from(currency, 'hex').toString('utf-8').replace(/\0/g, '');
+              } catch (e) {}
+            }
+
+            const key = `${currency}_${w.address}`;
+            seenKeys.add(key);
+            const dbCoin = issuedDbMap[currency];
+
+            allCoins.push({
+              network: 'xrpl',
+              walletAddress: w.address,
+              tokenName: dbCoin?.tokenName || tokenSymbol,
+              tokenSymbol,
+              description: dbCoin?.description || null,
+              image: dbCoin?.logo || null,
+              currencyHex: currency,
+              issuer: w.address,
+              balance: amount,
+              isIssuer: true,
+              totalSupply: amount,
+              decimals: dbCoin?.decimals || null,
+              limit: null,
+              website: dbCoin?.website || null,
+              socialLinks: dbCoin?.socialLinks || null
+            });
+          }
+        } catch (e) {
+          logger.warn(`Error fetching gateway_balances for ${w.address}: ${e.message}`);
+        }
+
+        // 2. Tokens you HOLD — check account_lines
         const response = await client.request({
           command: 'account_lines',
           account: w.address,
           ledger_index: 'validated'
         });
         const lines = response.result.lines || [];
-        // Include positive balance (holder) AND negative balance (issuer — you created the token)
         const activeLines = lines.filter(l => parseFloat(l.balance) !== 0);
 
-        // Batch fetch metadata from DB for all held tokens
+        // Batch fetch metadata from DB
         const dbCoins = activeLines.length > 0 ? await MemeCoin.findAll({
           where: {
             network: 'xrpl',
@@ -483,7 +541,7 @@ const getMyMemeCoins = async (req, res, next) => {
         const dbMap = {};
         dbCoins.forEach(c => { dbMap[`${c.currencyHex}_${c.issuerWalletAddress}`] = c; });
 
-        // Also fetch issuer's total supply via gateway_balances
+        // Fetch total supply for issuers
         const issuerSupplyMap = {};
         const uniqueIssuers = [...new Set(activeLines.map(l => l.account))];
         await Promise.all(uniqueIssuers.map(async (issuer) => {
@@ -494,13 +552,17 @@ const getMyMemeCoins = async (req, res, next) => {
               ledger_index: 'validated'
             });
             const obligations = gwRes.result.obligations || {};
-            for (const [cur, amount] of Object.entries(obligations)) {
-              issuerSupplyMap[`${cur}_${issuer}`] = amount;
+            for (const [cur, amt] of Object.entries(obligations)) {
+              issuerSupplyMap[`${cur}_${issuer}`] = amt;
             }
           } catch (e) {}
         }));
 
         for (const line of activeLines) {
+          const key = `${line.currency}_${line.account}`;
+          if (seenKeys.has(key)) continue; // Skip if already added as issued token
+          seenKeys.add(key);
+
           let tokenSymbol = line.currency;
           if (line.currency.length > 3) {
             try {
@@ -508,11 +570,9 @@ const getMyMemeCoins = async (req, res, next) => {
             } catch (e) {}
           }
 
-          const key = `${line.currency}_${line.account}`;
           const dbCoin = dbMap[key];
           const totalSupply = issuerSupplyMap[key] || dbCoin?.totalSupply || null;
           const rawBalance = parseFloat(line.balance);
-          const isIssuer = rawBalance < 0;
 
           allCoins.push({
             network: 'xrpl',
@@ -524,7 +584,7 @@ const getMyMemeCoins = async (req, res, next) => {
             currencyHex: line.currency,
             issuer: line.account,
             balance: Math.abs(rawBalance).toString(),
-            isIssuer,
+            isIssuer: false,
             totalSupply,
             decimals: dbCoin?.decimals || null,
             limit: line.limit,
@@ -533,7 +593,7 @@ const getMyMemeCoins = async (req, res, next) => {
           });
         }
       } catch (err) {
-        logger.warn(`Error fetching XRPL trustlines for ${w.address}: ${err.message}`);
+        logger.warn(`Error fetching XRPL tokens for ${w.address}: ${err.message}`);
       }
     }
 
