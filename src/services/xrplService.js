@@ -1334,6 +1334,56 @@ class XRPLService {
   }
 
   /**
+   * Build a swap transaction: Buy meme coins with XRP.
+   * Uses Payment with tfPartialPayment through the AMM.
+   *
+   * @param {string} account - Buyer's wallet
+   * @param {string} currencyHex - Token currency hex
+   * @param {string} issuerAddress - Token issuer
+   * @param {string} tokenAmount - Amount of meme coins to receive
+   * @param {string} maxXrpDrops - Maximum XRP to spend (in drops) — slippage protection
+   */
+  buildBuyTokenPayload({ account, currencyHex, issuerAddress, tokenAmount, maxXrpDrops }) {
+    return {
+      TransactionType: 'Payment',
+      Account: account,
+      Destination: account,
+      Amount: {
+        currency: currencyHex,
+        issuer: issuerAddress,
+        value: tokenAmount.toString()
+      },
+      SendMax: maxXrpDrops.toString(),
+      Flags: 131072 // tfPartialPayment
+    };
+  }
+
+  /**
+   * Build a swap transaction: Sell meme coins for XRP.
+   * Uses Payment with tfPartialPayment through the AMM.
+   *
+   * @param {string} account - Seller's wallet
+   * @param {string} currencyHex - Token currency hex
+   * @param {string} issuerAddress - Token issuer
+   * @param {string} tokenAmount - Amount of meme coins to sell
+   * @param {string} minXrpDrops - Minimum XRP to receive (in drops) — slippage protection
+   */
+  buildSellTokenPayload({ account, currencyHex, issuerAddress, tokenAmount, minXrpDrops }) {
+    return {
+      TransactionType: 'Payment',
+      Account: account,
+      Destination: account,
+      Amount: minXrpDrops.toString(),
+      SendMax: {
+        currency: currencyHex,
+        issuer: issuerAddress,
+        value: tokenAmount.toString()
+      },
+      Flags: 131072 // tfPartialPayment
+    };
+  }
+
+  /**
    * Get AMM pool info for a token pair from on-chain.
    * Returns pool details including balances, trading fee, LP token info.
    */

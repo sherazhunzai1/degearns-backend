@@ -1027,19 +1027,46 @@ const recordTrade = async (req, res, next) => {
 };
 
 /**
+ * Helper: find a meme coin by on-chain identifiers or DB ID.
+ * Accepts id, or currencyHex+issuerWalletAddress (XRPL), or mintAddress (Solana).
+ */
+const findMemeCoinByIdentifier = async (query) => {
+  const { id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = query;
+
+  // By DB ID
+  if (id && id.length === 36) {
+    return MemeCoin.findByPk(id);
+  }
+
+  // By Solana mint address
+  if (mintAddress) {
+    return MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
+  }
+
+  // By XRPL currency + issuer
+  const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+  if (resolvedHex && issuerWalletAddress) {
+    return MemeCoin.findOne({ where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' } });
+  }
+
+  return null;
+};
+
+/**
  * Get trade history for a meme coin (paginated, most recent first).
+ * Accepts DB id, or query params: currencyHex+issuerWalletAddress, or mintAddress
  */
 const getTrades = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { page = 1, limit = 50, type } = req.query;
+    const { page = 1, limit = 50, type, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await MemeCoin.findByPk(id);
+    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
     }
 
-    const where = { memeCoinId: id };
+    const where = { memeCoinId: memeCoin.id };
     if (type) where.type = type;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -1079,9 +1106,9 @@ const getTrades = async (req, res, next) => {
 const getPriceHistory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { interval = '1h', from, to } = req.query;
+    const { interval = '1h', from, to, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await MemeCoin.findByPk(id);
+    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
     }
@@ -1117,7 +1144,7 @@ const getPriceHistory = async (req, res, next) => {
       ORDER BY bucket ASC
     `, {
       replacements: {
-        coinId: id,
+        coinId: memeCoin.id,
         intervalSeconds,
         fromDate,
         toDate
@@ -1138,10 +1165,14 @@ const getPriceHistory = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        memeCoinId: id,
+        memeCoinId: memeCoin.id,
+        tokenName: memeCoin.tokenName,
+        tokenSymbol: memeCoin.tokenSymbol,
+        network: memeCoin.network,
         interval,
         from: fromDate,
         to: toDate,
+        totalCandles: candles.length,
         candles
       }, 'Price history retrieved successfully')
     );
@@ -1156,6 +1187,309 @@ const getPriceHistory = async (req, res, next) => {
  * Step 1: Build an AMMCreate transaction for the user to sign via Xaman.
  * Uses on-chain token identifiers directly — no DB lookup needed.
  */
+// ==================== SWAP (Buy / Sell) ====================
+
+/**
+ * Build a buy transaction: spend XRP to get meme coins.
+ * Returns unsigned tx for Xaman signing.
+ */
+const buildBuyToken = async (req, res, next) => {
+  try {
+    const {
+      walletAddress,
+      currencyHex,
+      issuerWalletAddress,
+      tokenSymbol,
+      tokenAmount,
+      maxXrpDrops,
+      slippagePercent = 5
+    } = req.body;
+
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
+    if (!tokenAmount) throw new ApiError(400, 'tokenAmount is required (meme coins to buy)');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
+
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
+
+    // If maxXrpDrops not provided, estimate from AMM and add slippage
+    let resolvedMaxXrp = maxXrpDrops;
+    if (!resolvedMaxXrp) {
+      const ammInfo = await xrplService.getAMMInfo(resolvedHex, issuerWalletAddress);
+      if (!ammInfo) throw new ApiError(400, 'No AMM pool found for this token');
+
+      const amm = ammInfo.amm;
+      let tokenBalance = '0';
+      let xrpBalance = '0';
+      if (typeof amm.amount === 'string') xrpBalance = amm.amount;
+      else if (amm.amount?.value) tokenBalance = amm.amount.value;
+      if (typeof amm.amount2 === 'string') xrpBalance = amm.amount2;
+      else if (amm.amount2?.value) tokenBalance = amm.amount2.value;
+
+      const pricePerToken = parseFloat(tokenBalance) > 0
+        ? parseFloat(xrpBalance) / parseFloat(tokenBalance)
+        : 0;
+      const estimatedXrp = pricePerToken * parseFloat(tokenAmount);
+      const slippage = 1 + (parseFloat(slippagePercent) / 100);
+      resolvedMaxXrp = Math.ceil(estimatedXrp * slippage).toString();
+    }
+
+    const buyTx = xrplService.buildBuyTokenPayload({
+      account: walletAddress,
+      currencyHex: resolvedHex,
+      issuerAddress: issuerWalletAddress,
+      tokenAmount,
+      maxXrpDrops: resolvedMaxXrp
+    });
+
+    const estimatedPriceXrp = (parseInt(resolvedMaxXrp) / 1000000).toFixed(6);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        transaction: buyTx,
+        estimate: {
+          tokenAmount,
+          maxXrpDrops: resolvedMaxXrp,
+          maxXrp: estimatedPriceXrp,
+          slippagePercent: parseFloat(slippagePercent)
+        },
+        instructions: {
+          action: 'Sign this transaction with Xaman to buy tokens',
+          nextStep: 'After signing, call POST /api/v1/memecoins/confirm-swap with the tx hash',
+          nextEndpoint: '/api/v1/memecoins/confirm-swap'
+        }
+      }, 'Buy transaction ready. Sign with Xaman.')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Build a sell transaction: sell meme coins for XRP.
+ * Returns unsigned tx for Xaman signing.
+ */
+const buildSellToken = async (req, res, next) => {
+  try {
+    const {
+      walletAddress,
+      currencyHex,
+      issuerWalletAddress,
+      tokenSymbol,
+      tokenAmount,
+      minXrpDrops,
+      slippagePercent = 5
+    } = req.body;
+
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
+    if (!tokenAmount) throw new ApiError(400, 'tokenAmount is required (meme coins to sell)');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
+
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
+
+    // If minXrpDrops not provided, estimate from AMM and subtract slippage
+    let resolvedMinXrp = minXrpDrops;
+    if (!resolvedMinXrp) {
+      const ammInfo = await xrplService.getAMMInfo(resolvedHex, issuerWalletAddress);
+      if (!ammInfo) throw new ApiError(400, 'No AMM pool found for this token');
+
+      const amm = ammInfo.amm;
+      let tokenBalance = '0';
+      let xrpBalance = '0';
+      if (typeof amm.amount === 'string') xrpBalance = amm.amount;
+      else if (amm.amount?.value) tokenBalance = amm.amount.value;
+      if (typeof amm.amount2 === 'string') xrpBalance = amm.amount2;
+      else if (amm.amount2?.value) tokenBalance = amm.amount2.value;
+
+      const pricePerToken = parseFloat(tokenBalance) > 0
+        ? parseFloat(xrpBalance) / parseFloat(tokenBalance)
+        : 0;
+      const estimatedXrp = pricePerToken * parseFloat(tokenAmount);
+      const slippage = 1 - (parseFloat(slippagePercent) / 100);
+      resolvedMinXrp = Math.floor(estimatedXrp * slippage).toString();
+    }
+
+    const sellTx = xrplService.buildSellTokenPayload({
+      account: walletAddress,
+      currencyHex: resolvedHex,
+      issuerAddress: issuerWalletAddress,
+      tokenAmount,
+      minXrpDrops: resolvedMinXrp
+    });
+
+    const estimatedPriceXrp = (parseInt(resolvedMinXrp) / 1000000).toFixed(6);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        transaction: sellTx,
+        estimate: {
+          tokenAmount,
+          minXrpDrops: resolvedMinXrp,
+          minXrp: estimatedPriceXrp,
+          slippagePercent: parseFloat(slippagePercent)
+        },
+        instructions: {
+          action: 'Sign this transaction with Xaman to sell tokens',
+          nextStep: 'After signing, call POST /api/v1/memecoins/confirm-swap with the tx hash',
+          nextEndpoint: '/api/v1/memecoins/confirm-swap'
+        }
+      }, 'Sell transaction ready. Sign with Xaman.')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Confirm a swap (buy or sell). Verifies on-chain, records as a trade for price history.
+ */
+const confirmSwap = async (req, res, next) => {
+  try {
+    const {
+      txHash,
+      walletAddress,
+      currencyHex,
+      issuerWalletAddress,
+      tokenSymbol,
+      type
+    } = req.body;
+
+    if (!txHash) throw new ApiError(400, 'txHash is required');
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
+    if (!type || !['buy', 'sell'].includes(type)) throw new ApiError(400, 'type must be "buy" or "sell"');
+
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
+
+    // Verify on-chain
+    const client = xrplConfig.getClient();
+    const txResponse = await client.request({ command: 'tx', transaction: txHash });
+    const tx = txResponse.result;
+
+    const meta = tx.meta || tx.metaData;
+    if (meta && meta.TransactionResult !== 'tesSUCCESS') {
+      throw new ApiError(400, `Transaction failed: ${meta.TransactionResult}`);
+    }
+
+    // Parse the actual delivered amounts from metadata
+    let tokenAmount = '0';
+    let xrpAmount = '0';
+
+    if (meta?.delivered_amount) {
+      if (typeof meta.delivered_amount === 'string') {
+        xrpAmount = meta.delivered_amount;
+      } else if (meta.delivered_amount?.value) {
+        tokenAmount = meta.delivered_amount.value;
+      }
+    }
+
+    // For sell: delivered_amount is XRP, SendMax is token
+    // For buy: delivered_amount is token, SendMax is XRP
+    if (type === 'buy' && tokenAmount === '0') {
+      // Try parsing from AffectedNodes
+      if (meta?.AffectedNodes) {
+        for (const node of meta.AffectedNodes) {
+          const fields = node.ModifiedNode?.FinalFields || node.CreatedNode?.NewFields;
+          if (fields?.Balance?.currency === resolvedHex) {
+            tokenAmount = Math.abs(parseFloat(fields.Balance.value || '0')).toString();
+            break;
+          }
+        }
+      }
+    }
+
+    if (type === 'sell' && xrpAmount === '0') {
+      if (typeof meta?.delivered_amount === 'string') {
+        xrpAmount = meta.delivered_amount;
+      }
+    }
+
+    const parsedTokenAmount = parseFloat(tokenAmount) || 0;
+    const parsedXrpAmount = parseFloat(xrpAmount) || 0;
+    const pricePerToken = parsedTokenAmount > 0
+      ? parsedXrpAmount / parsedTokenAmount
+      : 0;
+
+    // Find or create meme coin record for trade association
+    let memeCoin = await MemeCoin.findOne({
+      where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' }
+    });
+
+    if (!memeCoin) {
+      let sym = resolvedHex;
+      try { sym = Buffer.from(resolvedHex, 'hex').toString('utf-8').replace(/\0/g, ''); } catch (e) {}
+
+      memeCoin = await MemeCoin.create({
+        tokenName: tokenSymbol || sym,
+        tokenSymbol: tokenSymbol || sym,
+        network: 'xrpl',
+        currencyHex: resolvedHex,
+        issuerWalletAddress,
+        creatorWalletAddress: walletAddress,
+        status: 'issued',
+        metadata: { createdVia: 'swap-confirm' }
+      });
+    }
+
+    // Record the trade (idempotent)
+    const existingTrade = await MemeCoinTrade.findOne({ where: { txHash } });
+    if (existingTrade) {
+      return res.status(200).json(
+        new ApiResponse(200, existingTrade, 'Trade already recorded')
+      );
+    }
+
+    // Get USD price
+    let priceUsd = null;
+    let volumeUsd = null;
+    try {
+      const prices = await priceService.getPrices();
+      const xrpInNormalUnits = parsedXrpAmount / 1000000;
+      priceUsd = parsedTokenAmount > 0 ? (xrpInNormalUnits / parsedTokenAmount) * prices.xrp : null;
+      volumeUsd = xrpInNormalUnits * prices.xrp;
+    } catch (e) {}
+
+    // Find pool
+    const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoin.id, status: 'active' } });
+
+    const trade = await MemeCoinTrade.create({
+      memeCoinId: memeCoin.id,
+      poolId: pool?.id || null,
+      network: 'xrpl',
+      txHash,
+      traderWalletAddress: walletAddress,
+      type,
+      tokenAmount: parsedTokenAmount.toString(),
+      pairAmount: (parsedXrpAmount / 1000000).toString(),
+      pairToken: 'XRP',
+      pricePerToken: pricePerToken / 1000000,
+      priceUsd,
+      volumeUsd,
+      tradedAt: new Date()
+    });
+
+    logger.info(`Swap confirmed: ${type} ${parsedTokenAmount} ${memeCoin.tokenSymbol} for ${(parsedXrpAmount / 1000000).toFixed(6)} XRP (tx: ${txHash})`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        trade,
+        summary: {
+          type,
+          tokenAmount: parsedTokenAmount.toString(),
+          xrpAmount: (parsedXrpAmount / 1000000).toFixed(6) + ' XRP',
+          pricePerToken: (pricePerToken / 1000000).toFixed(12),
+          priceUsd,
+          volumeUsd
+        }
+      }, `${type === 'buy' ? 'Buy' : 'Sell'} confirmed and recorded`)
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 const buildAMMCreate = async (req, res, next) => {
   try {
     const {
@@ -1417,6 +1751,9 @@ module.exports = {
   recordTrade,
   getTrades,
   getPriceHistory,
+  buildBuyToken,
+  buildSellToken,
+  confirmSwap,
   buildAMMCreate,
   confirmAMMCreate,
   getAMMInfo
