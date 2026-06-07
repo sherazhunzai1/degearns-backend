@@ -102,26 +102,26 @@ router.get('/:id/trades', getTrades);
 router.get('/:id/price-history', getPriceHistory);
 
 /**
- * @route   POST /api/v1/memecoins/:id/amm/create
+ * @route   POST /api/v1/memecoins/amm/create
  * @desc    XRPL: Build an AMMCreate transaction for Xaman signing.
- *          Returns the unsigned tx payload.
  * @access  Public
  */
-router.post('/:id/amm/create', buildAMMCreate);
+router.post('/amm/create', buildAMMCreate);
 
 /**
- * @route   POST /api/v1/memecoins/:id/confirm-amm
- * @desc    XRPL: Confirm AMMCreate was signed. Verifies on-chain + registers pool in DB.
+ * @route   POST /api/v1/memecoins/confirm-amm
+ * @desc    XRPL: Confirm AMMCreate was signed. Verifies on-chain + registers pool.
  * @access  Public
  */
-router.post('/:id/confirm-amm', confirmAMMCreate);
+router.post('/confirm-amm', confirmAMMCreate);
 
 /**
- * @route   GET /api/v1/memecoins/:id/amm
- * @desc    XRPL: Get live AMM pool info from on-chain (balances, price, trading fee).
+ * @route   GET /api/v1/memecoins/amm
+ * @desc    XRPL: Get live AMM pool info from on-chain.
+ *          Query: currencyHex (or tokenSymbol) + issuerWalletAddress
  * @access  Public
  */
-router.get('/:id/amm', getAMMInfo);
+router.get('/amm', getAMMInfo);
 
 /**
  * @route   GET /api/v1/memecoins/:id
