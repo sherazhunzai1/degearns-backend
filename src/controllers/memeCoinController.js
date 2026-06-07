@@ -488,7 +488,8 @@ const getMyMemeCoins = async (req, res, next) => {
           ledger_index: 'validated'
         });
         const lines = response.result.lines || [];
-        const activeLines = lines.filter(l => parseFloat(l.balance) > 0);
+        // Include positive balance (holder) AND negative balance (issuer — you created the token)
+        const activeLines = lines.filter(l => parseFloat(l.balance) !== 0);
 
         // Batch fetch metadata from DB for all held tokens
         const dbCoins = activeLines.length > 0 ? await MemeCoin.findAll({
@@ -532,6 +533,8 @@ const getMyMemeCoins = async (req, res, next) => {
           const key = `${line.currency}_${line.account}`;
           const dbCoin = dbMap[key];
           const totalSupply = issuerSupplyMap[key] || dbCoin?.totalSupply || null;
+          const rawBalance = parseFloat(line.balance);
+          const isIssuer = rawBalance < 0;
 
           allCoins.push({
             network: 'xrpl',
@@ -542,7 +545,8 @@ const getMyMemeCoins = async (req, res, next) => {
             image: dbCoin?.logo || null,
             currencyHex: line.currency,
             issuer: line.account,
-            balance: line.balance,
+            balance: Math.abs(rawBalance).toString(),
+            isIssuer,
             totalSupply,
             decimals: dbCoin?.decimals || null,
             limit: line.limit,
