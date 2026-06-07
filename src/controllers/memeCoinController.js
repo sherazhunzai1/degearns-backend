@@ -1329,6 +1329,8 @@ const getPriceHistory = async (req, res, next) => {
       const candles = Object.entries(buckets)
         .sort(([a], [b]) => new Date(a) - new Date(b))
         .map(([time, bucket]) => {
+          // Sort trades by timestamp ascending (oldest first) for correct open/close
+          bucket.trades.sort((a, b) => a.timestamp - b.timestamp);
           const prices = bucket.trades.map(t => t.pricePerToken);
           const volumes = bucket.trades.map(t => t.tokenAmount);
           return {
