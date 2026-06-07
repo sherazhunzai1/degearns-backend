@@ -1212,6 +1212,34 @@ const buildBuyToken = async (req, res, next) => {
     const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
     if (!resolvedHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
 
+    // Check if buyer has a TrustLine for this token
+    let needsTrustLine = true;
+    try {
+      const client = await xrplConfig.getClientAsync();
+      const response = await client.request({
+        command: 'account_lines',
+        account: walletAddress,
+        peer: issuerWalletAddress,
+        ledger_index: 'validated'
+      });
+      const lines = response.result.lines || [];
+      needsTrustLine = !lines.some(l => l.currency === resolvedHex);
+    } catch (e) {
+      // If account not found or error, they definitely need a trustline
+      needsTrustLine = true;
+    }
+
+    // Build TrustSet transaction if needed
+    let trustSetTransaction = null;
+    if (needsTrustLine) {
+      trustSetTransaction = xrplService.buildTrustSetPayload({
+        creatorWallet: walletAddress,
+        issuerAddress: issuerWalletAddress,
+        currencyHex: resolvedHex,
+        totalSupply: '1000000000000000' // large limit
+      });
+    }
+
     // If maxXrpDrops not provided, estimate from AMM and add slippage
     let resolvedMaxXrp = maxXrpDrops;
     if (!resolvedMaxXrp) {
@@ -1246,6 +1274,8 @@ const buildBuyToken = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
+        needsTrustLine,
+        trustSetTransaction,
         transaction: buyTx,
         estimate: {
           tokenAmount,
@@ -1253,12 +1283,20 @@ const buildBuyToken = async (req, res, next) => {
           maxXrp: estimatedPriceXrp,
           slippagePercent: parseFloat(slippagePercent)
         },
-        instructions: {
+        instructions: needsTrustLine ? {
+          step: 1,
+          action: 'Sign the TrustSet transaction first to allow receiving this token',
+          step2: 'Then sign the buy transaction',
+          nextStep: 'After both are signed, call POST /api/v1/memecoins/confirm-swap with the buy tx hash',
+          nextEndpoint: '/api/v1/memecoins/confirm-swap'
+        } : {
           action: 'Sign this transaction with Xaman to buy tokens',
           nextStep: 'After signing, call POST /api/v1/memecoins/confirm-swap with the tx hash',
           nextEndpoint: '/api/v1/memecoins/confirm-swap'
         }
-      }, 'Buy transaction ready. Sign with Xaman.')
+      }, needsTrustLine
+        ? 'TrustLine required. Sign the TrustSet first, then the buy transaction.'
+        : 'Buy transaction ready. Sign with Xaman.')
     );
   } catch (error) {
     next(error);
