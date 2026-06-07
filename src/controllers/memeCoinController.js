@@ -889,6 +889,33 @@ const getListedMemeCoins = async (req, res, next) => {
       };
     });
 
+    // Enrich XRPL coins with live AMM pool data from on-chain
+    await Promise.all(enriched.filter(c => c.network === 'xrpl' && c.currencyHex && c.issuerWalletAddress).map(async (coin) => {
+      try {
+        const ammInfo = await xrplService.getAMMInfo(coin.currencyHex, coin.issuerWalletAddress);
+        if (ammInfo) {
+          const amm = ammInfo.amm;
+          let tokenBalance = '0';
+          let xrpBalance = '0';
+          if (typeof amm.amount === 'string') xrpBalance = amm.amount;
+          else if (amm.amount?.value) tokenBalance = amm.amount.value;
+          if (typeof amm.amount2 === 'string') xrpBalance = amm.amount2;
+          else if (amm.amount2?.value) tokenBalance = amm.amount2.value;
+
+          coin.livePool = {
+            poolAddress: amm.account,
+            tradingFee: amm.trading_fee,
+            tokenBalance,
+            xrpBalance: (parseFloat(xrpBalance) / 1000000).toFixed(6),
+            currentPrice: parseFloat(tokenBalance) > 0
+              ? (parseFloat(xrpBalance) / 1000000) / parseFloat(tokenBalance)
+              : null,
+            lpToken: amm.lp_token
+          };
+        }
+      } catch (e) {}
+    }));
+
     res.status(200).json(
       new ApiResponse(200, {
         memeCoins: enriched,
