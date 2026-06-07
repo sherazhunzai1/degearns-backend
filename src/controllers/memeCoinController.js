@@ -1206,38 +1206,170 @@ const getTrades = async (req, res, next) => {
 
 /**
  * Get price history for a meme coin (for graph rendering).
- * Returns OHLC candles bucketed by the specified interval.
+ * Fetches trades directly from XRPL on-chain and builds OHLC candles.
  *
  * Query params:
  * - interval: '5m' | '15m' | '1h' | '4h' | '1d' (default '1h')
  * - from: ISO date string (default 7 days ago)
  * - to: ISO date string (default now)
+ * - currencyHex + issuerWalletAddress (XRPL)
+ * - mintAddress (Solana — falls back to DB)
  */
 const getPriceHistory = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { interval = '1h', from, to, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol });
-    if (!memeCoin) {
-      throw new ApiError(404, 'Meme coin not found');
-    }
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
 
-    // Parse interval to seconds
-    const intervalSeconds = {
-      '5m': 5 * 60,
-      '15m': 15 * 60,
-      '30m': 30 * 60,
-      '1h': 60 * 60,
-      '4h': 4 * 60 * 60,
-      '1d': 24 * 60 * 60
-    }[interval] || 60 * 60;
+    const intervalMs = {
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '30m': 30 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '4h': 4 * 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000
+    }[interval] || 60 * 60 * 1000;
 
     const toDate = to ? new Date(to) : new Date();
     const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    // Group trades by time bucket using FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(tradedAt)/interval)*interval)
-    const trades = await sequelize.query(`
+    // For XRPL — fetch on-chain
+    if (resolvedHex && issuerWalletAddress) {
+      const ammInfo = await xrplService.getAMMInfo(resolvedHex, issuerWalletAddress);
+      if (!ammInfo) {
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'xrpl',
+            interval,
+            from: fromDate,
+            to: toDate,
+            totalCandles: 0,
+            candles: []
+          }, 'No AMM pool found — no price history')
+        );
+      }
+
+      const ammAccount = ammInfo.amm.account;
+      const client = await xrplConfig.getClientAsync();
+
+      // Fetch all transactions from AMM account
+      const txResponse = await client.request({
+        command: 'account_tx',
+        account: ammAccount,
+        ledger_index_min: -1,
+        ledger_index_max: -1,
+        limit: 500
+      });
+
+      const transactions = txResponse.result.transactions || [];
+
+      // Parse trades with timestamps and prices
+      const trades = [];
+      for (const entry of transactions) {
+        const tx = entry.tx || entry.tx_json;
+        const meta = entry.meta;
+
+        if (!tx || tx.TransactionType !== 'Payment') continue;
+        if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+
+        // Get timestamp
+        const rippleEpoch = tx.date || 0;
+        const timestamp = new Date((rippleEpoch + 946684800) * 1000);
+        if (timestamp < fromDate || timestamp > toDate) continue;
+
+        const trader = tx.Account;
+        let tradeTokenAmount = 0;
+        let tradeXrpAmount = 0;
+
+        if (meta?.AffectedNodes) {
+          for (const node of meta.AffectedNodes) {
+            const modified = node.ModifiedNode;
+            if (!modified) continue;
+
+            if (modified.LedgerEntryType === 'RippleState') {
+              const prev = modified.PreviousFields;
+              const final = modified.FinalFields;
+              if (!prev?.Balance || !final?.Balance) continue;
+              if (final.Balance.currency !== resolvedHex) continue;
+
+              const lowLimit = final.LowLimit?.issuer;
+              const highLimit = final.HighLimit?.issuer;
+              if (lowLimit === trader || highLimit === trader) {
+                const change = Math.abs(parseFloat(final.Balance.value) - parseFloat(prev.Balance.value));
+                if (change > 0) tradeTokenAmount = change;
+              }
+            }
+
+            if (modified.LedgerEntryType === 'AccountRoot') {
+              const final = modified.FinalFields;
+              const prev = modified.PreviousFields;
+              if (final?.Account !== trader) continue;
+              if (!prev?.Balance || !final?.Balance) continue;
+              const change = Math.abs(parseInt(final.Balance) - parseInt(prev.Balance));
+              const fee = parseInt(tx.Fee || '0');
+              if (change > fee) tradeXrpAmount = change - fee;
+            }
+          }
+        }
+
+        if (tradeTokenAmount === 0 || tradeXrpAmount === 0) continue;
+
+        const pricePerToken = (tradeXrpAmount / 1000000) / tradeTokenAmount;
+        trades.push({ timestamp, pricePerToken, tokenAmount: tradeTokenAmount, xrpAmount: tradeXrpAmount / 1000000 });
+      }
+
+      // Build OHLC candles from trades
+      const buckets = {};
+      for (const trade of trades) {
+        const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
+        if (!buckets[bucketTime]) {
+          buckets[bucketTime] = { trades: [] };
+        }
+        buckets[bucketTime].trades.push(trade);
+      }
+
+      const candles = Object.entries(buckets)
+        .sort(([a], [b]) => new Date(a) - new Date(b))
+        .map(([time, bucket]) => {
+          const prices = bucket.trades.map(t => t.pricePerToken);
+          const volumes = bucket.trades.map(t => t.tokenAmount);
+          return {
+            time,
+            open: prices[0],
+            high: Math.max(...prices),
+            low: Math.min(...prices),
+            close: prices[prices.length - 1],
+            volume: volumes.reduce((sum, v) => sum + v, 0),
+            trades: bucket.trades.length
+          };
+        });
+
+      let tokenSym = resolvedHex;
+      try { tokenSym = Buffer.from(resolvedHex, 'hex').toString('utf-8').replace(/\0/g, ''); } catch (e) {}
+
+      return res.status(200).json(
+        new ApiResponse(200, {
+          network: 'xrpl',
+          tokenSymbol: tokenSymbol || tokenSym,
+          ammAccount,
+          interval,
+          from: fromDate,
+          to: toDate,
+          totalCandles: candles.length,
+          candles
+        }, 'Price history retrieved from on-chain')
+      );
+    }
+
+    // Fallback: DB-based for Solana or by ID
+    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
+    if (!memeCoin) {
+      throw new ApiError(404, 'Meme coin not found');
+    }
+
+    const intervalSeconds = intervalMs / 1000;
+    const dbTrades = await sequelize.query(`
       SELECT
         FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(tradedAt) / :intervalSeconds) * :intervalSeconds) AS bucket,
         MIN(pricePerToken) AS low,
@@ -1253,16 +1385,11 @@ const getPriceHistory = async (req, res, next) => {
       GROUP BY bucket
       ORDER BY bucket ASC
     `, {
-      replacements: {
-        coinId: memeCoin.id,
-        intervalSeconds,
-        fromDate,
-        toDate
-      },
+      replacements: { coinId: memeCoin.id, intervalSeconds, fromDate, toDate },
       type: sequelize.QueryTypes.SELECT
     });
 
-    const candles = trades.map(t => ({
+    const candles = dbTrades.map(t => ({
       time: t.bucket,
       open: parseFloat(t.open),
       high: parseFloat(t.high),
