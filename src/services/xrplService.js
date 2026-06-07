@@ -1263,6 +1263,97 @@ class XRPLService {
       throw error;
     }
   }
+
+  // ==================== AMM (Liquidity Pool) Operations ====================
+
+  /**
+   * Build an AMMCreate transaction payload for the user to sign via Xaman.
+   * Creates a liquidity pool pairing the meme coin with XRP.
+   *
+   * @param {string} account - User's wallet address (LP provider)
+   * @param {string} currencyHex - Hex-encoded currency code
+   * @param {string} issuerAddress - Token issuer address
+   * @param {string} tokenAmount - Amount of meme coins to deposit
+   * @param {string} xrpAmount - Amount of XRP to deposit (in drops)
+   * @param {number} tradingFee - Trading fee in basis points (0-1000, e.g. 500 = 0.5%)
+   */
+  buildAMMCreatePayload({ account, currencyHex, issuerAddress, tokenAmount, xrpAmount, tradingFee = 500 }) {
+    return {
+      TransactionType: 'AMMCreate',
+      Account: account,
+      Amount: {
+        currency: currencyHex,
+        issuer: issuerAddress,
+        value: tokenAmount.toString()
+      },
+      Amount2: xrpAmount.toString(), // XRP in drops
+      TradingFee: tradingFee
+    };
+  }
+
+  /**
+   * Build an AMMDeposit transaction payload.
+   * Adds more liquidity to an existing pool.
+   */
+  buildAMMDepositPayload({ account, currencyHex, issuerAddress, tokenAmount, xrpAmount }) {
+    const tx = {
+      TransactionType: 'AMMDeposit',
+      Account: account,
+      Asset: { currency: currencyHex, issuer: issuerAddress },
+      Asset2: { currency: 'XRP' },
+      Flags: 1048576 // tfTwoAsset
+    };
+    if (tokenAmount) {
+      tx.Amount = { currency: currencyHex, issuer: issuerAddress, value: tokenAmount.toString() };
+    }
+    if (xrpAmount) {
+      tx.Amount2 = xrpAmount.toString();
+    }
+    return tx;
+  }
+
+  /**
+   * Build an AMMWithdraw transaction payload.
+   * Removes liquidity from a pool.
+   */
+  buildAMMWithdrawPayload({ account, currencyHex, issuerAddress, tokenAmount, xrpAmount }) {
+    const tx = {
+      TransactionType: 'AMMWithdraw',
+      Account: account,
+      Asset: { currency: currencyHex, issuer: issuerAddress },
+      Asset2: { currency: 'XRP' },
+      Flags: 1048576 // tfTwoAsset
+    };
+    if (tokenAmount) {
+      tx.Amount = { currency: currencyHex, issuer: issuerAddress, value: tokenAmount.toString() };
+    }
+    if (xrpAmount) {
+      tx.Amount2 = xrpAmount.toString();
+    }
+    return tx;
+  }
+
+  /**
+   * Get AMM pool info for a token pair from on-chain.
+   * Returns pool details including balances, trading fee, LP token info.
+   */
+  async getAMMInfo(currencyHex, issuerAddress) {
+    try {
+      const client = xrplConfig.getClient();
+      const response = await client.request({
+        command: 'amm_info',
+        asset: { currency: currencyHex, issuer: issuerAddress },
+        asset2: { currency: 'XRP' }
+      });
+      return response.result;
+    } catch (error) {
+      if (error.data?.error === 'actNotFound') {
+        return null; // No AMM exists for this pair
+      }
+      logger.error('Error fetching AMM info:', error.message);
+      throw error;
+    }
+  }
 }
 
 module.exports = new XRPLService();
