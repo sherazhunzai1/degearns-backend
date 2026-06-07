@@ -1108,17 +1108,14 @@ const getTrades = async (req, res, next) => {
                 const finalBal = parseFloat(final.Balance.value || '0');
                 const change = finalBal - prevBal;
                 tradeTokenAmount = Math.abs(change);
-                // If balance increased, trader bought; if decreased, trader sold
-                if (change > 0 || (lowLimit === trader && change < 0)) {
-                  tradeType = 'buy';
+                // Balance is from LowLimit's perspective:
+                // - If trader is LowLimit: positive change = trader received tokens = BUY
+                // - If trader is HighLimit: negative change = trader received tokens = BUY
+                if (lowLimit === trader) {
+                  tradeType = change > 0 ? 'buy' : 'sell';
                 } else {
-                  tradeType = 'sell';
+                  tradeType = change < 0 ? 'buy' : 'sell';
                 }
-                // Handle reversed perspective
-                if (highLimit === trader && change > 0) tradeType = 'buy';
-                if (highLimit === trader && change < 0) tradeType = 'sell';
-                if (lowLimit === trader && change > 0) tradeType = 'sell';
-                if (lowLimit === trader && change < 0) tradeType = 'buy';
               }
             }
 
