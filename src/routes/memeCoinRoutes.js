@@ -12,7 +12,10 @@ const {
   getListedMemeCoins,
   recordTrade,
   getTrades,
-  getPriceHistory
+  getPriceHistory,
+  buildAMMCreate,
+  confirmAMMCreate,
+  getAMMInfo
 } = require('../controllers/memeCoinController');
 
 /**
@@ -97,6 +100,28 @@ router.get('/:id/trades', getTrades);
  * @access  Public
  */
 router.get('/:id/price-history', getPriceHistory);
+
+/**
+ * @route   POST /api/v1/memecoins/:id/amm/create
+ * @desc    XRPL: Build an AMMCreate transaction for Xaman signing.
+ *          Returns the unsigned tx payload.
+ * @access  Public
+ */
+router.post('/:id/amm/create', buildAMMCreate);
+
+/**
+ * @route   POST /api/v1/memecoins/:id/confirm-amm
+ * @desc    XRPL: Confirm AMMCreate was signed. Verifies on-chain + registers pool in DB.
+ * @access  Public
+ */
+router.post('/:id/confirm-amm', confirmAMMCreate);
+
+/**
+ * @route   GET /api/v1/memecoins/:id/amm
+ * @desc    XRPL: Get live AMM pool info from on-chain (balances, price, trading fee).
+ * @access  Public
+ */
+router.get('/:id/amm', getAMMInfo);
 
 /**
  * @route   GET /api/v1/memecoins/:id
