@@ -1094,13 +1094,15 @@ const getPriceHistory = async (req, res, next) => {
 
 /**
  * Step 1: Build an AMMCreate transaction for the user to sign via Xaman.
- * Returns the unsigned tx payload + instructions.
+ * Uses on-chain token identifiers directly — no DB lookup needed.
  */
 const buildAMMCreate = async (req, res, next) => {
   try {
-    const { id } = req.params;
     const {
       walletAddress,
+      tokenSymbol,
+      currencyHex,
+      issuerWalletAddress,
       tokenAmount,
       xrpAmount,
       tradingFee = 500
@@ -1109,10 +1111,11 @@ const buildAMMCreate = async (req, res, next) => {
     if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
     if (!tokenAmount) throw new ApiError(400, 'tokenAmount is required (meme coins to deposit)');
     if (!xrpAmount) throw new ApiError(400, 'xrpAmount is required (XRP in drops to deposit)');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
 
-    const memeCoin = await MemeCoin.findByPk(id);
-    if (!memeCoin) throw new ApiError(404, 'Meme coin not found');
-    if (memeCoin.network !== 'xrpl') throw new ApiError(400, 'This endpoint is only for XRPL meme coins');
+    // Resolve currency hex from symbol if not provided
+    const resolvedCurrencyHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedCurrencyHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
 
     const fee = parseInt(tradingFee);
     if (isNaN(fee) || fee < 0 || fee > 1000) {
@@ -1121,27 +1124,26 @@ const buildAMMCreate = async (req, res, next) => {
 
     const ammCreateTx = xrplService.buildAMMCreatePayload({
       account: walletAddress,
-      currencyHex: memeCoin.currencyHex,
-      issuerAddress: memeCoin.issuerWalletAddress,
+      currencyHex: resolvedCurrencyHex,
+      issuerAddress: issuerWalletAddress,
       tokenAmount,
       xrpAmount,
       tradingFee: fee
     });
 
-    logger.info(`AMMCreate tx built for ${memeCoin.tokenSymbol}: ${tokenAmount} tokens + ${xrpAmount} drops XRP by ${walletAddress}`);
+    logger.info(`AMMCreate tx built for ${resolvedCurrencyHex}: ${tokenAmount} tokens + ${xrpAmount} drops XRP by ${walletAddress}`);
 
     res.status(200).json(
       new ApiResponse(200, {
-        memeCoinId: memeCoin.id,
-        tokenName: memeCoin.tokenName,
-        tokenSymbol: memeCoin.tokenSymbol,
+        currencyHex: resolvedCurrencyHex,
+        issuerWalletAddress,
         ammCreateTransaction: ammCreateTx,
         instructions: {
           step: 1,
           action: 'Sign this AMMCreate transaction with your XRPL wallet (Xaman QR code)',
-          nextStep: 'After signing, call POST /api/v1/memecoins/:id/confirm-amm with { ammCreateTxHash }',
-          nextEndpoint: `/api/v1/memecoins/${memeCoin.id}/confirm-amm`,
-          note: `This will create a liquidity pool with ${tokenAmount} ${memeCoin.tokenSymbol} and ${(parseInt(xrpAmount) / 1000000).toFixed(6)} XRP`
+          nextStep: 'After signing, call POST /api/v1/memecoins/confirm-amm with { ammCreateTxHash, currencyHex, issuerWalletAddress, walletAddress }',
+          nextEndpoint: '/api/v1/memecoins/confirm-amm',
+          note: `This will create a liquidity pool with ${tokenAmount} tokens and ${(parseInt(xrpAmount) / 1000000).toFixed(6)} XRP`
         }
       }, 'AMMCreate transaction ready. Sign with Xaman to create the liquidity pool.')
     );
@@ -1151,19 +1153,24 @@ const buildAMMCreate = async (req, res, next) => {
 };
 
 /**
- * Step 2: Confirm the AMMCreate was signed. Verify on-chain + register the pool in DB.
+ * Step 2: Confirm AMMCreate was signed. Verify on-chain + register the pool in DB.
  */
 const confirmAMMCreate = async (req, res, next) => {
   try {
-    const { id } = req.params;
-    const { ammCreateTxHash, walletAddress } = req.body;
+    const {
+      ammCreateTxHash,
+      walletAddress,
+      currencyHex,
+      issuerWalletAddress,
+      tokenSymbol
+    } = req.body;
 
     if (!ammCreateTxHash) throw new ApiError(400, 'ammCreateTxHash is required');
     if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
 
-    const memeCoin = await MemeCoin.findByPk(id);
-    if (!memeCoin) throw new ApiError(404, 'Meme coin not found');
-    if (memeCoin.network !== 'xrpl') throw new ApiError(400, 'This endpoint is only for XRPL meme coins');
+    const resolvedCurrencyHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedCurrencyHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
 
     // Verify the AMMCreate transaction on-chain
     let ammInfo = null;
@@ -1184,8 +1191,7 @@ const confirmAMMCreate = async (req, res, next) => {
         throw new ApiError(400, `AMMCreate failed: ${meta.TransactionResult}`);
       }
 
-      // Fetch the newly created AMM info
-      ammInfo = await xrplService.getAMMInfo(memeCoin.currencyHex, memeCoin.issuerWalletAddress);
+      ammInfo = await xrplService.getAMMInfo(resolvedCurrencyHex, issuerWalletAddress);
     } catch (error) {
       if (error instanceof ApiError) throw error;
       logger.error('Error verifying AMMCreate:', error);
@@ -1196,12 +1202,10 @@ const confirmAMMCreate = async (req, res, next) => {
       throw new ApiError(400, 'AMM pool not found on-chain after creation');
     }
 
-    // Extract pool details from on-chain AMM info
     const amm = ammInfo.amm;
     const poolAddress = amm.account;
     const tradingFee = amm.trading_fee;
 
-    // Parse the pool balances
     let tokenBalance = '0';
     let xrpBalance = '0';
     if (typeof amm.amount === 'string') {
@@ -1219,17 +1223,40 @@ const confirmAMMCreate = async (req, res, next) => {
       ? (parseFloat(xrpBalance) / 1000000) / parseFloat(tokenBalance)
       : null;
 
+    // Find or create the meme coin in DB for pool association
+    let memeCoin = await MemeCoin.findOne({
+      where: { currencyHex: resolvedCurrencyHex, issuerWalletAddress, network: 'xrpl' }
+    });
+
+    if (!memeCoin) {
+      let sym = resolvedCurrencyHex;
+      try {
+        sym = Buffer.from(resolvedCurrencyHex, 'hex').toString('utf-8').replace(/\0/g, '');
+      } catch (e) {}
+
+      memeCoin = await MemeCoin.create({
+        tokenName: tokenSymbol || sym,
+        tokenSymbol: tokenSymbol || sym,
+        network: 'xrpl',
+        currencyHex: resolvedCurrencyHex,
+        issuerWalletAddress,
+        creatorWalletAddress: walletAddress,
+        totalSupply: tokenBalance,
+        status: 'issued',
+        metadata: { createdVia: 'amm-confirm' }
+      });
+    }
+
     // Check duplicate pool
-    const existingPool = await MemeCoinPool.findOne({ where: { poolAddress, memeCoinId: id } });
+    const existingPool = await MemeCoinPool.findOne({ where: { poolAddress, memeCoinId: memeCoin.id } });
     if (existingPool) {
       return res.status(200).json(
-        new ApiResponse(200, existingPool, 'Pool already registered')
+        new ApiResponse(200, { pool: existingPool, ammInfo: { poolAddress, tradingFee, tokenBalance, xrpBalance: (parseFloat(xrpBalance) / 1000000).toFixed(6) + ' XRP', initialPrice } }, 'Pool already registered')
       );
     }
 
-    // Register the pool
     const pool = await MemeCoinPool.create({
-      memeCoinId: id,
+      memeCoinId: memeCoin.id,
       network: 'xrpl',
       poolAddress,
       pairToken: 'XRP',
@@ -1239,13 +1266,10 @@ const confirmAMMCreate = async (req, res, next) => {
       createTxHash: ammCreateTxHash,
       providerWalletAddress: walletAddress,
       status: 'active',
-      metadata: {
-        tradingFee,
-        lpToken: amm.lp_token
-      }
+      metadata: { tradingFee, lpToken: amm.lp_token }
     });
 
-    logger.info(`AMM pool registered: ${memeCoin.tokenSymbol}/XRP pool=${poolAddress} by ${walletAddress}`);
+    logger.info(`AMM pool registered: ${resolvedCurrencyHex}/XRP pool=${poolAddress} by ${walletAddress}`);
 
     res.status(201).json(
       new ApiResponse(201, {
@@ -1266,17 +1290,19 @@ const confirmAMMCreate = async (req, res, next) => {
 };
 
 /**
- * Get on-chain AMM pool info for a meme coin (live data from XRPL).
+ * Get on-chain AMM pool info for a token pair (live data from XRPL).
+ * Uses query params instead of DB ID.
  */
 const getAMMInfo = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const { currencyHex, issuerWalletAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await MemeCoin.findByPk(id);
-    if (!memeCoin) throw new ApiError(404, 'Meme coin not found');
-    if (memeCoin.network !== 'xrpl') throw new ApiError(400, 'This endpoint is only for XRPL meme coins');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress query param is required');
 
-    const ammInfo = await xrplService.getAMMInfo(memeCoin.currencyHex, memeCoin.issuerWalletAddress);
+    const resolvedCurrencyHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedCurrencyHex) throw new ApiError(400, 'currencyHex or tokenSymbol query param is required');
+
+    const ammInfo = await xrplService.getAMMInfo(resolvedCurrencyHex, issuerWalletAddress);
 
     if (!ammInfo) {
       return res.status(200).json(
