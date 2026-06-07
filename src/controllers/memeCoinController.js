@@ -1415,6 +1415,7 @@ const confirmSwap = async (req, res, next) => {
     let tokenAmount = '0';
     let xrpAmount = '0';
 
+    // Method 1: delivered_amount (most reliable for partial payments)
     if (meta?.delivered_amount) {
       if (typeof meta.delivered_amount === 'string') {
         xrpAmount = meta.delivered_amount;
@@ -1423,24 +1424,52 @@ const confirmSwap = async (req, res, next) => {
       }
     }
 
-    // For sell: delivered_amount is XRP, SendMax is token
-    // For buy: delivered_amount is token, SendMax is XRP
-    if (type === 'buy' && tokenAmount === '0') {
-      // Try parsing from AffectedNodes
-      if (meta?.AffectedNodes) {
-        for (const node of meta.AffectedNodes) {
-          const fields = node.ModifiedNode?.FinalFields || node.CreatedNode?.NewFields;
-          if (fields?.Balance?.currency === resolvedHex) {
-            tokenAmount = Math.abs(parseFloat(fields.Balance.value || '0')).toString();
-            break;
+    // Method 2: Parse balance changes from AffectedNodes (for AMM swaps)
+    if (meta?.AffectedNodes) {
+      for (const node of meta.AffectedNodes) {
+        const modified = node.ModifiedNode;
+        if (!modified || modified.LedgerEntryType !== 'RippleState') continue;
+
+        const prev = modified.PreviousFields;
+        const final = modified.FinalFields;
+        if (!prev?.Balance || !final?.Balance) continue;
+
+        // Check if this is our token's trustline
+        if (final.Balance.currency === resolvedHex) {
+          // Check if this line involves our trader's wallet
+          const lowLimit = final.LowLimit?.issuer;
+          const highLimit = final.HighLimit?.issuer;
+          if (lowLimit === walletAddress || highLimit === walletAddress) {
+            const prevBal = parseFloat(prev.Balance.value || '0');
+            const finalBal = parseFloat(final.Balance.value || '0');
+            const change = Math.abs(finalBal - prevBal);
+            if (change > 0) {
+              tokenAmount = change.toString();
+            }
           }
         }
       }
-    }
 
-    if (type === 'sell' && xrpAmount === '0') {
-      if (typeof meta?.delivered_amount === 'string') {
-        xrpAmount = meta.delivered_amount;
+      // Parse XRP changes from AccountRoot modifications
+      if (xrpAmount === '0') {
+        for (const node of meta.AffectedNodes) {
+          const modified = node.ModifiedNode;
+          if (!modified || modified.LedgerEntryType !== 'AccountRoot') continue;
+
+          const final = modified.FinalFields;
+          const prev = modified.PreviousFields;
+          if (final?.Account !== walletAddress) continue;
+          if (!prev?.Balance || !final?.Balance) continue;
+
+          const prevBal = parseInt(prev.Balance) || 0;
+          const finalBal = parseInt(final.Balance) || 0;
+          const change = Math.abs(finalBal - prevBal);
+          // Subtract the fee to get net XRP moved
+          const fee = parseInt(tx.Fee || '0');
+          if (change > fee) {
+            xrpAmount = (change - fee).toString();
+          }
+        }
       }
     }
 
