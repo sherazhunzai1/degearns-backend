@@ -1028,40 +1028,150 @@ const recordTrade = async (req, res, next) => {
 
 /**
  * Helper: find a meme coin by on-chain identifiers or DB ID.
- * Accepts id, or currencyHex+issuerWalletAddress (XRPL), or mintAddress (Solana).
  */
 const findMemeCoinByIdentifier = async (query) => {
   const { id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = query;
-
-  // By DB ID
-  if (id && id.length === 36) {
-    return MemeCoin.findByPk(id);
-  }
-
-  // By Solana mint address
-  if (mintAddress) {
-    return MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
-  }
-
-  // By XRPL currency + issuer
+  if (id && id.length === 36) return MemeCoin.findByPk(id);
+  if (mintAddress) return MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
   const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
-  if (resolvedHex && issuerWalletAddress) {
-    return MemeCoin.findOne({ where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' } });
-  }
-
+  if (resolvedHex && issuerWalletAddress) return MemeCoin.findOne({ where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' } });
   return null;
 };
 
 /**
- * Get trade history for a meme coin (paginated, most recent first).
- * Accepts DB id, or query params: currencyHex+issuerWalletAddress, or mintAddress
+ * Get trade history for a meme coin directly from on-chain.
+ * XRPL: fetches from AMM account's transaction history via account_tx.
+ * Falls back to DB if no AMM found.
  */
 const getTrades = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 50, type, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
 
-    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol });
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+
+    // For XRPL — fetch directly from on-chain
+    if (resolvedHex && issuerWalletAddress) {
+      const ammInfo = await xrplService.getAMMInfo(resolvedHex, issuerWalletAddress);
+      if (!ammInfo) {
+        return res.status(200).json(
+          new ApiResponse(200, { trades: [], pagination: { page: 1, limit: parseInt(limit), total: 0, pages: 0 } }, 'No AMM pool found — no trades')
+        );
+      }
+
+      const ammAccount = ammInfo.amm.account;
+      const client = await xrplConfig.getClientAsync();
+
+      // Fetch transactions from the AMM account
+      const txResponse = await client.request({
+        command: 'account_tx',
+        account: ammAccount,
+        ledger_index_min: -1,
+        ledger_index_max: -1,
+        limit: parseInt(limit)
+      });
+
+      const transactions = txResponse.result.transactions || [];
+
+      // Parse swap transactions (Payments through the AMM)
+      const trades = [];
+      for (const entry of transactions) {
+        const tx = entry.tx || entry.tx_json;
+        const meta = entry.meta;
+
+        if (!tx || tx.TransactionType !== 'Payment') continue;
+        if (meta?.TransactionResult !== 'tesSUCCESS') continue;
+
+        // Skip if not a swap (must involve our token)
+        let tradeTokenAmount = 0;
+        let tradeXrpAmount = 0;
+        let tradeType = null;
+        const trader = tx.Account;
+
+        // Parse balance changes from AffectedNodes
+        if (meta?.AffectedNodes) {
+          for (const node of meta.AffectedNodes) {
+            const modified = node.ModifiedNode;
+            if (!modified) continue;
+
+            // Token balance change on RippleState
+            if (modified.LedgerEntryType === 'RippleState') {
+              const prev = modified.PreviousFields;
+              const final = modified.FinalFields;
+              if (!prev?.Balance || !final?.Balance) continue;
+              if (final.Balance.currency !== resolvedHex) continue;
+
+              const lowLimit = final.LowLimit?.issuer;
+              const highLimit = final.HighLimit?.issuer;
+              if (lowLimit === trader || highLimit === trader) {
+                const prevBal = parseFloat(prev.Balance.value || '0');
+                const finalBal = parseFloat(final.Balance.value || '0');
+                const change = finalBal - prevBal;
+                tradeTokenAmount = Math.abs(change);
+                // If balance increased, trader bought; if decreased, trader sold
+                if (change > 0 || (lowLimit === trader && change < 0)) {
+                  tradeType = 'buy';
+                } else {
+                  tradeType = 'sell';
+                }
+                // Handle reversed perspective
+                if (highLimit === trader && change > 0) tradeType = 'buy';
+                if (highLimit === trader && change < 0) tradeType = 'sell';
+                if (lowLimit === trader && change > 0) tradeType = 'sell';
+                if (lowLimit === trader && change < 0) tradeType = 'buy';
+              }
+            }
+
+            // XRP balance change on AccountRoot
+            if (modified.LedgerEntryType === 'AccountRoot') {
+              const final = modified.FinalFields;
+              const prev = modified.PreviousFields;
+              if (final?.Account !== trader) continue;
+              if (!prev?.Balance || !final?.Balance) continue;
+              const change = Math.abs(parseInt(final.Balance) - parseInt(prev.Balance));
+              const fee = parseInt(tx.Fee || '0');
+              if (change > fee) {
+                tradeXrpAmount = change - fee;
+              }
+            }
+          }
+        }
+
+        if (tradeTokenAmount === 0 && tradeXrpAmount === 0) continue;
+        if (type && tradeType !== type) continue;
+
+        const pricePerToken = tradeTokenAmount > 0
+          ? (tradeXrpAmount / 1000000) / tradeTokenAmount
+          : 0;
+
+        trades.push({
+          txHash: tx.hash,
+          trader,
+          type: tradeType || 'buy',
+          tokenAmount: tradeTokenAmount.toString(),
+          xrpAmount: (tradeXrpAmount / 1000000).toFixed(6),
+          pricePerToken: pricePerToken.toFixed(12),
+          timestamp: entry.tx?.date ? new Date((entry.tx.date + 946684800) * 1000).toISOString() : null
+        });
+      }
+
+      return res.status(200).json(
+        new ApiResponse(200, {
+          network: 'xrpl',
+          ammAccount,
+          trades,
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: trades.length,
+            pages: 1
+          }
+        }, 'Trades retrieved from on-chain')
+      );
+    }
+
+    // Fallback: DB-based lookup (for Solana or when identifiers not provided)
+    const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
     }
@@ -1071,7 +1181,7 @@ const getTrades = async (req, res, next) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const { count, rows: trades } = await MemeCoinTrade.findAndCountAll({
+    const { count, rows: dbTrades } = await MemeCoinTrade.findAndCountAll({
       where,
       order: [['tradedAt', 'DESC']],
       limit: parseInt(limit),
@@ -1080,7 +1190,7 @@ const getTrades = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        trades,
+        trades: dbTrades,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -1415,6 +1525,7 @@ const confirmSwap = async (req, res, next) => {
     let tokenAmount = '0';
     let xrpAmount = '0';
 
+    // Method 1: delivered_amount (most reliable for partial payments)
     if (meta?.delivered_amount) {
       if (typeof meta.delivered_amount === 'string') {
         xrpAmount = meta.delivered_amount;
@@ -1423,24 +1534,52 @@ const confirmSwap = async (req, res, next) => {
       }
     }
 
-    // For sell: delivered_amount is XRP, SendMax is token
-    // For buy: delivered_amount is token, SendMax is XRP
-    if (type === 'buy' && tokenAmount === '0') {
-      // Try parsing from AffectedNodes
-      if (meta?.AffectedNodes) {
-        for (const node of meta.AffectedNodes) {
-          const fields = node.ModifiedNode?.FinalFields || node.CreatedNode?.NewFields;
-          if (fields?.Balance?.currency === resolvedHex) {
-            tokenAmount = Math.abs(parseFloat(fields.Balance.value || '0')).toString();
-            break;
+    // Method 2: Parse balance changes from AffectedNodes (for AMM swaps)
+    if (meta?.AffectedNodes) {
+      for (const node of meta.AffectedNodes) {
+        const modified = node.ModifiedNode;
+        if (!modified || modified.LedgerEntryType !== 'RippleState') continue;
+
+        const prev = modified.PreviousFields;
+        const final = modified.FinalFields;
+        if (!prev?.Balance || !final?.Balance) continue;
+
+        // Check if this is our token's trustline
+        if (final.Balance.currency === resolvedHex) {
+          // Check if this line involves our trader's wallet
+          const lowLimit = final.LowLimit?.issuer;
+          const highLimit = final.HighLimit?.issuer;
+          if (lowLimit === walletAddress || highLimit === walletAddress) {
+            const prevBal = parseFloat(prev.Balance.value || '0');
+            const finalBal = parseFloat(final.Balance.value || '0');
+            const change = Math.abs(finalBal - prevBal);
+            if (change > 0) {
+              tokenAmount = change.toString();
+            }
           }
         }
       }
-    }
 
-    if (type === 'sell' && xrpAmount === '0') {
-      if (typeof meta?.delivered_amount === 'string') {
-        xrpAmount = meta.delivered_amount;
+      // Parse XRP changes from AccountRoot modifications
+      if (xrpAmount === '0') {
+        for (const node of meta.AffectedNodes) {
+          const modified = node.ModifiedNode;
+          if (!modified || modified.LedgerEntryType !== 'AccountRoot') continue;
+
+          const final = modified.FinalFields;
+          const prev = modified.PreviousFields;
+          if (final?.Account !== walletAddress) continue;
+          if (!prev?.Balance || !final?.Balance) continue;
+
+          const prevBal = parseInt(prev.Balance) || 0;
+          const finalBal = parseInt(final.Balance) || 0;
+          const change = Math.abs(finalBal - prevBal);
+          // Subtract the fee to get net XRP moved
+          const fee = parseInt(tx.Fee || '0');
+          if (change > fee) {
+            xrpAmount = (change - fee).toString();
+          }
+        }
       }
     }
 
