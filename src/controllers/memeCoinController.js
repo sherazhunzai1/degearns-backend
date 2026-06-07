@@ -656,6 +656,39 @@ const getMyMemeCoins = async (req, res, next) => {
       }
     }
 
+    // Check AMM pool status for all XRPL coins
+    const xrplCoins = allCoins.filter(c => c.network === 'xrpl');
+    await Promise.all(xrplCoins.map(async (coin) => {
+      try {
+        const ammInfo = await xrplService.getAMMInfo(coin.currencyHex, coin.issuer);
+        if (ammInfo) {
+          const amm = ammInfo.amm;
+          let tokenBalance = '0';
+          let xrpBalance = '0';
+          if (typeof amm.amount === 'string') xrpBalance = amm.amount;
+          else if (amm.amount?.value) tokenBalance = amm.amount.value;
+          if (typeof amm.amount2 === 'string') xrpBalance = amm.amount2;
+          else if (amm.amount2?.value) tokenBalance = amm.amount2.value;
+
+          coin.hasPool = true;
+          coin.poolAddress = amm.account;
+          coin.tradingFee = amm.trading_fee;
+          coin.poolTokenBalance = tokenBalance;
+          coin.poolXrpBalance = (parseFloat(xrpBalance) / 1000000).toFixed(6);
+          coin.currentPrice = parseFloat(tokenBalance) > 0
+            ? (parseFloat(xrpBalance) / 1000000) / parseFloat(tokenBalance)
+            : null;
+        } else {
+          coin.hasPool = false;
+        }
+      } catch (e) {
+        coin.hasPool = false;
+      }
+    }));
+
+    // For Solana coins, hasPool = false for now (Raydium pools checked separately)
+    allCoins.filter(c => c.network === 'solana').forEach(c => { c.hasPool = false; });
+
     res.status(200).json(
       new ApiResponse(200, {
         wallets: allWallets,
