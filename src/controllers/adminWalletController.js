@@ -6,9 +6,14 @@ const logger = require('../utils/logger');
 /**
  * Create a new admin wallet
  */
+const PLATFORM_FEES = {
+  xrpl: { amount: '800000', currency: 'XRP', display: '0.8 XRP' },
+  solana: { amount: '16000000', currency: 'SOL', display: '0.016 SOL' }
+};
+
 const createAdminWallet = async (req, res, next) => {
   try {
-    const { walletAddress, type, label, description, metadata } = req.body;
+    const { walletAddress, type, network, label, description, metadata } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
@@ -23,23 +28,25 @@ const createAdminWallet = async (req, res, next) => {
       throw new ApiError(400, `Invalid type. Must be one of: ${validTypes.join(', ')}`);
     }
 
-    // Check if there's already an active wallet of this type
-    const existingActive = await AdminWallet.findOne({
-      where: {
-        type,
-        isActive: true
-      }
-    });
+    if (network && !['xrpl', 'solana'].includes(network)) {
+      throw new ApiError(400, 'Network must be xrpl or solana');
+    }
+
+    // Check if there's already an active wallet of this type + network
+    const existingWhere = { type, isActive: true };
+    if (network) existingWhere.network = network;
+
+    const existingActive = await AdminWallet.findOne({ where: existingWhere });
 
     if (existingActive) {
-      // Deactivate the existing wallet
       await existingActive.update({ isActive: false });
-      logger.info(`Deactivated previous ${type} wallet: ${existingActive.walletAddress}`);
+      logger.info(`Deactivated previous ${type}/${network} wallet: ${existingActive.walletAddress}`);
     }
 
     const adminWallet = await AdminWallet.create({
       walletAddress,
       type,
+      network: network || null,
       label,
       description,
       isActive: true,
@@ -106,21 +113,20 @@ const getAdminWalletById = async (req, res, next) => {
 const getAdminWalletByType = async (req, res, next) => {
   try {
     const { type } = req.params;
+    const { network } = req.query;
 
     const validTypes = ['platformFees', 'royalties', 'marketplace', 'treasury', 'subscriptions', 'rewards', 'other'];
     if (!validTypes.includes(type)) {
       throw new ApiError(400, `Invalid type. Must be one of: ${validTypes.join(', ')}`);
     }
 
-    const wallet = await AdminWallet.findOne({
-      where: {
-        type,
-        isActive: true
-      }
-    });
+    const where = { type, isActive: true };
+    if (network) where.network = network;
+
+    const wallet = await AdminWallet.findOne({ where });
 
     if (!wallet) {
-      throw new ApiError(404, `No active admin wallet found for type: ${type}`);
+      throw new ApiError(404, `No active admin wallet found for type: ${type}${network ? ` on ${network}` : ''}`);
     }
 
     res.status(200).json(
@@ -232,6 +238,56 @@ const getPlatformFeesWallet = async (req, res, next) => {
   }
 };
 
+/**
+ * Get platform fee configuration for a network.
+ * Returns the subscription wallet address + fee amount for the specified network.
+ * Frontend uses this to know where to send the fee and how much.
+ */
+const getPlatformFeeConfig = async (req, res, next) => {
+  try {
+    const { network } = req.params;
+
+    if (!network || !['xrpl', 'solana'].includes(network)) {
+      throw new ApiError(400, 'Network must be xrpl or solana');
+    }
+
+    const wallet = await AdminWallet.findOne({
+      where: { type: 'subscriptions', network, isActive: true }
+    });
+
+    if (!wallet) {
+      throw new ApiError(404, `No active subscription wallet configured for ${network}`);
+    }
+
+    const fee = PLATFORM_FEES[network];
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        network,
+        walletAddress: wallet.walletAddress,
+        label: wallet.label || 'Platform Fee Wallet',
+        fee: {
+          amount: fee.amount,
+          currency: fee.currency,
+          display: fee.display
+        },
+        actions: [
+          'create-collection',
+          'create-nft',
+          'list-nft',
+          'buy-nft',
+          'create-memecoin',
+          'list-memecoin',
+          'buy-memecoin',
+          'sell-memecoin'
+        ]
+      }, `Platform fee config for ${network} retrieved successfully`)
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createAdminWallet,
   getAdminWallets,
@@ -239,5 +295,7 @@ module.exports = {
   getAdminWalletByType,
   updateAdminWallet,
   deleteAdminWallet,
-  getPlatformFeesWallet
+  getPlatformFeesWallet,
+  getPlatformFeeConfig,
+  PLATFORM_FEES
 };
