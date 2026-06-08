@@ -1167,7 +1167,29 @@ const getTrades = async (req, res, next) => {
       );
     }
 
-    // Fallback: DB-based lookup (for Solana or when identifiers not provided)
+    // For Solana — fetch from Helius enhanced transactions API
+    if (mintAddress) {
+      try {
+        const rawTxs = await solanaService.getTokenTransactions(mintAddress, parseInt(limit));
+        const trades = rawTxs
+          .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
+          .filter(t => t !== null)
+          .filter(t => !type || t.type === type);
+
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'solana',
+            mintAddress,
+            trades,
+            pagination: { page: parseInt(page), limit: parseInt(limit), total: trades.length, pages: 1 }
+          }, 'Trades retrieved from on-chain')
+        );
+      } catch (err) {
+        logger.warn(`Helius tx fetch failed for ${mintAddress}: ${err.message}`);
+      }
+    }
+
+    // Final fallback: DB
     const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
@@ -1361,7 +1383,64 @@ const getPriceHistory = async (req, res, next) => {
       );
     }
 
-    // Fallback: DB-based for Solana or by ID
+    // For Solana — fetch from Helius enhanced transactions API
+    if (mintAddress) {
+      try {
+        const rawTxs = await solanaService.getTokenTransactions(mintAddress, 500);
+        const trades = rawTxs
+          .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
+          .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
+
+        // Build OHLC candles
+        const buckets = {};
+        for (const trade of trades) {
+          const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
+          if (!buckets[bucketTime]) buckets[bucketTime] = { trades: [] };
+          buckets[bucketTime].trades.push(trade);
+        }
+
+        const candles = Object.entries(buckets)
+          .sort(([a], [b]) => new Date(a) - new Date(b))
+          .map(([time, bucket]) => {
+            bucket.trades.sort((a, b) => a.timestamp - b.timestamp);
+            const prices = bucket.trades.map(t => t.pricePerToken);
+            const volumes = bucket.trades.map(t => t.tokenAmount);
+            return {
+              time,
+              open: prices[0],
+              high: Math.max(...prices),
+              low: Math.min(...prices),
+              close: prices[prices.length - 1],
+              volume: volumes.reduce((sum, v) => sum + v, 0),
+              trades: bucket.trades.length
+            };
+          });
+
+        // Get token symbol from DAS
+        let solTokenSymbol = mintAddress.slice(0, 8);
+        try {
+          const asset = await solanaService.getAsset(mintAddress);
+          solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
+        } catch (e) {}
+
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'solana',
+            tokenSymbol: solTokenSymbol,
+            mintAddress,
+            interval,
+            from: fromDate,
+            to: toDate,
+            totalCandles: candles.length,
+            candles
+          }, 'Price history retrieved from on-chain')
+        );
+      } catch (err) {
+        logger.warn(`Helius price history fetch failed for ${mintAddress}: ${err.message}`);
+      }
+    }
+
+    // Final fallback: DB
     const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
@@ -1401,10 +1480,8 @@ const getPriceHistory = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        memeCoinId: memeCoin.id,
-        tokenName: memeCoin.tokenName,
-        tokenSymbol: memeCoin.tokenSymbol,
         network: memeCoin.network,
+        tokenSymbol: memeCoin.tokenSymbol,
         interval,
         from: fromDate,
         to: toDate,
@@ -2041,6 +2118,215 @@ const getAMMInfo = async (req, res, next) => {
   }
 };
 
+// ==================== SOLANA RAYDIUM POOL ====================
+
+/**
+ * Register a Raydium pool after the frontend creates it on-chain.
+ * Frontend creates the pool via Raydium SDK, then calls this to save the record.
+ */
+const registerRaydiumPool = async (req, res, next) => {
+  try {
+    const {
+      mintAddress,
+      walletAddress,
+      poolAddress,
+      poolId,
+      pairToken = 'SOL',
+      pairTokenAddress,
+      initialBaseAmount,
+      initialPairAmount,
+      createTxHash,
+      metadata
+    } = req.body;
+
+    if (!mintAddress) throw new ApiError(400, 'mintAddress is required');
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
+    if (!poolAddress) throw new ApiError(400, 'poolAddress is required (Raydium pool ID)');
+
+    if (!solanaService.isValidAddress(mintAddress)) throw new ApiError(400, 'Invalid mint address');
+
+    // Verify tx on-chain if provided
+    if (createTxHash) {
+      const verification = await solanaService.verifyTransaction(createTxHash);
+      if (!verification.verified) {
+        throw new ApiError(400, `Pool creation tx verification failed: ${verification.error}`);
+      }
+    }
+
+    // Find or create the meme coin record
+    let memeCoin = await MemeCoin.findOne({
+      where: { mintAddress, network: 'solana' }
+    });
+
+    if (!memeCoin) {
+      // Try to get token metadata from DAS
+      let tokenName = null;
+      let tokenSymbol = null;
+      let logo = null;
+      try {
+        const asset = await solanaService.getAsset(mintAddress);
+        tokenName = asset?.content?.metadata?.name || null;
+        tokenSymbol = asset?.content?.metadata?.symbol || null;
+        logo = asset?.content?.links?.image || null;
+      } catch (e) {}
+
+      memeCoin = await MemeCoin.create({
+        tokenName: tokenName || mintAddress.slice(0, 8),
+        tokenSymbol: tokenSymbol || mintAddress.slice(0, 6),
+        network: 'solana',
+        mintAddress,
+        creatorWalletAddress: walletAddress,
+        status: 'minted',
+        logo,
+        metadata: { createdVia: 'raydium-pool-register' }
+      });
+    }
+
+    // Check duplicate pool
+    const existingPool = await MemeCoinPool.findOne({
+      where: { poolAddress, memeCoinId: memeCoin.id }
+    });
+    if (existingPool) {
+      return res.status(200).json(
+        new ApiResponse(200, existingPool, 'Pool already registered')
+      );
+    }
+
+    // Calculate initial price
+    let initialPrice = null;
+    if (initialBaseAmount && initialPairAmount && parseFloat(initialBaseAmount) > 0) {
+      initialPrice = parseFloat(initialPairAmount) / parseFloat(initialBaseAmount);
+    }
+
+    const pool = await MemeCoinPool.create({
+      memeCoinId: memeCoin.id,
+      network: 'solana',
+      poolAddress,
+      poolId: poolId || null,
+      pairToken,
+      pairTokenAddress: pairTokenAddress || null,
+      initialBaseAmount: initialBaseAmount || null,
+      initialPairAmount: initialPairAmount || null,
+      initialPrice,
+      createTxHash: createTxHash || null,
+      providerWalletAddress: walletAddress,
+      status: 'active',
+      metadata: metadata || null
+    });
+
+    logger.info(`Raydium pool registered: ${memeCoin.tokenSymbol}/${pairToken} pool=${poolAddress} by ${walletAddress}`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        pool,
+        memeCoin: {
+          id: memeCoin.id,
+          tokenName: memeCoin.tokenName,
+          tokenSymbol: memeCoin.tokenSymbol,
+          mintAddress: memeCoin.mintAddress
+        }
+      }, 'Raydium pool registered successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Record a Raydium swap (buy/sell). Frontend calls this after a swap completes.
+ */
+const recordRaydiumSwap = async (req, res, next) => {
+  try {
+    const {
+      mintAddress,
+      txHash,
+      traderWalletAddress,
+      type,
+      tokenAmount,
+      pairAmount,
+      pairToken = 'SOL'
+    } = req.body;
+
+    if (!mintAddress) throw new ApiError(400, 'mintAddress is required');
+    if (!txHash) throw new ApiError(400, 'txHash is required');
+    if (!traderWalletAddress) throw new ApiError(400, 'traderWalletAddress is required');
+    if (!type || !['buy', 'sell'].includes(type)) throw new ApiError(400, 'type must be "buy" or "sell"');
+    if (!tokenAmount || parseFloat(tokenAmount) <= 0) throw new ApiError(400, 'tokenAmount is required');
+    if (!pairAmount || parseFloat(pairAmount) <= 0) throw new ApiError(400, 'pairAmount is required');
+
+    // Idempotent
+    const existing = await MemeCoinTrade.findOne({ where: { txHash } });
+    if (existing) {
+      return res.status(200).json(new ApiResponse(200, existing, 'Trade already recorded'));
+    }
+
+    // Verify tx on-chain
+    const verification = await solanaService.verifyTransaction(txHash);
+    if (!verification.verified) {
+      throw new ApiError(400, `Swap tx verification failed: ${verification.error}`);
+    }
+
+    // Find meme coin
+    let memeCoin = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
+    if (!memeCoin) {
+      throw new ApiError(404, 'Meme coin not found. Register the pool first.');
+    }
+
+    const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoin.id, status: 'active' } });
+
+    const pricePerToken = parseFloat(pairAmount) / parseFloat(tokenAmount);
+
+    // USD conversion
+    let priceUsd = null;
+    let volumeUsd = null;
+    try {
+      const prices = await priceService.getPrices();
+      const pairUpper = pairToken.toUpperCase();
+      let rate = null;
+      if (pairUpper === 'SOL') rate = prices.sol;
+      else if (pairUpper === 'USDC' || pairUpper === 'USDT') rate = 1;
+      if (rate) {
+        priceUsd = pricePerToken * rate;
+        volumeUsd = parseFloat(pairAmount) * rate;
+      }
+    } catch (e) {}
+
+    const trade = await MemeCoinTrade.create({
+      memeCoinId: memeCoin.id,
+      poolId: pool?.id || null,
+      network: 'solana',
+      txHash,
+      traderWalletAddress,
+      type,
+      tokenAmount,
+      pairAmount,
+      pairToken,
+      pricePerToken,
+      priceUsd,
+      volumeUsd,
+      tradedAt: new Date()
+    });
+
+    logger.info(`Raydium swap recorded: ${type} ${tokenAmount} ${memeCoin.tokenSymbol} for ${pairAmount} ${pairToken} (tx: ${txHash})`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        trade,
+        summary: {
+          type,
+          tokenAmount,
+          pairAmount: `${pairAmount} ${pairToken}`,
+          pricePerToken: pricePerToken.toFixed(12),
+          priceUsd,
+          volumeUsd
+        }
+      }, `${type === 'buy' ? 'Buy' : 'Sell'} recorded successfully`)
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createMemeCoin,
   confirmTrustline,
@@ -2059,5 +2345,7 @@ module.exports = {
   confirmSwap,
   buildAMMCreate,
   confirmAMMCreate,
-  getAMMInfo
+  getAMMInfo,
+  registerRaydiumPool,
+  recordRaydiumSwap
 };
