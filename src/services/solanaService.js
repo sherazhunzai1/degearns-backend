@@ -146,6 +146,86 @@ async function searchAssets(filters) {
   return dasRequest('searchAssets', filters);
 }
 
+/**
+ * Get parsed transaction history for a token mint address.
+ * Uses Helius enhanced transactions API for rich swap data.
+ * Returns swap details including token amounts, SOL amounts, and prices.
+ */
+async function getTokenTransactions(mintAddress, limit = 100) {
+  // Helius enhanced API: parse transactions for an address
+  // Extract API key from RPC URL
+  const apiKeyMatch = solanaConfig.rpcUrl.match(/api-key=([^&]+)/);
+  if (!apiKeyMatch) {
+    throw new Error('Helius API key not found in RPC URL');
+  }
+  const apiKey = apiKeyMatch[1];
+
+  const { data } = await axios.get(
+    `https://api.helius.xyz/v0/addresses/${mintAddress}/transactions?api-key=${apiKey}&limit=${limit}&type=SWAP`
+  );
+
+  return data || [];
+}
+
+/**
+ * Parse Helius enhanced transaction into a trade record.
+ * Extracts swap amounts from tokenTransfers and nativeTransfers.
+ */
+function parseHeliusSwap(tx, mintAddress) {
+  if (!tx || tx.type !== 'SWAP') return null;
+
+  const tokenTransfers = tx.tokenTransfers || [];
+  const nativeTransfers = tx.nativeTransfers || [];
+
+  // Find the transfer involving our mint
+  const tokenTransfer = tokenTransfers.find(t => t.mint === mintAddress);
+  if (!tokenTransfer) return null;
+
+  const tokenAmount = Math.abs(tokenTransfer.tokenAmount || 0);
+  if (tokenAmount === 0) return null;
+
+  // Determine trade direction from the fee payer's perspective
+  const feePayer = tx.feePayer;
+  const isBuy = tokenTransfer.toUserAccount === feePayer;
+
+  // Find SOL transfer (native) for the swap
+  let solAmount = 0;
+  for (const nt of nativeTransfers) {
+    if (nt.fromUserAccount === feePayer || nt.toUserAccount === feePayer) {
+      solAmount += Math.abs(nt.amount || 0);
+    }
+  }
+  // Convert lamports to SOL
+  solAmount = solAmount / 1e9;
+
+  // If no native transfer, check other token transfers (might be USDC pair)
+  let pairToken = 'SOL';
+  let pairAmount = solAmount;
+  if (solAmount === 0) {
+    const otherTransfer = tokenTransfers.find(t => t.mint !== mintAddress);
+    if (otherTransfer) {
+      pairAmount = Math.abs(otherTransfer.tokenAmount || 0);
+      pairToken = otherTransfer.mint === 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' ? 'USDC' : otherTransfer.mint?.slice(0, 6);
+    }
+  }
+
+  if (pairAmount === 0) return null;
+
+  const pricePerToken = tokenAmount > 0 ? pairAmount / tokenAmount : 0;
+
+  return {
+    txHash: tx.signature,
+    trader: feePayer,
+    type: isBuy ? 'buy' : 'sell',
+    tokenAmount,
+    pairAmount,
+    pairToken,
+    pricePerToken,
+    timestamp: tx.timestamp ? new Date(tx.timestamp * 1000) : null,
+    description: tx.description
+  };
+}
+
 // ==================== Transaction verification ====================
 
 /**
@@ -188,5 +268,7 @@ module.exports = {
   getAssetsByCollection,
   searchAssets,
   verifyTransaction,
+  getTokenTransactions,
+  parseHeliusSwap,
   getNetworkInfo
 };

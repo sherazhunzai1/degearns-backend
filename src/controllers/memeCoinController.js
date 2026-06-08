@@ -1167,7 +1167,29 @@ const getTrades = async (req, res, next) => {
       );
     }
 
-    // Fallback: DB-based lookup (for Solana or when identifiers not provided)
+    // For Solana — fetch from Helius enhanced transactions API
+    if (mintAddress) {
+      try {
+        const rawTxs = await solanaService.getTokenTransactions(mintAddress, parseInt(limit));
+        const trades = rawTxs
+          .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
+          .filter(t => t !== null)
+          .filter(t => !type || t.type === type);
+
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'solana',
+            mintAddress,
+            trades,
+            pagination: { page: parseInt(page), limit: parseInt(limit), total: trades.length, pages: 1 }
+          }, 'Trades retrieved from on-chain')
+        );
+      } catch (err) {
+        logger.warn(`Helius tx fetch failed for ${mintAddress}: ${err.message}`);
+      }
+    }
+
+    // Final fallback: DB
     const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
@@ -1361,7 +1383,64 @@ const getPriceHistory = async (req, res, next) => {
       );
     }
 
-    // Fallback: DB-based for Solana or by ID
+    // For Solana — fetch from Helius enhanced transactions API
+    if (mintAddress) {
+      try {
+        const rawTxs = await solanaService.getTokenTransactions(mintAddress, 500);
+        const trades = rawTxs
+          .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
+          .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
+
+        // Build OHLC candles
+        const buckets = {};
+        for (const trade of trades) {
+          const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
+          if (!buckets[bucketTime]) buckets[bucketTime] = { trades: [] };
+          buckets[bucketTime].trades.push(trade);
+        }
+
+        const candles = Object.entries(buckets)
+          .sort(([a], [b]) => new Date(a) - new Date(b))
+          .map(([time, bucket]) => {
+            bucket.trades.sort((a, b) => a.timestamp - b.timestamp);
+            const prices = bucket.trades.map(t => t.pricePerToken);
+            const volumes = bucket.trades.map(t => t.tokenAmount);
+            return {
+              time,
+              open: prices[0],
+              high: Math.max(...prices),
+              low: Math.min(...prices),
+              close: prices[prices.length - 1],
+              volume: volumes.reduce((sum, v) => sum + v, 0),
+              trades: bucket.trades.length
+            };
+          });
+
+        // Get token symbol from DAS
+        let solTokenSymbol = mintAddress.slice(0, 8);
+        try {
+          const asset = await solanaService.getAsset(mintAddress);
+          solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
+        } catch (e) {}
+
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'solana',
+            tokenSymbol: solTokenSymbol,
+            mintAddress,
+            interval,
+            from: fromDate,
+            to: toDate,
+            totalCandles: candles.length,
+            candles
+          }, 'Price history retrieved from on-chain')
+        );
+      } catch (err) {
+        logger.warn(`Helius price history fetch failed for ${mintAddress}: ${err.message}`);
+      }
+    }
+
+    // Final fallback: DB
     const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
@@ -1401,10 +1480,8 @@ const getPriceHistory = async (req, res, next) => {
 
     res.status(200).json(
       new ApiResponse(200, {
-        memeCoinId: memeCoin.id,
-        tokenName: memeCoin.tokenName,
-        tokenSymbol: memeCoin.tokenSymbol,
         network: memeCoin.network,
+        tokenSymbol: memeCoin.tokenSymbol,
         interval,
         from: fromDate,
         to: toDate,
