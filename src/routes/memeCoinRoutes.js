@@ -18,7 +18,9 @@ const {
   confirmSwap,
   buildAMMCreate,
   confirmAMMCreate,
-  getAMMInfo
+  getAMMInfo,
+  registerRaydiumPool,
+  recordRaydiumSwap
 } = require('../controllers/memeCoinController');
 
 /**
@@ -121,6 +123,20 @@ router.get('/:id/trades', getTrades);
  * @access  Public
  */
 router.get('/:id/price-history', getPriceHistory);
+
+/**
+ * @route   POST /api/v1/memecoins/raydium/pool
+ * @desc    Solana: Register a Raydium pool after frontend creates it on-chain.
+ * @access  Public
+ */
+router.post('/raydium/pool', registerRaydiumPool);
+
+/**
+ * @route   POST /api/v1/memecoins/raydium/swap
+ * @desc    Solana: Record a Raydium swap (buy/sell) for price history.
+ * @access  Public
+ */
+router.post('/raydium/swap', recordRaydiumSwap);
 
 /**
  * @route   POST /api/v1/memecoins/swap/buy
