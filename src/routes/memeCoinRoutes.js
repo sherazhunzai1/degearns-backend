@@ -23,171 +23,38 @@ const {
   recordRaydiumSwap
 } = require('../controllers/memeCoinController');
 
-/**
- * @route   POST /api/v1/memecoins
- * @desc    Create a new meme coin.
- *          XRPL: returns TrustSet tx for QR signing.
- *          Solana: registers an SPL token (frontend creates on-chain).
- * @access  Public
- */
+// ==================== SPECIFIC ROUTES (must be before /:id wildcards) ====================
+
 router.post('/', createMemeCoin);
-
-/**
- * @route   GET /api/v1/memecoins/listed
- * @desc    Get all listed meme coins (with active liquidity pools).
- *          Includes 24h volume + latest price for each coin.
- * @access  Public
- */
-router.get('/listed', getListedMemeCoins);
-
-/**
- * @route   GET /api/v1/memecoins
- * @desc    List all meme coins with pagination/filters.
- *          Filters: network, status, listed (true/false), search, creatorWalletAddress.
- * @access  Public
- */
 router.get('/', getMemeCoins);
-
-/**
- * @route   GET /api/v1/memecoins/wallet/:walletAddress
- * @desc    Get meme coins created by a wallet (includes all linked wallets).
- * @access  Public
- */
+router.get('/listed', getListedMemeCoins);
 router.get('/wallet/:walletAddress', getMyMemeCoins);
-
-/**
- * @route   POST /api/v1/memecoins/:id/confirm-trustline
- * @desc    XRPL only: Confirm TrustSet was signed, then issue tokens.
- * @access  Public
- */
-router.post('/:id/confirm-trustline', confirmTrustline);
-
-/**
- * @route   POST /api/v1/memecoins/:id/confirm-mint
- * @desc    Solana only: Confirm SPL token mint transaction on-chain.
- * @access  Public
- */
-router.post('/:id/confirm-mint', confirmMint);
-
-/**
- * @route   POST /api/v1/memecoins/:id/pool
- * @desc    Register a liquidity pool for a meme coin.
- *          Solana: Raydium pool. XRPL: native AMM.
- * @access  Public
- */
-router.post('/:id/pool', registerPool);
-
-/**
- * @route   GET /api/v1/memecoins/:id/pools
- * @desc    Get all pools for a meme coin.
- * @access  Public
- */
-router.get('/:id/pools', getMemeCoinPools);
-
-/**
- * @route   POST /api/v1/memecoins/:id/trade
- * @desc    Record a trade (called after on-chain swap completes).
- * @access  Public
- */
-router.post('/:id/trade', recordTrade);
-
-/**
- * @route   GET /api/v1/memecoins/trades
- * @desc    Get trade history using on-chain identifiers.
- *          Query: currencyHex+issuerWalletAddress (XRPL) or mintAddress (Solana)
- *          Also: page, limit, type (buy/sell)
- * @access  Public
- */
 router.get('/trades', getTrades);
-
-/**
- * @route   GET /api/v1/memecoins/price-history
- * @desc    Get OHLC candle data for price graph using on-chain identifiers.
- *          Query: currencyHex+issuerWalletAddress (XRPL) or mintAddress (Solana)
- *          Also: interval (5m/15m/30m/1h/4h/1d), from, to
- * @access  Public
- */
 router.get('/price-history', getPriceHistory);
-
-/**
- * @route   GET /api/v1/memecoins/:id/trades
- * @desc    Get trade history for a meme coin by DB ID.
- * @access  Public
- */
-router.get('/:id/trades', getTrades);
-
-/**
- * @route   GET /api/v1/memecoins/:id/price-history
- * @desc    Get OHLC candle data by DB ID.
- *          Query: interval (5m/15m/30m/1h/4h/1d), from, to
- * @access  Public
- */
-router.get('/:id/price-history', getPriceHistory);
-
-/**
- * @route   POST /api/v1/memecoins/raydium/pool
- * @desc    Solana: Register a Raydium pool after frontend creates it on-chain.
- * @access  Public
- */
-router.post('/raydium/pool', registerRaydiumPool);
-
-/**
- * @route   POST /api/v1/memecoins/raydium/swap
- * @desc    Solana: Record a Raydium swap (buy/sell) for price history.
- * @access  Public
- */
-router.post('/raydium/swap', recordRaydiumSwap);
-
-/**
- * @route   POST /api/v1/memecoins/swap/buy
- * @desc    XRPL: Build a buy transaction (spend XRP → get meme coins).
- *          Returns unsigned tx for Xaman signing.
- * @access  Public
- */
-router.post('/swap/buy', buildBuyToken);
-
-/**
- * @route   POST /api/v1/memecoins/swap/sell
- * @desc    XRPL: Build a sell transaction (sell meme coins → get XRP).
- *          Returns unsigned tx for Xaman signing.
- * @access  Public
- */
-router.post('/swap/sell', buildSellToken);
-
-/**
- * @route   POST /api/v1/memecoins/confirm-swap
- * @desc    Confirm a swap tx. Verifies on-chain + records as trade for price history.
- * @access  Public
- */
-router.post('/confirm-swap', confirmSwap);
-
-/**
- * @route   POST /api/v1/memecoins/amm/create
- * @desc    XRPL: Build an AMMCreate transaction for Xaman signing.
- * @access  Public
- */
-router.post('/amm/create', buildAMMCreate);
-
-/**
- * @route   POST /api/v1/memecoins/confirm-amm
- * @desc    XRPL: Confirm AMMCreate was signed. Verifies on-chain + registers pool.
- * @access  Public
- */
-router.post('/confirm-amm', confirmAMMCreate);
-
-/**
- * @route   GET /api/v1/memecoins/amm
- * @desc    XRPL: Get live AMM pool info from on-chain.
- *          Query: currencyHex (or tokenSymbol) + issuerWalletAddress
- * @access  Public
- */
 router.get('/amm', getAMMInfo);
 
-/**
- * @route   GET /api/v1/memecoins/:id
- * @desc    Get a single meme coin (with active pool + latest price).
- * @access  Public
- */
+// Raydium (Solana)
+router.post('/raydium/pool', registerRaydiumPool);
+router.post('/raydium/swap', recordRaydiumSwap);
+
+// XRPL AMM
+router.post('/amm/create', buildAMMCreate);
+router.post('/confirm-amm', confirmAMMCreate);
+router.post('/confirm-swap', confirmSwap);
+
+// XRPL Swap
+router.post('/swap/buy', buildBuyToken);
+router.post('/swap/sell', buildSellToken);
+
+// ==================== /:id WILDCARD ROUTES (must be last) ====================
+
+router.post('/:id/confirm-trustline', confirmTrustline);
+router.post('/:id/confirm-mint', confirmMint);
+router.post('/:id/pool', registerPool);
+router.get('/:id/pools', getMemeCoinPools);
+router.post('/:id/trade', recordTrade);
+router.get('/:id/trades', getTrades);
+router.get('/:id/price-history', getPriceHistory);
 router.get('/:id', getMemeCoin);
 
 module.exports = router;
