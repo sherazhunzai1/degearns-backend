@@ -16,6 +16,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       comment: 'Purpose of this admin wallet'
     },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      allowNull: true,
+      comment: 'Blockchain network for this wallet'
+    },
     label: {
       type: DataTypes.STRING(100),
       allowNull: true,
@@ -43,12 +48,8 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       { fields: ['type'] },
       { fields: ['isActive'] },
-      {
-        unique: true,
-        fields: ['type', 'isActive'],
-        where: { isActive: true },
-        name: 'idx_admin_wallet_active_type'
-      }
+      { fields: ['network'] },
+      { fields: ['type', 'network', 'isActive'], name: 'idx_admin_wallet_type_network_active' }
     ]
   });
 
@@ -58,14 +59,11 @@ module.exports = (sequelize, DataTypes) => {
     return values;
   };
 
-  // Static method to get active wallet by type
-  AdminWallet.getActiveByType = async function(type) {
-    return await this.findOne({
-      where: {
-        type,
-        isActive: true
-      }
-    });
+  // Static method to get active wallet by type and network
+  AdminWallet.getActiveByType = async function(type, network = null) {
+    const where = { type, isActive: true };
+    if (network) where.network = network;
+    return await this.findOne({ where });
   };
 
   return AdminWallet;
