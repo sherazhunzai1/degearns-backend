@@ -55,6 +55,56 @@ async function getBalance(walletAddress) {
 }
 
 /**
+ * Get the current price of a token from a Raydium pool by reading
+ * the pool's on-chain token account balances directly.
+ *
+ * @param {string} poolAddress - Raydium AMM pool ID / address
+ * @param {string} mintAddress - The meme coin's mint address
+ * @returns {Promise<{price: number, baseBalance: number, quoteBalance: number} | null>}
+ */
+async function getRaydiumPoolPrice(poolAddress, mintAddress) {
+  try {
+    const connection = solanaConfig.getConnection();
+    const poolPubkey = new PublicKey(poolAddress);
+
+    // Fetch the pool account data
+    const accountInfo = await connection.getAccountInfo(poolPubkey);
+    if (!accountInfo) return null;
+
+    // Raydium AMM pools store vault addresses in the account data.
+    // Instead of parsing the complex layout, we fetch all token accounts
+    // owned by the pool and check their balances.
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(poolPubkey, {
+      programId: TOKEN_PROGRAM_ID
+    });
+
+    let baseBalance = 0;  // meme coin
+    let quoteBalance = 0; // SOL (wrapped)
+
+    for (const { account } of tokenAccounts.value) {
+      const info = account.data.parsed.info;
+      const mint = info.mint;
+      const balance = parseFloat(info.tokenAmount.uiAmountString || '0');
+
+      if (mint === mintAddress) {
+        baseBalance = balance;
+      } else {
+        // Assume the other token is the quote (SOL/USDC)
+        quoteBalance = balance;
+      }
+    }
+
+    if (baseBalance === 0) return null;
+
+    const price = quoteBalance / baseBalance;
+    return { price, baseBalance, quoteBalance };
+  } catch (error) {
+    logger.error(`Error fetching Raydium pool price for ${poolAddress}:`, error.message);
+    return null;
+  }
+}
+
+/**
  * Discover NFT mint addresses held by a wallet.
  * An SPL token is treated as an NFT when it has 0 decimals and a balance of 1.
  * @returns {Promise<string[]>} Array of NFT mint addresses
@@ -270,5 +320,6 @@ module.exports = {
   verifyTransaction,
   getTokenTransactions,
   parseHeliusSwap,
+  getRaydiumPoolPrice,
   getNetworkInfo
 };
