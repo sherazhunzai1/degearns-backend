@@ -3,6 +3,7 @@ const { sequelize, User, ReferralReward, ReferralClaim, ReferralAuditLog } = req
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { resolvePrimaryWallet } = require('../utils/userHelpers');
 
 // Referral reward percentage (10% of purchase amount)
 const REFERRAL_REWARD_PERCENTAGE = 10;
@@ -13,11 +14,13 @@ const REFERRAL_REWARD_PERCENTAGE = 10;
  */
 const getDashboard = async (req, res, next) => {
   try {
-    const { walletAddress } = req.query;
+    let { walletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const user = await User.findOne({ where: { walletAddress } });
     if (!user) {
@@ -113,7 +116,7 @@ const getDashboard = async (req, res, next) => {
  */
 const getTransactionHistory = async (req, res, next) => {
   try {
-    const { walletAddress } = req.query;
+    let { walletAddress } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const status = req.query.status; // optional filter
@@ -121,6 +124,8 @@ const getTransactionHistory = async (req, res, next) => {
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const whereClause = { referrerWalletAddress: walletAddress };
     if (status) {
@@ -221,11 +226,13 @@ const claimRewards = async (req, res, next) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const user = await User.findOne({ where: { walletAddress } });
     if (!user) {
@@ -317,13 +324,15 @@ const claimRewards = async (req, res, next) => {
  */
 const getClaimHistory = async (req, res, next) => {
   try {
-    const { walletAddress } = req.query;
+    let { walletAddress } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const { count, rows: claims } = await ReferralClaim.findAndCountAll({
       where: { referrerWalletAddress: walletAddress },
@@ -353,13 +362,15 @@ const getClaimHistory = async (req, res, next) => {
  */
 const getAuditLog = async (req, res, next) => {
   try {
-    const { walletAddress } = req.query;
+    let { walletAddress } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const { count, rows: logs } = await ReferralAuditLog.findAndCountAll({
       where: {
@@ -512,7 +523,7 @@ const freezeUserRewards = async (req, res, next) => {
  */
 const unfreezeUserRewards = async (req, res, next) => {
   try {
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
