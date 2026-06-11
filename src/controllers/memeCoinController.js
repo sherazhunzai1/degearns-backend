@@ -1507,51 +1507,57 @@ const getPriceHistory = async (req, res, next) => {
           .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
           .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
 
-        // If no trades, check for pool initial price
-        if (trades.length === 0) {
+        // If no trades, try to get current price from pool or DAS
+        let currentSolPrice = 0;
+        let solTokenSymbol = mintAddress.slice(0, 8);
+        try {
+          const asset = await solanaService.getAsset(mintAddress);
+          solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
+          currentSolPrice = asset?.token_info?.price_info?.price_per_token || 0;
+        } catch (e) {}
+
+        // Check pool for initial price if DAS doesn't have it
+        if (currentSolPrice === 0) {
           const memeCoinRecord = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
           if (memeCoinRecord) {
             const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoinRecord.id, status: 'active' } });
-            if (pool && pool.initialPrice && parseFloat(pool.initialPrice) > 0) {
-              const poolPrice = parseFloat(pool.initialPrice);
-              const bucketTime = new Date(Math.floor(pool.createdAt.getTime() / intervalMs) * intervalMs).toISOString();
-
-              let solTokenSymbol = mintAddress.slice(0, 8);
-              try {
-                const asset = await solanaService.getAsset(mintAddress);
-                solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
-              } catch (e) {}
-
-              return res.status(200).json(
-                new ApiResponse(200, {
-                  network: 'solana',
-                  tokenSymbol: solTokenSymbol,
-                  mintAddress,
-                  stats: {
-                    currentPrice: poolPrice,
-                    changePercent24h: 0,
-                    high24h: poolPrice,
-                    low24h: poolPrice,
-                    volumeUsd24h: 0,
-                    trades24h: 0
-                  },
-                  interval,
-                  from: fromDate,
-                  to: toDate,
-                  totalCandles: 1,
-                  candles: [{
-                    time: bucketTime,
-                    open: poolPrice,
-                    high: poolPrice,
-                    low: poolPrice,
-                    close: poolPrice,
-                    volume: 0,
-                    trades: 0
-                  }]
-                }, 'Price history from pool — no trades yet')
-              );
-            }
+            if (pool && pool.initialPrice) currentSolPrice = parseFloat(pool.initialPrice);
           }
+        }
+
+        if (trades.length === 0) {
+          const stats = {
+            currentPrice: currentSolPrice,
+            changePercent24h: 0,
+            high24h: currentSolPrice,
+            low24h: currentSolPrice,
+            volumeUsd24h: 0,
+            trades24h: 0
+          };
+
+          const candles = currentSolPrice > 0 ? [{
+            time: new Date(Math.floor(Date.now() / intervalMs) * intervalMs).toISOString(),
+            open: currentSolPrice,
+            high: currentSolPrice,
+            low: currentSolPrice,
+            close: currentSolPrice,
+            volume: 0,
+            trades: 0
+          }] : [];
+
+          return res.status(200).json(
+            new ApiResponse(200, {
+              network: 'solana',
+              tokenSymbol: solTokenSymbol,
+              mintAddress,
+              stats,
+              interval,
+              from: fromDate,
+              to: toDate,
+              totalCandles: candles.length,
+              candles
+            }, currentSolPrice > 0 ? 'Price from pool — no trades yet' : 'No price data available')
+          );
         }
 
         // Build OHLC candles
@@ -1579,16 +1585,9 @@ const getPriceHistory = async (req, res, next) => {
             };
           });
 
-        // Get token symbol from DAS
-        let solTokenSymbol = mintAddress.slice(0, 8);
-        try {
-          const asset = await solanaService.getAsset(mintAddress);
-          solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
-        } catch (e) {}
-
-        // Compute 24h stats
-        const latestPrice = trades.length > 0 ? trades[0].pricePerToken : 0;
-        const stats = await compute24hStats(trades, latestPrice);
+        // Use currentSolPrice from earlier if trades updated it
+        const latestTradePrice = trades.length > 0 ? trades[0].pricePerToken : currentSolPrice;
+        const stats = await compute24hStats(trades, latestTradePrice);
 
         return res.status(200).json(
           new ApiResponse(200, {
@@ -1646,10 +1645,24 @@ const getPriceHistory = async (req, res, next) => {
       trades: parseInt(t.trades)
     }));
 
+    // Get current price from pool
+    let fallbackPrice = 0;
+    const fbPool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoin.id, status: 'active' } });
+    if (fbPool && fbPool.initialPrice) fallbackPrice = parseFloat(fbPool.initialPrice);
+    if (candles.length > 0) fallbackPrice = candles[candles.length - 1].close;
+
+    const fbStats = candles.length > 0
+      ? await compute24hStats(
+          candles.map(c => ({ pricePerToken: c.close, timestamp: new Date(c.time), pairAmount: c.volumeUsd || 0, pairToken: 'USD' })),
+          fallbackPrice
+        )
+      : { currentPrice: fallbackPrice, changePercent24h: 0, high24h: fallbackPrice, low24h: fallbackPrice, volumeUsd24h: 0, trades24h: 0 };
+
     res.status(200).json(
       new ApiResponse(200, {
         network: memeCoin.network,
         tokenSymbol: memeCoin.tokenSymbol,
+        stats: fbStats,
         interval,
         from: fromDate,
         to: toDate,
