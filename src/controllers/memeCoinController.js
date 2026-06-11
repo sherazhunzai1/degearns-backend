@@ -1338,6 +1338,60 @@ const getPriceHistory = async (req, res, next) => {
         trades.push({ timestamp, pricePerToken, tokenAmount: tradeTokenAmount, xrpAmount: tradeXrpAmount / 1000000 });
       }
 
+      // Get current pool price from AMM as the latest price point
+      const amm = ammInfo.amm;
+      let poolTokenBalance = '0';
+      let poolXrpBalance = '0';
+      if (typeof amm.amount === 'string') poolXrpBalance = amm.amount;
+      else if (amm.amount?.value) poolTokenBalance = amm.amount.value;
+      if (typeof amm.amount2 === 'string') poolXrpBalance = amm.amount2;
+      else if (amm.amount2?.value) poolTokenBalance = amm.amount2.value;
+
+      const currentPoolPrice = parseFloat(poolTokenBalance) > 0
+        ? (parseFloat(poolXrpBalance) / 1000000) / parseFloat(poolTokenBalance)
+        : 0;
+
+      // If no trades found, return the current pool price as a single candle
+      if (trades.length === 0 && currentPoolPrice > 0) {
+        const now = new Date();
+        const bucketTime = new Date(Math.floor(now.getTime() / intervalMs) * intervalMs).toISOString();
+
+        let tokenSym = resolvedHex;
+        try { tokenSym = Buffer.from(resolvedHex, 'hex').toString('utf-8').replace(/\0/g, ''); } catch (e) {}
+
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'xrpl',
+            tokenSymbol: tokenSymbol || tokenSym,
+            ammAccount,
+            currentPrice: currentPoolPrice,
+            interval,
+            from: fromDate,
+            to: toDate,
+            totalCandles: 1,
+            candles: [{
+              time: bucketTime,
+              open: currentPoolPrice,
+              high: currentPoolPrice,
+              low: currentPoolPrice,
+              close: currentPoolPrice,
+              volume: 0,
+              trades: 0
+            }]
+          }, 'Price history from pool — no trades yet')
+        );
+      }
+
+      // Add current pool price as the latest data point
+      if (currentPoolPrice > 0) {
+        trades.push({
+          timestamp: new Date(),
+          pricePerToken: currentPoolPrice,
+          tokenAmount: 0,
+          xrpAmount: 0
+        });
+      }
+
       // Build OHLC candles from trades
       const buckets = {};
       for (const trade of trades) {
@@ -1390,6 +1444,46 @@ const getPriceHistory = async (req, res, next) => {
         const trades = rawTxs
           .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
           .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
+
+        // If no trades, check for pool initial price
+        if (trades.length === 0) {
+          const memeCoinRecord = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
+          if (memeCoinRecord) {
+            const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoinRecord.id, status: 'active' } });
+            if (pool && pool.initialPrice && parseFloat(pool.initialPrice) > 0) {
+              const poolPrice = parseFloat(pool.initialPrice);
+              const bucketTime = new Date(Math.floor(pool.createdAt.getTime() / intervalMs) * intervalMs).toISOString();
+
+              let solTokenSymbol = mintAddress.slice(0, 8);
+              try {
+                const asset = await solanaService.getAsset(mintAddress);
+                solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
+              } catch (e) {}
+
+              return res.status(200).json(
+                new ApiResponse(200, {
+                  network: 'solana',
+                  tokenSymbol: solTokenSymbol,
+                  mintAddress,
+                  currentPrice: poolPrice,
+                  interval,
+                  from: fromDate,
+                  to: toDate,
+                  totalCandles: 1,
+                  candles: [{
+                    time: bucketTime,
+                    open: poolPrice,
+                    high: poolPrice,
+                    low: poolPrice,
+                    close: poolPrice,
+                    volume: 0,
+                    trades: 0
+                  }]
+                }, 'Price history from pool — no trades yet')
+              );
+            }
+          }
+        }
 
         // Build OHLC candles
         const buckets = {};
