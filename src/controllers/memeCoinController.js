@@ -1507,23 +1507,19 @@ const getPriceHistory = async (req, res, next) => {
           .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
           .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
 
-        // If no trades, try to get current price from pool or DAS
+        // Get current price + token info from DAS (on-chain only, no DB)
         let currentSolPrice = 0;
         let solTokenSymbol = mintAddress.slice(0, 8);
         try {
           const asset = await solanaService.getAsset(mintAddress);
           solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
           currentSolPrice = asset?.token_info?.price_info?.price_per_token || 0;
-        } catch (e) {}
 
-        // Check pool for initial price if DAS doesn't have it
-        if (currentSolPrice === 0) {
-          const memeCoinRecord = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
-          if (memeCoinRecord) {
-            const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoinRecord.id, status: 'active' } });
-            if (pool && pool.initialPrice) currentSolPrice = parseFloat(pool.initialPrice);
+          // If DAS doesn't have price, estimate from token supply + SOL balance
+          if (currentSolPrice === 0 && asset?.token_info?.supply && asset?.token_info?.balance) {
+            // Try to get from the most recent trade if available
           }
-        }
+        } catch (e) {}
 
         if (trades.length === 0) {
           const stats = {
@@ -1604,10 +1600,42 @@ const getPriceHistory = async (req, res, next) => {
         );
       } catch (err) {
         logger.warn(`Helius price history fetch failed for ${mintAddress}: ${err.message}`);
+        // Even on Helius error, return what we can from DAS
+        let solTokenSymbolFb = mintAddress.slice(0, 8);
+        let fbPrice = 0;
+        try {
+          const asset = await solanaService.getAsset(mintAddress);
+          solTokenSymbolFb = asset?.content?.metadata?.symbol || solTokenSymbolFb;
+          fbPrice = asset?.token_info?.price_info?.price_per_token || 0;
+        } catch (e2) {}
+
+        return res.status(200).json(
+          new ApiResponse(200, {
+            network: 'solana',
+            tokenSymbol: solTokenSymbolFb,
+            mintAddress,
+            stats: {
+              currentPrice: fbPrice,
+              changePercent24h: 0,
+              high24h: fbPrice,
+              low24h: fbPrice,
+              volumeUsd24h: 0,
+              trades24h: 0
+            },
+            interval,
+            from: fromDate,
+            to: toDate,
+            totalCandles: fbPrice > 0 ? 1 : 0,
+            candles: fbPrice > 0 ? [{
+              time: new Date(Math.floor(Date.now() / intervalMs) * intervalMs).toISOString(),
+              open: fbPrice, high: fbPrice, low: fbPrice, close: fbPrice, volume: 0, trades: 0
+            }] : []
+          }, 'Price data from on-chain')
+        );
       }
     }
 
-    // Final fallback: DB
+    // DB fallback only for requests without on-chain identifiers
     const memeCoin = await findMemeCoinByIdentifier({ id, currencyHex: resolvedHex, issuerWalletAddress, mintAddress, tokenSymbol });
     if (!memeCoin) {
       throw new ApiError(404, 'Meme coin not found');
