@@ -1224,6 +1224,56 @@ const getTrades = async (req, res, next) => {
 };
 
 /**
+ * Compute 24h stats from a list of trades.
+ */
+const compute24hStats = async (trades, currentPrice) => {
+  const now = Date.now();
+  const oneDayAgo = now - 24 * 60 * 60 * 1000;
+
+  const trades24h = trades.filter(t => {
+    const ts = t.timestamp instanceof Date ? t.timestamp.getTime() : new Date(t.timestamp).getTime();
+    return ts >= oneDayAgo;
+  });
+
+  const prices24h = trades24h.map(t => t.pricePerToken).filter(p => p > 0);
+  const high24h = prices24h.length > 0 ? Math.max(...prices24h) : currentPrice;
+  const low24h = prices24h.length > 0 ? Math.min(...prices24h) : currentPrice;
+
+  // Oldest trade in 24h window for change calculation
+  const sortedByTime = [...trades24h].sort((a, b) => {
+    const ta = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp);
+    const tb = b.timestamp instanceof Date ? b.timestamp : new Date(b.timestamp);
+    return ta - tb;
+  });
+  const oldestPrice24h = sortedByTime.length > 0 ? sortedByTime[0].pricePerToken : currentPrice;
+  const changePercent24h = oldestPrice24h > 0
+    ? ((currentPrice - oldestPrice24h) / oldestPrice24h) * 100
+    : 0;
+
+  let volumeUsd24h = 0;
+  try {
+    const prices = await priceService.getPrices();
+    for (const trade of trades24h) {
+      const pairUpper = (trade.pairToken || 'XRP').toUpperCase();
+      let rate = 0;
+      if (pairUpper === 'SOL') rate = prices.sol;
+      else if (pairUpper === 'XRP') rate = prices.xrp;
+      else if (pairUpper === 'USDC' || pairUpper === 'USDT') rate = 1;
+      volumeUsd24h += (parseFloat(trade.pairAmount) || parseFloat(trade.xrpAmount) || 0) * rate;
+    }
+  } catch (e) {}
+
+  return {
+    currentPrice,
+    changePercent24h: parseFloat(changePercent24h.toFixed(2)),
+    high24h,
+    low24h,
+    volumeUsd24h: parseFloat(volumeUsd24h.toFixed(2)),
+    trades24h: trades24h.length
+  };
+};
+
+/**
  * Get price history for a meme coin (for graph rendering).
  * Fetches trades directly from XRPL on-chain and builds OHLC candles.
  *
@@ -1364,7 +1414,14 @@ const getPriceHistory = async (req, res, next) => {
             network: 'xrpl',
             tokenSymbol: tokenSymbol || tokenSym,
             ammAccount,
-            currentPrice: currentPoolPrice,
+            stats: {
+              currentPrice: currentPoolPrice,
+              changePercent24h: 0,
+              high24h: currentPoolPrice,
+              low24h: currentPoolPrice,
+              volumeUsd24h: 0,
+              trades24h: 0
+            },
             interval,
             from: fromDate,
             to: toDate,
@@ -1423,11 +1480,16 @@ const getPriceHistory = async (req, res, next) => {
       let tokenSym = resolvedHex;
       try { tokenSym = Buffer.from(resolvedHex, 'hex').toString('utf-8').replace(/\0/g, ''); } catch (e) {}
 
+      // Compute 24h stats from trades (add pairToken for USD calc)
+      const tradesWithPair = trades.map(t => ({ ...t, pairToken: 'XRP', pairAmount: t.xrpAmount }));
+      const stats = await compute24hStats(tradesWithPair, currentPoolPrice);
+
       return res.status(200).json(
         new ApiResponse(200, {
           network: 'xrpl',
           tokenSymbol: tokenSymbol || tokenSym,
           ammAccount,
+          stats,
           interval,
           from: fromDate,
           to: toDate,
@@ -1465,7 +1527,14 @@ const getPriceHistory = async (req, res, next) => {
                   network: 'solana',
                   tokenSymbol: solTokenSymbol,
                   mintAddress,
-                  currentPrice: poolPrice,
+                  stats: {
+                    currentPrice: poolPrice,
+                    changePercent24h: 0,
+                    high24h: poolPrice,
+                    low24h: poolPrice,
+                    volumeUsd24h: 0,
+                    trades24h: 0
+                  },
                   interval,
                   from: fromDate,
                   to: toDate,
@@ -1517,11 +1586,16 @@ const getPriceHistory = async (req, res, next) => {
           solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
         } catch (e) {}
 
+        // Compute 24h stats
+        const latestPrice = trades.length > 0 ? trades[0].pricePerToken : 0;
+        const stats = await compute24hStats(trades, latestPrice);
+
         return res.status(200).json(
           new ApiResponse(200, {
             network: 'solana',
             tokenSymbol: solTokenSymbol,
             mintAddress,
+            stats,
             interval,
             from: fromDate,
             to: toDate,
