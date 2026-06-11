@@ -56,9 +56,12 @@ async function getBalance(walletAddress) {
 
 /**
  * Get the current price of a token from a Raydium pool by reading
- * the pool's on-chain token account balances directly.
+ * the pool's on-chain vault balances.
  *
- * @param {string} poolAddress - Raydium AMM pool ID / address
+ * Raydium CPMM pools store vault addresses inside the pool account data.
+ * We parse the data to extract vault pubkeys, then read their balances.
+ *
+ * @param {string} poolAddress - Raydium pool address
  * @param {string} mintAddress - The meme coin's mint address
  * @returns {Promise<{price: number, baseBalance: number, quoteBalance: number} | null>}
  */
@@ -69,35 +72,54 @@ async function getRaydiumPoolPrice(poolAddress, mintAddress) {
 
     // Fetch the pool account data
     const accountInfo = await connection.getAccountInfo(poolPubkey);
-    if (!accountInfo) return null;
+    if (!accountInfo || !accountInfo.data) return null;
 
-    // Raydium AMM pools store vault addresses in the account data.
-    // Instead of parsing the complex layout, we fetch all token accounts
-    // owned by the pool and check their balances.
-    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(poolPubkey, {
-      programId: TOKEN_PROGRAM_ID
-    });
+    const data = accountInfo.data;
 
-    let baseBalance = 0;  // meme coin
-    let quoteBalance = 0; // SOL (wrapped)
+    // Raydium CPMM pool layout:
+    // offset 72: token_0_vault (32 bytes)
+    // offset 104: token_1_vault (32 bytes)
+    // offset 168: token_0_mint (32 bytes)
+    // offset 200: token_1_mint (32 bytes)
+    if (data.length < 232) return null;
 
-    for (const { account } of tokenAccounts.value) {
-      const info = account.data.parsed.info;
-      const mint = info.mint;
-      const balance = parseFloat(info.tokenAmount.uiAmountString || '0');
+    const vault0 = new PublicKey(data.slice(72, 104));
+    const vault1 = new PublicKey(data.slice(104, 136));
+    const mint0 = new PublicKey(data.slice(168, 200));
+    const mint1 = new PublicKey(data.slice(200, 232));
 
-      if (mint === mintAddress) {
-        baseBalance = balance;
-      } else {
-        // Assume the other token is the quote (SOL/USDC)
-        quoteBalance = balance;
-      }
+    // Read vault balances
+    const [vault0Info, vault1Info] = await Promise.all([
+      connection.getParsedAccountInfo(vault0),
+      connection.getParsedAccountInfo(vault1)
+    ]);
+
+    const balance0 = parseFloat(vault0Info.value?.data?.parsed?.info?.tokenAmount?.uiAmountString || '0');
+    const balance1 = parseFloat(vault1Info.value?.data?.parsed?.info?.tokenAmount?.uiAmountString || '0');
+
+    // Determine which is base (meme coin) and which is quote (SOL/USDC)
+    const mint0Str = mint0.toBase58();
+    const mint1Str = mint1.toBase58();
+
+    let baseBalance, quoteBalance;
+    if (mint0Str === mintAddress) {
+      baseBalance = balance0;
+      quoteBalance = balance1;
+    } else if (mint1Str === mintAddress) {
+      baseBalance = balance1;
+      quoteBalance = balance0;
+    } else {
+      logger.warn(`Token ${mintAddress} not found in pool ${poolAddress} (mint0=${mint0Str}, mint1=${mint1Str})`);
+      return null;
     }
 
     if (baseBalance === 0) return null;
 
     const price = quoteBalance / baseBalance;
-    return { price, baseBalance, quoteBalance };
+
+    logger.info(`Raydium pool price: ${poolAddress} | base=${baseBalance} quote=${quoteBalance} price=${price}`);
+
+    return { price, baseBalance, quoteBalance, mint0: mint0Str, mint1: mint1Str };
   } catch (error) {
     logger.error(`Error fetching Raydium pool price for ${poolAddress}:`, error.message);
     return null;
