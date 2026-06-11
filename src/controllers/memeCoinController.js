@@ -1507,19 +1507,43 @@ const getPriceHistory = async (req, res, next) => {
           .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
           .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
 
-        // Get current price + token info from DAS (on-chain only, no DB)
+        // Get current price + token info from on-chain
         let currentSolPrice = 0;
         let solTokenSymbol = mintAddress.slice(0, 8);
+        let poolDetails = null;
+
+        // 1. Try DAS for price (works for established tokens on Jupiter etc.)
         try {
           const asset = await solanaService.getAsset(mintAddress);
           solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
           currentSolPrice = asset?.token_info?.price_info?.price_per_token || 0;
-
-          // If DAS doesn't have price, estimate from token supply + SOL balance
-          if (currentSolPrice === 0 && asset?.token_info?.supply && asset?.token_info?.balance) {
-            // Try to get from the most recent trade if available
-          }
         } catch (e) {}
+
+        // 2. If DAS has no price, read Raydium pool balances on-chain
+        if (currentSolPrice === 0) {
+          // Find pool address — check registered pools in DB, or from query param
+          const poolAddr = req.query.poolAddress;
+          if (poolAddr) {
+            poolDetails = await solanaService.getRaydiumPoolPrice(poolAddr, mintAddress);
+            if (poolDetails && poolDetails.price > 0) {
+              currentSolPrice = poolDetails.price;
+            }
+          }
+
+          // If no poolAddress in query, try to find from DB (minimal DB use — just pool address)
+          if (currentSolPrice === 0) {
+            const memeCoinRecord = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' }, attributes: ['id'] });
+            if (memeCoinRecord) {
+              const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoinRecord.id, status: 'active' }, attributes: ['poolAddress'] });
+              if (pool) {
+                poolDetails = await solanaService.getRaydiumPoolPrice(pool.poolAddress, mintAddress);
+                if (poolDetails && poolDetails.price > 0) {
+                  currentSolPrice = poolDetails.price;
+                }
+              }
+            }
+          }
+        }
 
         if (trades.length === 0) {
           const stats = {
@@ -1600,7 +1624,7 @@ const getPriceHistory = async (req, res, next) => {
         );
       } catch (err) {
         logger.warn(`Helius price history fetch failed for ${mintAddress}: ${err.message}`);
-        // Even on Helius error, return what we can from DAS
+        // Even on Helius error, return what we can from on-chain
         let solTokenSymbolFb = mintAddress.slice(0, 8);
         let fbPrice = 0;
         try {
@@ -1608,6 +1632,25 @@ const getPriceHistory = async (req, res, next) => {
           solTokenSymbolFb = asset?.content?.metadata?.symbol || solTokenSymbolFb;
           fbPrice = asset?.token_info?.price_info?.price_per_token || 0;
         } catch (e2) {}
+
+        // Try Raydium pool on-chain if DAS has no price
+        if (fbPrice === 0) {
+          const poolAddr = req.query.poolAddress;
+          if (poolAddr) {
+            const pd = await solanaService.getRaydiumPoolPrice(poolAddr, mintAddress);
+            if (pd && pd.price > 0) fbPrice = pd.price;
+          }
+          if (fbPrice === 0) {
+            const mc = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' }, attributes: ['id'] });
+            if (mc) {
+              const pl = await MemeCoinPool.findOne({ where: { memeCoinId: mc.id, status: 'active' }, attributes: ['poolAddress'] });
+              if (pl) {
+                const pd = await solanaService.getRaydiumPoolPrice(pl.poolAddress, mintAddress);
+                if (pd && pd.price > 0) fbPrice = pd.price;
+              }
+            }
+          }
+        }
 
         return res.status(200).json(
           new ApiResponse(200, {
