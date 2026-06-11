@@ -44,8 +44,39 @@ const MemeCoinPool = require('./MemeCoinPool')(sequelize, DataTypes);
 const MemeCoinTrade = require('./MemeCoinTrade')(sequelize, DataTypes);
 const UserWallet = require('./UserWallet')(sequelize, DataTypes);
 const SolanaNftListing = require('./SolanaNftListing')(sequelize, DataTypes);
+const CollectionChatMessage = require('./CollectionChatMessage')(sequelize, DataTypes);
 
 // Define associations
+// Collection and CollectionChatMessage
+Collection.hasMany(CollectionChatMessage, {
+  foreignKey: 'collectionId',
+  as: 'chatMessages'
+});
+CollectionChatMessage.belongsTo(Collection, {
+  foreignKey: 'collectionId',
+  as: 'collection'
+});
+User.hasMany(CollectionChatMessage, {
+  foreignKey: 'senderWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'collectionChatMessages'
+});
+CollectionChatMessage.belongsTo(User, {
+  foreignKey: 'senderWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'sender'
+});
+
+// CollectionChatMessage self-referencing for replies
+CollectionChatMessage.hasMany(CollectionChatMessage, {
+  foreignKey: 'replyToMessageId',
+  as: 'replies'
+});
+CollectionChatMessage.belongsTo(CollectionChatMessage, {
+  foreignKey: 'replyToMessageId',
+  as: 'replyTo'
+});
+
 // User and UserWallet
 User.hasMany(UserWallet, {
   foreignKey: 'userId',
@@ -721,5 +752,6 @@ module.exports = {
   MemeCoinPool,
   MemeCoinTrade,
   UserWallet,
-  SolanaNftListing
+  SolanaNftListing,
+  CollectionChatMessage
 };
