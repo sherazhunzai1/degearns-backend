@@ -264,7 +264,14 @@ exports.getNFTDetail = async (req, res) => {
           isVerified: collection.creator.isVerified,
           subscriptionPlan: subscriptionMap[collection.creator.walletAddress] || 'free'
         } : null
-      } : null,
+      } : {
+        id: null,
+        name: nftTitle || `Collection #${nftData.NFTokenTaxon}`,
+        slug: null,
+        taxon: nftData.NFTokenTaxon,
+        issuer: nftData.Issuer,
+        isRegistered: false
+      },
       owner: ownerAddress,
       ownerInfo: ownerUser ? {
         walletAddress: ownerUser.walletAddress,
