@@ -175,65 +175,56 @@ exports.getNFTDetail = async (req, res) => {
       })
     ]);
 
-    // Get collection info from on-chain: fetch all NFTs from issuer with same taxon
-    let collectionInfo = null;
-    try {
-      const issuerNFTs = await xrplService.getAccountNFTs(nftData.Issuer);
-      const collectionNFTs = issuerNFTs.filter(nft => nft.NFTokenTaxon === nftData.NFTokenTaxon);
-      const totalSupply = collectionNFTs.length;
+    // Get collection info from on-chain using the owner's NFTs (already fetched)
+    // NFTs leave the issuer's account after transfer, so we use the owner's account
+    const collectionNFTs = accountNFTs.filter(nft =>
+      nft.NFTokenTaxon === nftData.NFTokenTaxon && nft.Issuer === nftData.Issuer
+    );
 
-      // Get collection name/image from first NFT's metadata
-      let collectionName = `Collection #${nftData.NFTokenTaxon}`;
-      let collectionImage = null;
-      let collectionDescription = null;
+    // Use this NFT's metadata for collection name/image (already fetched above)
+    let collectionName = nftTitle || `Collection #${nftData.NFTokenTaxon}`;
+    let collectionImage = nftImage;
+    let collectionDescription = nftDescription;
+
+    // Try to get collection-specific name from metadata
+    try {
+      const meta = await xrplService.fetchNFTMetadata(nftData.URI);
+      if (meta?.collection) {
+        const colName = typeof meta.collection === 'string'
+          ? meta.collection
+          : meta.collection.name || meta.collection.family;
+        if (colName) collectionName = colName;
+      }
+    } catch (e) {}
+
+    // Get floor price from sell offers on collection NFTs in this wallet
+    let floorPrice = null;
+    let listedCount = 0;
+    const prices = [];
+    for (const nft of collectionNFTs) {
       try {
-        const firstNft = collectionNFTs[0];
-        if (firstNft) {
-          const meta = await xrplService.fetchNFTMetadata(firstNft.URI);
-          if (meta) {
-            if (meta.collection) {
-              collectionName = typeof meta.collection === 'string' ? meta.collection : meta.collection.name || meta.collection.family || collectionName;
-            }
-            collectionImage = meta.image || meta.image_url || meta.imageUrl || null;
-            collectionDescription = meta.description || null;
-          }
+        const offers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+        if (offers && offers.length > 0) {
+          listedCount++;
+          offers.forEach(o => {
+            const amount = parseInt(o.amount);
+            if (!isNaN(amount) && amount > 0) prices.push(amount);
+          });
         }
       } catch (e) {}
-
-      // Get floor price from sell offers
-      let floorPrice = null;
-      const prices = [];
-      for (const nft of collectionNFTs.slice(0, 20)) {
-        try {
-          const offers = await xrplService.getNFTSellOffers(nft.NFTokenID);
-          if (offers && offers.length > 0) {
-            offers.forEach(o => {
-              const amount = parseInt(o.amount);
-              if (!isNaN(amount) && amount > 0) prices.push(amount);
-            });
-          }
-        } catch (e) {}
-      }
-      if (prices.length > 0) floorPrice = Math.min(...prices).toString();
-
-      collectionInfo = {
-        taxon: nftData.NFTokenTaxon,
-        issuer: nftData.Issuer,
-        name: collectionName,
-        image: collectionImage,
-        description: collectionDescription,
-        totalSupply,
-        floorPrice,
-        listedCount: prices.length > 0 ? prices.length : 0
-      };
-    } catch (e) {
-      collectionInfo = {
-        taxon: nftData.NFTokenTaxon,
-        issuer: nftData.Issuer,
-        name: `Collection #${nftData.NFTokenTaxon}`,
-        totalSupply: 0
-      };
     }
+    if (prices.length > 0) floorPrice = Math.min(...prices).toString();
+
+    const collectionInfo = {
+      taxon: nftData.NFTokenTaxon,
+      issuer: nftData.Issuer,
+      name: collectionName,
+      image: collectionImage,
+      description: collectionDescription,
+      totalSupply: collectionNFTs.length,
+      floorPrice,
+      listedCount
+    };
 
     // Fetch subscription plans for all relevant users
     const walletAddresses = [
