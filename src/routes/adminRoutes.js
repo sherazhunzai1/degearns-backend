@@ -18,6 +18,8 @@ const {
 } = require('../controllers/admin');
 const adminScoringController = require('../controllers/admin/adminScoringController');
 
+const withdrawalController = require('../controllers/withdrawalController');
+
 const xrplConfig = require('../config/xrpl');
 const xrplService = require('../services/xrplService');
 
@@ -494,5 +496,39 @@ router.post('/subscriptions/:subscriptionId/cancel', adminScoringController.canc
 
 // POST /admin/subscriptions/:subscriptionId/extend - Extend subscription
 router.post('/subscriptions/:subscriptionId/extend', adminScoringController.extendSubscription);
+
+// ============================================
+// WITHDRAWAL MANAGEMENT ROUTES
+// ============================================
+
+// GET /admin/withdrawals/owners - Get all withdrawal owners
+router.get('/withdrawals/owners', withdrawalController.getOwners);
+
+// POST /admin/withdrawals/owners - Create a new withdrawal owner
+router.post('/withdrawals/owners', withdrawalController.createOwner);
+
+// PUT /admin/withdrawals/owners/:id - Update a withdrawal owner
+router.put('/withdrawals/owners/:id', withdrawalController.updateOwner);
+
+// DELETE /admin/withdrawals/owners/:id - Delete a withdrawal owner
+router.delete('/withdrawals/owners/:id', withdrawalController.deleteOwner);
+
+// GET /admin/withdrawals/source-wallets - Get source wallets with balances
+router.get('/withdrawals/source-wallets', withdrawalController.getSourceWallets);
+
+// GET /admin/withdrawals/stats - Get withdrawal statistics
+router.get('/withdrawals/stats', withdrawalController.getStats);
+
+// GET /admin/withdrawals - Get all withdrawals (paginated)
+router.get('/withdrawals', withdrawalController.getWithdrawals);
+
+// POST /admin/withdrawals - Create a new withdrawal request
+router.post('/withdrawals', withdrawalController.createWithdrawal);
+
+// POST /admin/withdrawals/:id/sign - Sign a withdrawal
+router.post('/withdrawals/:id/sign', withdrawalController.signWithdrawal);
+
+// POST /admin/withdrawals/:id/reject - Reject a withdrawal
+router.post('/withdrawals/:id/reject', withdrawalController.rejectWithdrawal);
 
 module.exports = router;
