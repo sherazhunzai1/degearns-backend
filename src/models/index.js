@@ -45,6 +45,9 @@ const MemeCoinTrade = require('./MemeCoinTrade')(sequelize, DataTypes);
 const UserWallet = require('./UserWallet')(sequelize, DataTypes);
 const SolanaNftListing = require('./SolanaNftListing')(sequelize, DataTypes);
 const CollectionChatMessage = require('./CollectionChatMessage')(sequelize, DataTypes);
+const WithdrawalOwner = require('./WithdrawalOwner')(sequelize, DataTypes);
+const Withdrawal = require('./Withdrawal')(sequelize, DataTypes);
+const WithdrawalSignature = require('./WithdrawalSignature')(sequelize, DataTypes);
 
 // Define associations
 // Collection and CollectionChatMessage
@@ -701,6 +704,36 @@ MemeCoinTrade.belongsTo(MemeCoinPool, {
   as: 'pool'
 });
 
+// Withdrawal and WithdrawalOwner associations
+Withdrawal.belongsTo(WithdrawalOwner, {
+  foreignKey: 'initiatedBy',
+  as: 'initiator'
+});
+WithdrawalOwner.hasMany(Withdrawal, {
+  foreignKey: 'initiatedBy',
+  as: 'initiatedWithdrawals'
+});
+
+// Withdrawal and WithdrawalSignature associations
+Withdrawal.hasMany(WithdrawalSignature, {
+  foreignKey: 'withdrawalId',
+  as: 'signatures'
+});
+WithdrawalSignature.belongsTo(Withdrawal, {
+  foreignKey: 'withdrawalId',
+  as: 'withdrawal'
+});
+
+// WithdrawalSignature and WithdrawalOwner associations
+WithdrawalSignature.belongsTo(WithdrawalOwner, {
+  foreignKey: 'ownerId',
+  as: 'owner'
+});
+WithdrawalOwner.hasMany(WithdrawalSignature, {
+  foreignKey: 'ownerId',
+  as: 'signatures'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -753,5 +786,8 @@ module.exports = {
   MemeCoinTrade,
   UserWallet,
   SolanaNftListing,
-  CollectionChatMessage
+  CollectionChatMessage,
+  WithdrawalOwner,
+  Withdrawal,
+  WithdrawalSignature
 };
