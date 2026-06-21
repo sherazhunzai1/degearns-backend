@@ -9,20 +9,17 @@ const WALLET_ADDRESS_REGEX = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 
 const SOURCE_TYPE_MAP = {
   platformFees: 'minting',
-  treasury: 'treasury',
   subscriptions: 'subscriptions'
 };
 
 const SOURCE_LABELS = {
-  minting: 'Minting Fees',
-  treasury: 'Treasury',
-  subscriptions: 'Subscriptions'
+  minting: 'Platform Minting Wallet',
+  subscriptions: 'Subscriptions Wallet'
 };
 
 const SOURCE_DESCRIPTIONS = {
-  minting: 'Platform fees collected from NFT minting',
-  treasury: 'Treasury wallet funds',
-  subscriptions: 'Subscription payment collections'
+  minting: 'Collects revenue from NFT minting and platform fees',
+  subscriptions: 'Collects subscription revenue'
 };
 
 /**
@@ -141,7 +138,6 @@ const deleteOwner = async (req, res) => {
 const getSourceWallets = async (req, res) => {
   const sourceTypes = [
     { adminType: 'platformFees', sourceType: 'minting' },
-    { adminType: 'treasury', sourceType: 'treasury' },
     { adminType: 'subscriptions', sourceType: 'subscriptions' }
   ];
 
@@ -329,8 +325,8 @@ const createWithdrawal = async (req, res) => {
     throw new ApiError(400, 'Initiating owner must be one of the active withdrawal owners');
   }
 
-  // Validate 3 source wallets configured
-  const sourceTypes = ['platformFees', 'treasury', 'subscriptions'];
+  // Validate 2 source wallets configured
+  const sourceTypes = ['platformFees', 'subscriptions'];
   const sourceWallets = {};
 
   for (const adminType of sourceTypes) {
@@ -384,9 +380,9 @@ const createWithdrawal = async (req, res) => {
     amount: (index === 0 ? (perOwnerAmount + remainder) : perOwnerAmount).toString()
   }));
 
-  // Compute per-source breakdown: floor(total / 3), remainder goes to first source
-  const perSourceAmount = totalBigInt / BigInt(3);
-  const sourceRemainder = totalBigInt % BigInt(3);
+  // Compute per-source breakdown: floor(total / 2), remainder goes to first source
+  const perSourceAmount = totalBigInt / BigInt(sourceTypes.length);
+  const sourceRemainder = totalBigInt % BigInt(sourceTypes.length);
 
   const sourceBreakdown = sourceTypes.map((adminType, index) => ({
     type: SOURCE_TYPE_MAP[adminType],
