@@ -1,4 +1,4 @@
-const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, sequelize } = require('../models');
+const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, sequelize } = require('../models');
 const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -32,6 +32,19 @@ const getOwners = async (req, res) => {
   });
 
   res.status(200).json(new ApiResponse(200, { owners }, 'Withdrawal owners retrieved successfully'));
+};
+
+/**
+ * Get owners (public — for login allowlist, no auth required)
+ */
+const getOwnersPublic = async (req, res) => {
+  const owners = await WithdrawalOwner.findAll({
+    where: { isActive: true },
+    attributes: ['id', 'name', 'walletAddress'],
+    order: [['position', 'ASC']]
+  });
+
+  res.status(200).json(new ApiResponse(200, { owners }, 'Owners retrieved'));
 };
 
 /**
@@ -76,6 +89,12 @@ const createOwner = async (req, res) => {
 
   logger.info(`Withdrawal owner created: ${owner.id} - ${name} (${walletAddress})`);
 
+  await AdminActivity.create({
+    adminWalletAddress: walletAddress,
+    action: 'withdrawal_owner_created',
+    details: { ownerId: owner.id, name, walletAddress }
+  }).catch(() => {});
+
   res.status(201).json(new ApiResponse(201, { owner }, 'Withdrawal owner created successfully'));
 };
 
@@ -111,6 +130,12 @@ const updateOwner = async (req, res) => {
 
   logger.info(`Withdrawal owner updated: ${owner.id}`);
 
+  await AdminActivity.create({
+    adminWalletAddress: owner.walletAddress,
+    action: 'withdrawal_owner_updated',
+    details: { ownerId: owner.id, changes: updateData }
+  }).catch(() => {});
+
   res.status(200).json(new ApiResponse(200, { owner }, 'Withdrawal owner updated successfully'));
 };
 
@@ -128,6 +153,12 @@ const deleteOwner = async (req, res) => {
   await owner.update({ isActive: false });
 
   logger.info(`Withdrawal owner deactivated: ${owner.id} - ${owner.name}`);
+
+  await AdminActivity.create({
+    adminWalletAddress: owner.walletAddress,
+    action: 'withdrawal_owner_deleted',
+    details: { ownerId: owner.id, name: owner.name }
+  }).catch(() => {});
 
   res.status(200).json(new ApiResponse(200, null, 'Withdrawal owner removed successfully'));
 };
@@ -440,6 +471,12 @@ const createWithdrawal = async (req, res) => {
 
   logger.info(`Withdrawal created: ${withdrawal.id}, amount: ${totalAmount} drops, initiated by: ${initiator.name}`);
 
+  await AdminActivity.create({
+    adminWalletAddress: initiator.walletAddress,
+    action: 'withdrawal_created',
+    details: { withdrawalId: withdrawal.id, totalAmount, reason, initiatedBy: initiator.id, initiatorName: initiator.name }
+  }).catch(() => {});
+
   res.status(201).json(new ApiResponse(201, { withdrawal }, 'Withdrawal created successfully'));
 };
 
@@ -590,6 +627,12 @@ const signWithdrawal = async (req, res) => {
     ? 'Withdrawal signed and executed successfully'
     : 'Withdrawal signed successfully';
 
+  await AdminActivity.create({
+    adminWalletAddress: owner.walletAddress,
+    action: updatedWithdrawal.status === 'completed' ? 'withdrawal_completed' : 'withdrawal_signed',
+    details: { withdrawalId: withdrawal.id, ownerId, ownerName: owner.name, status: updatedWithdrawal.status }
+  }).catch(() => {});
+
   res.status(200).json(new ApiResponse(200, { withdrawal: updatedWithdrawal }, message));
 };
 
@@ -654,11 +697,18 @@ const rejectWithdrawal = async (req, res) => {
     ]
   });
 
+  await AdminActivity.create({
+    adminWalletAddress: rejecter.walletAddress,
+    action: 'withdrawal_rejected',
+    details: { withdrawalId: withdrawal.id, ownerId, ownerName: rejecter.name, reason }
+  }).catch(() => {});
+
   res.status(200).json(new ApiResponse(200, { withdrawal: updatedWithdrawal }, 'Withdrawal rejected successfully'));
 };
 
 module.exports = {
   getOwners,
+  getOwnersPublic,
   createOwner,
   updateOwner,
   deleteOwner,

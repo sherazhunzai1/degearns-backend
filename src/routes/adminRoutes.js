@@ -501,6 +501,9 @@ router.post('/subscriptions/:subscriptionId/extend', adminScoringController.exte
 // WITHDRAWAL MANAGEMENT ROUTES
 // ============================================
 
+// GET /admin/withdrawals/owners/public - Public endpoint for login allowlist (no auth)
+router.get('/withdrawals/owners/public', withdrawalController.getOwnersPublic);
+
 // GET /admin/withdrawals/owners - Get all withdrawal owners
 router.get('/withdrawals/owners', withdrawalController.getOwners);
 
