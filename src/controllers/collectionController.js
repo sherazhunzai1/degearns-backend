@@ -73,6 +73,26 @@ const listCollection = async (req, res, next) => {
         throw new ApiError(400, 'Invalid Solana mint address');
       }
 
+      // Fetch on-chain metadata if fields are empty
+      if (!name || !image) {
+        try {
+          const asset = await solanaService.getAsset(mintAddress);
+          if (asset) {
+            if (!name) name = asset.content?.metadata?.name || mintAddress.slice(0, 12);
+            if (!description) description = asset.content?.metadata?.description || null;
+            if (!image) image = asset.content?.links?.image || asset.content?.files?.[0]?.uri || null;
+            if (!royaltyPercentage && asset.royalty?.basis_points) {
+              royaltyPercentage = asset.royalty.basis_points / 100;
+            }
+          }
+        } catch (e) {
+          logger.warn(`Could not fetch DAS metadata for collection ${mintAddress}: ${e.message}`);
+        }
+      }
+
+      // Ensure name has a value
+      if (!name) name = mintAddress.slice(0, 12);
+
       // Check if collection already registered
       const existingCollection = await Collection.findOne({
         where: { mintAddress, network: 'solana' },
