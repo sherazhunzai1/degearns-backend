@@ -1226,7 +1226,7 @@ const getPostLikes = async (req, res, next) => {
 const addComment = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { authorWalletAddress, content, parentCommentId } = req.body;
+    let { authorWalletAddress, content, parentCommentId } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -1491,7 +1491,7 @@ const getPostComments = async (req, res, next) => {
 const updateComment = async (req, res, next) => {
   try {
     const { commentId } = req.params;
-    const { authorWalletAddress, content } = req.body;
+    let { authorWalletAddress, content } = req.body;
 
     if (!commentId) {
       throw new ApiError(400, 'Comment ID is required');
