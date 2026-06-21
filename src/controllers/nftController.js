@@ -163,8 +163,8 @@ exports.getNFTDetail = async (req, res) => {
       logger.warn(`Could not fetch metadata for NFT ${nftTokenId}:`, error.message);
     }
 
-    // Step 4: Get owner, issuer, and collection information from database
-    const [ownerUser, issuerUser, collection] = await Promise.all([
+    // Step 4: Get owner and issuer user info
+    const [ownerUser, issuerUser] = await Promise.all([
       User.findOne({
         where: { walletAddress: ownerAddress },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']
@@ -172,25 +172,73 @@ exports.getNFTDetail = async (req, res) => {
       User.findOne({
         where: { walletAddress: nftData.Issuer },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-      }),
-      Collection.findOne({
-        where: {
-          taxon: nftData.NFTokenTaxon,
-          creatorWalletAddress: nftData.Issuer
-        },
-        attributes: ['id', 'name', 'slug', 'description', 'image', 'bannerImage', 'taxon', 'category', 'floorPrice', 'totalVolume', 'isVerified'],
-        include: [{
-          association: 'creator',
-          attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-        }]
       })
     ]);
+
+    // Get collection info from on-chain: fetch all NFTs from issuer with same taxon
+    let collectionInfo = null;
+    try {
+      const issuerNFTs = await xrplService.getAccountNFTs(nftData.Issuer);
+      const collectionNFTs = issuerNFTs.filter(nft => nft.NFTokenTaxon === nftData.NFTokenTaxon);
+      const totalSupply = collectionNFTs.length;
+
+      // Get collection name/image from first NFT's metadata
+      let collectionName = `Collection #${nftData.NFTokenTaxon}`;
+      let collectionImage = null;
+      let collectionDescription = null;
+      try {
+        const firstNft = collectionNFTs[0];
+        if (firstNft) {
+          const meta = await xrplService.fetchNFTMetadata(firstNft.URI);
+          if (meta) {
+            if (meta.collection) {
+              collectionName = typeof meta.collection === 'string' ? meta.collection : meta.collection.name || meta.collection.family || collectionName;
+            }
+            collectionImage = meta.image || meta.image_url || meta.imageUrl || null;
+            collectionDescription = meta.description || null;
+          }
+        }
+      } catch (e) {}
+
+      // Get floor price from sell offers
+      let floorPrice = null;
+      const prices = [];
+      for (const nft of collectionNFTs.slice(0, 20)) {
+        try {
+          const offers = await xrplService.getNFTSellOffers(nft.NFTokenID);
+          if (offers && offers.length > 0) {
+            offers.forEach(o => {
+              const amount = parseInt(o.amount);
+              if (!isNaN(amount) && amount > 0) prices.push(amount);
+            });
+          }
+        } catch (e) {}
+      }
+      if (prices.length > 0) floorPrice = Math.min(...prices).toString();
+
+      collectionInfo = {
+        taxon: nftData.NFTokenTaxon,
+        issuer: nftData.Issuer,
+        name: collectionName,
+        image: collectionImage,
+        description: collectionDescription,
+        totalSupply,
+        floorPrice,
+        listedCount: prices.length > 0 ? prices.length : 0
+      };
+    } catch (e) {
+      collectionInfo = {
+        taxon: nftData.NFTokenTaxon,
+        issuer: nftData.Issuer,
+        name: `Collection #${nftData.NFTokenTaxon}`,
+        totalSupply: 0
+      };
+    }
 
     // Fetch subscription plans for all relevant users
     const walletAddresses = [
       ownerAddress,
-      nftData.Issuer,
-      collection?.creator?.walletAddress
+      nftData.Issuer
     ].filter(Boolean);
     const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
 
@@ -245,33 +293,7 @@ exports.getNFTDetail = async (req, res) => {
         isVerified: issuerUser.isVerified,
         subscriptionPlan: subscriptionMap[issuerUser.walletAddress] || 'free'
       } : null,
-      collection: collection ? {
-        id: collection.id,
-        name: collection.name,
-        slug: collection.slug,
-        description: collection.description,
-        image: collection.image,
-        bannerImage: collection.bannerImage,
-        taxon: collection.taxon,
-        category: collection.category,
-        floorPrice: collection.floorPrice,
-        totalVolume: collection.totalVolume,
-        isVerified: collection.isVerified,
-        creator: collection.creator ? {
-          walletAddress: collection.creator.walletAddress,
-          username: collection.creator.username,
-          profileImage: collection.creator.profileImage,
-          isVerified: collection.creator.isVerified,
-          subscriptionPlan: subscriptionMap[collection.creator.walletAddress] || 'free'
-        } : null
-      } : {
-        id: null,
-        name: nftTitle || `Collection #${nftData.NFTokenTaxon}`,
-        slug: null,
-        taxon: nftData.NFTokenTaxon,
-        issuer: nftData.Issuer,
-        isRegistered: false
-      },
+      collection: collectionInfo,
       owner: ownerAddress,
       ownerInfo: ownerUser ? {
         walletAddress: ownerUser.walletAddress,
