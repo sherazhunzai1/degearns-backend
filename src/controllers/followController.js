@@ -6,7 +6,8 @@ const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
 const {
   getActiveSubscriptionsForWallets,
-  enrichItemsWithSubscriptions
+  enrichItemsWithSubscriptions,
+  resolvePrimaryWallet
 } = require('../utils/userHelpers');
 
 /**
@@ -26,11 +27,14 @@ const logActivity = async (data) => {
  */
 const followUser = async (req, res, next) => {
   try {
-    const { followerWalletAddress, followingWalletAddress } = req.body;
+    let { followerWalletAddress, followingWalletAddress } = req.body;
 
     if (!followerWalletAddress || !followingWalletAddress) {
       throw new ApiError(400, 'Both follower and following wallet addresses are required');
     }
+
+    followerWalletAddress = await resolvePrimaryWallet(followerWalletAddress);
+    followingWalletAddress = await resolvePrimaryWallet(followingWalletAddress);
 
     // Can't follow yourself
     if (followerWalletAddress === followingWalletAddress) {
@@ -129,11 +133,14 @@ const followUser = async (req, res, next) => {
  */
 const unfollowUser = async (req, res, next) => {
   try {
-    const { followerWalletAddress, followingWalletAddress } = req.body;
+    let { followerWalletAddress, followingWalletAddress } = req.body;
 
     if (!followerWalletAddress || !followingWalletAddress) {
       throw new ApiError(400, 'Both follower and following wallet addresses are required');
     }
+
+    followerWalletAddress = await resolvePrimaryWallet(followerWalletAddress);
+    followingWalletAddress = await resolvePrimaryWallet(followingWalletAddress);
 
     // Find the follow relationship
     const follow = await Follow.findOne({
@@ -172,12 +179,14 @@ const unfollowUser = async (req, res, next) => {
  */
 const getFollowers = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { page = 1, limit = 20, viewerWalletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -254,12 +263,14 @@ const getFollowers = async (req, res, next) => {
  */
 const getFollowing = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { page = 1, limit = 20, viewerWalletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -336,11 +347,14 @@ const getFollowing = async (req, res, next) => {
  */
 const checkFollowStatus = async (req, res, next) => {
   try {
-    const { followerWalletAddress, followingWalletAddress } = req.query;
+    let { followerWalletAddress, followingWalletAddress } = req.query;
 
     if (!followerWalletAddress || !followingWalletAddress) {
       throw new ApiError(400, 'Both follower and following wallet addresses are required');
     }
+
+    followerWalletAddress = await resolvePrimaryWallet(followerWalletAddress);
+    followingWalletAddress = await resolvePrimaryWallet(followingWalletAddress);
 
     const follow = await Follow.findOne({
       where: {
@@ -365,11 +379,13 @@ const checkFollowStatus = async (req, res, next) => {
  */
 const getFollowCounts = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Get followers count (users who follow this user)
     const followersCount = await Follow.count({

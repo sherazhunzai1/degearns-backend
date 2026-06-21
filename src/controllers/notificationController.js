@@ -2,6 +2,7 @@ const notificationService = require('../services/notificationService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { resolvePrimaryWallet } = require('../utils/userHelpers');
 
 /**
  * Get notifications for a user
@@ -9,12 +10,14 @@ const logger = require('../utils/logger');
  */
 const getNotifications = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { page = 1, limit = 20, unreadOnly = false, type } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const result = await notificationService.getUserNotifications(walletAddress, {
       page: parseInt(page),
@@ -38,11 +41,13 @@ const getNotifications = async (req, res, next) => {
  */
 const getUnreadCount = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const count = await notificationService.getUnreadCount(walletAddress);
 
@@ -60,7 +65,7 @@ const getUnreadCount = async (req, res, next) => {
 const markAsRead = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!notificationId) {
       throw new ApiError(400, 'Notification ID is required');
@@ -69,6 +74,8 @@ const markAsRead = async (req, res, next) => {
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const notification = await notificationService.markAsRead(notificationId, walletAddress);
 
@@ -95,11 +102,13 @@ const markAsRead = async (req, res, next) => {
  */
 const markAllAsRead = async (req, res, next) => {
   try {
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const updatedCount = await notificationService.markAllAsRead(walletAddress);
 
@@ -121,7 +130,7 @@ const markAllAsRead = async (req, res, next) => {
 const deleteNotification = async (req, res, next) => {
   try {
     const { notificationId } = req.params;
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!notificationId) {
       throw new ApiError(400, 'Notification ID is required');
@@ -130,6 +139,8 @@ const deleteNotification = async (req, res, next) => {
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const deleted = await notificationService.deleteNotification(notificationId, walletAddress);
 
@@ -154,11 +165,13 @@ const deleteNotification = async (req, res, next) => {
  */
 const deleteAllNotifications = async (req, res, next) => {
   try {
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const deletedCount = await notificationService.deleteAllNotifications(walletAddress);
 
