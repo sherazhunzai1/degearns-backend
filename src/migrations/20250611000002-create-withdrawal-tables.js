@@ -185,6 +185,37 @@ module.exports = {
       unique: true,
       name: 'idx_withdrawal_owner_unique'
     });
+
+    // Seed the 3 withdrawal owners
+    await queryInterface.bulkInsert('WithdrawalOwners', [
+      {
+        id: queryInterface.sequelize.literal('UUID()'),
+        name: 'Aristides Yiannoudes',
+        walletAddress: 'rMQYjiwVYweGjJT3crUJuym4CUo5M4r1Yk',
+        position: 1,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: queryInterface.sequelize.literal('UUID()'),
+        name: 'Investors',
+        walletAddress: 'rsHAUwc5BsxCvksbFNio5mbAg3omM3hf5k',
+        position: 2,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      },
+      {
+        id: queryInterface.sequelize.literal('UUID()'),
+        name: 'Konstantinos Chrysostomou',
+        walletAddress: 'rJA3u8baXpzbVcBAXqEPkfirpbUKAce5TC',
+        position: 3,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    ]);
   },
 
   down: async (queryInterface, Sequelize) => {
