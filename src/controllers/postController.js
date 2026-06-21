@@ -8,6 +8,7 @@ const { initBoostEngine } = require('../services/boostEngine');
 const {
   getActiveSubscriptionsForWallets,
   enrichItemsWithSubscriptions,
+  resolvePrimaryWallet,
   checkPinPostEligibility
 } = require('../utils/userHelpers');
 
@@ -176,7 +177,7 @@ const formatPostWithEngagement = async (post, author, userWalletAddress = null, 
  */
 const createPost = async (req, res, next) => {
   try {
-    const {
+    let {
       authorWalletAddress,
       content,
       media,
@@ -187,6 +188,10 @@ const createPost = async (req, res, next) => {
     if (!authorWalletAddress) {
       throw new ApiError(400, 'Author wallet address is required');
     }
+
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
+
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
 
     // Validate that post has content or media
     if ((!content || content.trim() === '') && (!media || media.length === 0)) {
@@ -292,12 +297,14 @@ const createPost = async (req, res, next) => {
  */
 const getUserPosts = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { page = 1, limit = 20, viewerWalletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -787,6 +794,8 @@ const updatePost = async (req, res, next) => {
       throw new ApiError(400, 'Author wallet address is required');
     }
 
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
+
     const post = await Post.findOne({
       where: {
         id: postId,
@@ -923,7 +932,7 @@ const updatePost = async (req, res, next) => {
 const deletePost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { authorWalletAddress } = req.body;
+    let { authorWalletAddress } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -932,6 +941,8 @@ const deletePost = async (req, res, next) => {
     if (!authorWalletAddress) {
       throw new ApiError(400, 'Author wallet address is required');
     }
+
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
 
     const post = await Post.findOne({
       where: {
@@ -971,7 +982,7 @@ const deletePost = async (req, res, next) => {
 const likePost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { userWalletAddress } = req.body;
+    let { userWalletAddress } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -980,6 +991,8 @@ const likePost = async (req, res, next) => {
     if (!userWalletAddress) {
       throw new ApiError(400, 'User wallet address is required');
     }
+
+    userWalletAddress = await resolvePrimaryWallet(userWalletAddress);
 
     // Check if post exists (include media for notification)
     const post = await Post.findOne({
@@ -1076,7 +1089,7 @@ const likePost = async (req, res, next) => {
 const unlikePost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { userWalletAddress } = req.body;
+    let { userWalletAddress } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -1085,6 +1098,8 @@ const unlikePost = async (req, res, next) => {
     if (!userWalletAddress) {
       throw new ApiError(400, 'User wallet address is required');
     }
+
+    userWalletAddress = await resolvePrimaryWallet(userWalletAddress);
 
     // Check if post exists
     const post = await Post.findOne({
@@ -1220,6 +1235,8 @@ const addComment = async (req, res, next) => {
     if (!authorWalletAddress) {
       throw new ApiError(400, 'Author wallet address is required');
     }
+
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
 
     if (!content || content.trim() === '') {
       throw new ApiError(400, 'Comment content is required');
@@ -1484,6 +1501,8 @@ const updateComment = async (req, res, next) => {
       throw new ApiError(400, 'Author wallet address is required');
     }
 
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
+
     if (!content || content.trim() === '') {
       throw new ApiError(400, 'Comment content is required');
     }
@@ -1552,7 +1571,7 @@ const updateComment = async (req, res, next) => {
 const deleteComment = async (req, res, next) => {
   try {
     const { commentId } = req.params;
-    const { authorWalletAddress } = req.body;
+    let { authorWalletAddress } = req.body;
 
     if (!commentId) {
       throw new ApiError(400, 'Comment ID is required');
@@ -1561,6 +1580,8 @@ const deleteComment = async (req, res, next) => {
     if (!authorWalletAddress) {
       throw new ApiError(400, 'Author wallet address is required');
     }
+
+    authorWalletAddress = await resolvePrimaryWallet(authorWalletAddress);
 
     const comment = await PostComment.findOne({
       where: { id: commentId, isActive: true }
@@ -1611,12 +1632,14 @@ const deleteComment = async (req, res, next) => {
  */
 const getFollowingPosts = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
     const { page = 1, limit = 20, viewerWalletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Use viewerWalletAddress if provided, otherwise use walletAddress
     const viewerWallet = viewerWalletAddress || walletAddress;
@@ -1715,7 +1738,7 @@ const getFollowingPosts = async (req, res, next) => {
 const recordPostView = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { userWalletAddress } = req.body;
+    let { userWalletAddress } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -1724,6 +1747,8 @@ const recordPostView = async (req, res, next) => {
     if (!userWalletAddress) {
       throw new ApiError(400, 'User wallet address is required');
     }
+
+    userWalletAddress = await resolvePrimaryWallet(userWalletAddress);
 
     // Check if post exists
     const post = await Post.findOne({
@@ -1860,7 +1885,7 @@ const getPostViews = async (req, res, next) => {
 const pinPost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { userWalletAddress } = req.body;
+    let { userWalletAddress } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -1869,6 +1894,8 @@ const pinPost = async (req, res, next) => {
     if (!userWalletAddress) {
       throw new ApiError(400, 'User wallet address is required');
     }
+
+    userWalletAddress = await resolvePrimaryWallet(userWalletAddress);
 
     // Check if post exists and belongs to user
     const post = await Post.findOne({
@@ -1938,7 +1965,7 @@ const pinPost = async (req, res, next) => {
 const unpinPost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { userWalletAddress } = req.body;
+    let { userWalletAddress } = req.body;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -1947,6 +1974,8 @@ const unpinPost = async (req, res, next) => {
     if (!userWalletAddress) {
       throw new ApiError(400, 'User wallet address is required');
     }
+
+    userWalletAddress = await resolvePrimaryWallet(userWalletAddress);
 
     // Check if post exists
     const post = await Post.findOne({
@@ -2005,11 +2034,13 @@ const unpinPost = async (req, res, next) => {
  */
 const getPinStatus = async (req, res, next) => {
   try {
-    const { walletAddress } = req.params;
+    let { walletAddress } = req.params;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Count current pinned posts for this user
     const currentPinnedCount = await Post.count({
@@ -2047,11 +2078,13 @@ const getPinStatus = async (req, res, next) => {
 const repostPost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { walletAddress, quote } = req.body;
+    let { walletAddress, quote } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Check if post exists
     const post = await Post.findByPk(postId);
@@ -2129,11 +2162,13 @@ const repostPost = async (req, res, next) => {
 const unrepostPost = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { walletAddress } = req.body;
+    let { walletAddress } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Find the repost
     const repost = await Repost.findOne({
@@ -2246,11 +2281,13 @@ const getPostReposts = async (req, res, next) => {
 const checkRepostStatus = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { walletAddress } = req.query;
+    let { walletAddress } = req.query;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const repost = await Repost.findOne({
       where: {
