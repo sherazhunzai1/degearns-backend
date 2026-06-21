@@ -12,7 +12,8 @@ const { initBoostEngine } = require('../services/boostEngine');
 const {
   getActiveSubscriptionsForWallets,
   enrichItemsWithSubscriptions,
-  createUserInfoWithSubscription
+  createUserInfoWithSubscription,
+  resolvePrimaryWallet
 } = require('../utils/userHelpers');
 
 /**
@@ -50,11 +51,13 @@ const convertToIpfsHash = (url) => {
  */
 const listCollection = async (req, res, next) => {
   try {
-    const { name, description, image, bannerImage, category, royaltyPercentage, socialLinks, taxon, creatorWalletAddress, network, mintAddress } = req.body;
+    let { name, description, image, bannerImage, category, royaltyPercentage, socialLinks, taxon, creatorWalletAddress, network, mintAddress } = req.body;
 
     if (!creatorWalletAddress) {
       throw new ApiError(400, 'Creator wallet address is required');
     }
+
+    creatorWalletAddress = await resolvePrimaryWallet(creatorWalletAddress);
 
     const resolvedNetwork = chainServiceFactory.normalizeNetwork(network);
     if (!chainServiceFactory.isSupportedNetwork(resolvedNetwork)) {
