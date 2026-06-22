@@ -1143,10 +1143,15 @@ exports.logCommentReceive = async (req, res) => {
  */
 exports.logFollowGive = async (req, res) => {
   try {
-    const { walletAddress, followedWalletAddress, metadata } = req.body;
+    let { walletAddress, followedWalletAddress, metadata } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Accept followedWalletAddress from body or metadata
+    if (!followedWalletAddress && metadata?.followedWalletAddress) {
+      followedWalletAddress = metadata.followedWalletAddress;
     }
 
     if (!followedWalletAddress) {
@@ -1208,10 +1213,15 @@ exports.logFollowGive = async (req, res) => {
  */
 exports.logFollowReceive = async (req, res) => {
   try {
-    const { walletAddress, followerWalletAddress, metadata } = req.body;
+    let { walletAddress, followerWalletAddress, metadata } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
+    }
+
+    // Accept followerWalletAddress from body or metadata
+    if (!followerWalletAddress && metadata?.followerWalletAddress) {
+      followerWalletAddress = metadata.followerWalletAddress;
     }
 
     if (!followerWalletAddress) {
