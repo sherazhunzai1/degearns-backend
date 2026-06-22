@@ -1628,21 +1628,37 @@ const getNewNFTs = async (req, res, next) => {
     logger.info(`Found ${activeBoosts.length} active NFT boosts`);
 
     // Collect all user wallet addresses for batch lookup
-    const userAddresses = [...new Set(activeBoosts.map(b => b.userWalletAddress))];
+    const rawAddresses = [...new Set(activeBoosts.map(b => b.userWalletAddress))];
 
-    // Fetch user info for all boost owners
+    // Resolve linked wallets to primary wallets
+    const resolvedAddressMap = {};
+    for (const addr of rawAddresses) {
+      resolvedAddressMap[addr] = await resolvePrimaryWallet(addr);
+    }
+
+    const primaryAddresses = [...new Set(Object.values(resolvedAddressMap))];
+
+    // Fetch user info for all primary wallet addresses
     let userMap = {};
     let subscriptionMap = {};
 
-    if (userAddresses.length > 0) {
+    if (primaryAddresses.length > 0) {
       const users = await User.findAll({
-        where: { walletAddress: { [Op.in]: userAddresses } },
+        where: { walletAddress: { [Op.in]: primaryAddresses } },
         attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
       });
       users.forEach(u => { userMap[u.walletAddress] = u; });
 
-      // Get subscription plans
-      subscriptionMap = await getActiveSubscriptionsForWallets(userAddresses);
+      // Also map linked addresses to their primary user
+      for (const [linked, primary] of Object.entries(resolvedAddressMap)) {
+        if (userMap[primary]) userMap[linked] = userMap[primary];
+      }
+
+      subscriptionMap = await getActiveSubscriptionsForWallets(primaryAddresses);
+      // Map subscription for linked addresses too
+      for (const [linked, primary] of Object.entries(resolvedAddressMap)) {
+        if (subscriptionMap[primary]) subscriptionMap[linked] = subscriptionMap[primary];
+      }
     }
 
     // Fetch NFT details from XRPL for each boosted NFT
