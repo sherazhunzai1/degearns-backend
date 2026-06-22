@@ -13,6 +13,8 @@ const ApiResponse = require('../utils/ApiResponse');
 const ScoringEngine = require('../services/scoringEngine');
 const notificationService = require('../services/notificationService');
 const { initBoostEngine } = require('../services/boostEngine');
+const solanaService = require('../services/solanaService');
+const { resolvePrimaryWallet } = require('../utils/userHelpers');
 
 // Get scoring engine instance
 const getScoringEngine = () => {
@@ -140,6 +142,8 @@ const getTierPricing = async (req, res, next) => {
       displayName: tier.displayName,
       monthlyPriceXrp: tier.monthlyPriceXrp,
       yearlyPriceXrp: tier.yearlyPriceXrp,
+      monthlyPriceSol: tier.monthlyPriceSol || null,
+      yearlyPriceSol: tier.yearlyPriceSol || null,
       yearlySavings: tier.getYearlySavings(),
       boostPercentage: tier.boostPercentage,
       badge: tier.badge,
@@ -150,7 +154,7 @@ const getTierPricing = async (req, res, next) => {
     res.status(200).json(
       new ApiResponse(200, {
         pricing,
-        currency: 'XRP'
+        currencies: ['XRP', 'SOL']
       }, 'Tier pricing retrieved successfully')
     );
   } catch (error) {
@@ -208,11 +212,13 @@ const getTierFeatures = async (req, res, next) => {
  */
 const getMySubscription = async (req, res, next) => {
   try {
-    const walletAddress = req.query.walletAddress || req.body.walletAddress;
+    let walletAddress = req.query.walletAddress || req.body.walletAddress;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const subscription = await Subscription.getActiveSubscription(walletAddress);
 
@@ -254,12 +260,13 @@ const getMySubscription = async (req, res, next) => {
  */
 const subscribeToPlan = async (req, res, next) => {
   try {
-    const {
+    let {
       walletAddress,
       planType,
       billingCycle = 'monthly',
       paymentTransactionHash,
-      paymentAmount
+      paymentAmount,
+      network
     } = req.body;
 
     if (!walletAddress) {
@@ -270,10 +277,15 @@ const subscribeToPlan = async (req, res, next) => {
       throw new ApiError(400, 'Plan type is required');
     }
 
+    // Resolve linked wallet to primary
+    walletAddress = await resolvePrimaryWallet(walletAddress);
+
+    // Auto-detect network from wallet format if not provided
+    const resolvedNetwork = network || (solanaService.isValidAddress(walletAddress) ? 'solana' : 'xrpl');
+
     // Validate plan type against SubscriptionTiers table
     const tier = await SubscriptionTier.getTierByName(planType);
     if (!tier) {
-      // Get available tier names for error message
       const availableTiers = await SubscriptionTier.findAll({
         where: { isActive: true },
         attributes: ['name']
@@ -286,23 +298,37 @@ const subscribeToPlan = async (req, res, next) => {
       throw new ApiError(400, 'Selected plan is not available');
     }
 
-    // Free plan cannot be subscribed to (it's the default)
     if (tier.name === 'free') {
       throw new ApiError(400, 'Cannot subscribe to free plan. Free plan is the default tier.');
     }
 
-    // Determine duration based on billing cycle
+    // Determine duration and expected price based on billing cycle and network
     let durationDays = 30;
-    let expectedPrice = tier.monthlyPriceXrp;
+    let expectedPrice;
+
+    if (resolvedNetwork === 'solana') {
+      expectedPrice = billingCycle === 'yearly'
+        ? (tier.yearlyPriceSol || tier.yearlyPriceXrp)
+        : (tier.monthlyPriceSol || tier.monthlyPriceXrp);
+    } else {
+      expectedPrice = billingCycle === 'yearly' ? tier.yearlyPriceXrp : tier.monthlyPriceXrp;
+    }
 
     if (billingCycle === 'yearly') {
       durationDays = 365;
-      expectedPrice = tier.yearlyPriceXrp;
     }
 
     // Payment transaction hash is required for paid plans
     if (!paymentTransactionHash) {
       throw new ApiError(400, 'Payment transaction hash is required');
+    }
+
+    // Verify payment on-chain for Solana
+    if (resolvedNetwork === 'solana') {
+      const verification = await solanaService.verifyTransaction(paymentTransactionHash);
+      if (!verification.verified) {
+        throw new ApiError(400, `Payment verification failed: ${verification.error}`);
+      }
     }
 
     // Check if user already has an active subscription
@@ -347,6 +373,8 @@ const subscribeToPlan = async (req, res, next) => {
       metadata: {
         billingCycle,
         expectedPrice,
+        network: resolvedNetwork,
+        currency: resolvedNetwork === 'solana' ? 'SOL' : 'XRP',
         upgradedFrom: existingSubscription?.planType || 'free',
         subscribedAt: new Date().toISOString()
       }
@@ -425,11 +453,13 @@ const subscribeToPlan = async (req, res, next) => {
  */
 const cancelMySubscription = async (req, res, next) => {
   try {
-    const { walletAddress, reason } = req.body;
+    let { walletAddress, reason } = req.body;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const subscription = await Subscription.getActiveSubscription(walletAddress);
 
@@ -499,11 +529,13 @@ const cancelMySubscription = async (req, res, next) => {
  */
 const getUpgradeOptions = async (req, res, next) => {
   try {
-    const walletAddress = req.query.walletAddress || req.body.walletAddress;
+    let walletAddress = req.query.walletAddress || req.body.walletAddress;
 
     if (!walletAddress) {
       throw new ApiError(400, 'Wallet address is required');
     }
+
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     const currentSubscription = await Subscription.getActiveSubscription(walletAddress);
     const currentPlan = currentSubscription?.planType || 'free';
@@ -511,14 +543,17 @@ const getUpgradeOptions = async (req, res, next) => {
     // Get all active tiers (sorted by sortOrder)
     const allTiers = await SubscriptionTier.getActiveTiers();
 
-    // Get the subscription payment wallet
-    const paymentWallet = await AdminWallet.findOne({
-      where: {
-        type: 'subscriptions',
-        isActive: true
-      },
-      attributes: ['walletAddress', 'label']
-    });
+    // Get subscription payment wallets for both networks
+    const [xrplPaymentWallet, solanaPaymentWallet] = await Promise.all([
+      AdminWallet.findOne({
+        where: { type: 'subscriptions', isActive: true, network: 'xrpl' },
+        attributes: ['walletAddress', 'label']
+      }),
+      AdminWallet.findOne({
+        where: { type: 'subscriptions', isActive: true, network: 'solana' },
+        attributes: ['walletAddress', 'label']
+      })
+    ]);
 
     // Build tier order map from database (using sortOrder field)
     const tierOrderMap = {};
@@ -555,9 +590,15 @@ const getUpgradeOptions = async (req, res, next) => {
         },
         upgradeOptions,
         canUpgrade: upgradeOptions.length > 0,
-        paymentWallet: paymentWallet ? {
-          walletAddress: paymentWallet.walletAddress,
-          label: paymentWallet.label || 'Subscription Payments'
+        paymentWallet: xrplPaymentWallet ? {
+          walletAddress: xrplPaymentWallet.walletAddress,
+          label: xrplPaymentWallet.label || 'Subscription Payments (XRP)',
+          network: 'xrpl'
+        } : null,
+        solanaPaymentWallet: solanaPaymentWallet ? {
+          walletAddress: solanaPaymentWallet.walletAddress,
+          label: solanaPaymentWallet.label || 'Subscription Payments (SOL)',
+          network: 'solana'
         } : null
       }, 'Upgrade options retrieved successfully')
     );
