@@ -549,42 +549,20 @@ exports.notifyNFTPurchase = async (req, res, next) => {
       throw new ApiError(400, 'NFT token ID is required');
     }
 
-    // --- Solana marketplace: verify payment + transfer NFT ---
+    // --- Solana: frontend handles payment + NFT transfer, backend just records ---
     let transferResult = null;
     if (network === 'solana') {
-      if (!transactionHash) {
-        throw new ApiError(400, 'Transaction hash is required for Solana purchases');
-      }
-      if (!price) {
-        throw new ApiError(400, 'Price (in lamports) is required for Solana purchases');
-      }
-
-      // Step 1: Verify the SOL payment on-chain
-      const payment = await solanaMarketplaceService.verifyPayment(
-        transactionHash,
-        buyerWalletAddress,
-        sellerWalletAddress,
-        price
-      );
-
-      if (!payment.verified) {
-        throw new ApiError(400, `Payment verification failed: ${payment.error}`);
+      // Verify the transaction exists on-chain
+      if (transactionHash) {
+        const verification = await solanaService.verifyTransaction(transactionHash);
+        if (!verification.verified) {
+          logger.warn(`Solana purchase tx verification failed: ${verification.error}`);
+        } else {
+          logger.info(`Solana purchase tx verified: ${transactionHash}`);
+        }
       }
 
-      logger.info(`Solana payment verified: ${transactionHash} (${price} lamports from ${buyerWalletAddress} to ${sellerWalletAddress})`);
-
-      // Step 2: Transfer NFT from seller to buyer using marketplace delegate authority
-      transferResult = await solanaMarketplaceService.transferNft(
-        nftTokenId,
-        sellerWalletAddress,
-        buyerWalletAddress
-      );
-
-      if (!transferResult.success) {
-        throw new ApiError(500, `NFT transfer failed: ${transferResult.error}`);
-      }
-
-      logger.info(`Solana NFT transferred: ${nftTokenId} → ${buyerWalletAddress} (tx: ${transferResult.signature})`);
+      transferResult = { success: true, signature: transactionHash };
 
       // Mark listing as sold
       const activeListing = await SolanaNftListing.findOne({
@@ -594,7 +572,7 @@ exports.notifyNFTPurchase = async (req, res, next) => {
         await activeListing.update({
           status: 'sold',
           buyerWalletAddress,
-          saleTxHash: transferResult.signature,
+          saleTxHash: transactionHash,
           soldAt: new Date()
         });
       }
