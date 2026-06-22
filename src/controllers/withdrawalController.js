@@ -1113,12 +1113,26 @@ async function signSolanaWithdrawal(req, res) {
         }
         const adminKeypair = Keypair.fromSecretKey(bs58.decode(secretKey));
 
+        // Re-fetch current owner wallets from DB for safety
+        // (in case wallets were updated after withdrawal creation)
+        const currentOwners = await SolanaWithdrawalOwner.findAll({
+          where: { isActive: true },
+          order: [['position', 'ASC']]
+        });
+        const ownerWalletMap = {};
+        currentOwners.forEach(o => { ownerWalletMap[o.id] = o.walletAddress; });
+
         for (const split of splits) {
+          // Use the CURRENT wallet from DB, not the snapshot
+          const destinationWallet = ownerWalletMap[split.ownerId] || split.walletAddress;
+
+          logger.info(`Sending ${split.amount} lamports to ${split.name} at ${destinationWallet} (ownerId: ${split.ownerId})`);
+
           try {
             const transaction = new Transaction().add(
               SystemProgram.transfer({
                 fromPubkey: adminKeypair.publicKey,
-                toPubkey: new PublicKey(split.walletAddress),
+                toPubkey: new PublicKey(destinationWallet),
                 lamports: parseInt(split.amount)
               })
             );
@@ -1127,24 +1141,26 @@ async function signSolanaWithdrawal(req, res) {
             await connection.confirmTransaction(signature, 'confirmed');
 
             transactionHashes.push({
+              ownerId: split.ownerId,
               ownerName: split.name,
-              ownerWallet: split.walletAddress,
+              ownerWallet: destinationWallet,
               amount: split.amount,
               signature: signature,
               status: 'success'
             });
 
-            logger.info(`SOL payment to ${split.name} (${split.walletAddress}): ${split.amount} lamports - Sig: ${signature}`);
+            logger.info(`SOL payment to ${split.name} (${destinationWallet}): ${split.amount} lamports - Sig: ${signature}`);
           } catch (txError) {
             transactionHashes.push({
+              ownerId: split.ownerId,
               ownerName: split.name,
-              ownerWallet: split.walletAddress,
+              ownerWallet: destinationWallet,
               amount: split.amount,
               signature: null,
               status: 'failed',
               error: txError.message
             });
-            logger.error(`SOL payment to ${split.name} failed: ${txError.message}`);
+            logger.error(`SOL payment to ${split.name} (${destinationWallet}) failed: ${txError.message}`);
           }
         }
 
