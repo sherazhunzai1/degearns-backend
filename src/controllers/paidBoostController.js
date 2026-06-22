@@ -578,9 +578,10 @@ const createCollectionBoost = async (req, res, next) => {
     }
 
     // Collection boosts are independent from database - use metadata from frontend
-    // Validate required metadata fields (taxon can be 0 which is valid)
-    if (!metadata || !metadata.name || metadata.taxon === undefined || metadata.taxon === null || !metadata.creatorWalletAddress) {
-      throw new ApiError(400, 'Please provide metadata with name, taxon, and creatorWalletAddress');
+    // Validate required metadata fields
+    // XRPL uses taxon, Solana uses collectionId/mintAddress directly
+    if (!metadata || !metadata.name || !metadata.creatorWalletAddress) {
+      throw new ApiError(400, 'Please provide metadata with name and creatorWalletAddress');
     }
 
     // Build collection metadata from frontend data
@@ -595,7 +596,7 @@ const createCollectionBoost = async (req, res, next) => {
       }
     };
 
-    logger.info(`Creating collection boost for: ${metadata.name} (taxon: ${metadata.taxon})`);
+    logger.info(`Creating collection boost for: ${metadata.name} (${metadata.taxon ? 'taxon: ' + metadata.taxon : 'collection: ' + collectionId})`);
 
     // Calculate dates
     const startDate = new Date();
