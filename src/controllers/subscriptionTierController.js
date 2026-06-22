@@ -14,6 +14,7 @@ const ScoringEngine = require('../services/scoringEngine');
 const notificationService = require('../services/notificationService');
 const { initBoostEngine } = require('../services/boostEngine');
 const solanaService = require('../services/solanaService');
+const solanaConfig = require('../config/solana');
 const { resolvePrimaryWallet } = require('../utils/userHelpers');
 
 // Get scoring engine instance
@@ -544,16 +545,21 @@ const getUpgradeOptions = async (req, res, next) => {
     const allTiers = await SubscriptionTier.getActiveTiers();
 
     // Get subscription payment wallets for both networks
-    const [xrplPaymentWallet, solanaPaymentWallet] = await Promise.all([
-      AdminWallet.findOne({
-        where: { type: 'subscriptions', isActive: true, network: 'xrpl' },
-        attributes: ['walletAddress', 'label']
-      }),
-      AdminWallet.findOne({
-        where: { type: 'subscriptions', isActive: true, network: 'solana' },
-        attributes: ['walletAddress', 'label']
-      })
-    ]);
+    const xrplPaymentWallet = await AdminWallet.findOne({
+      where: { type: 'subscriptions', isActive: true, network: 'xrpl' },
+      attributes: ['walletAddress', 'label']
+    });
+
+    // Solana payment wallet comes from the admin keypair in .env
+    let solanaPaymentWalletAddress = null;
+    try {
+      const solAdminKp = solanaConfig.getAdminKeypair();
+      if (solAdminKp) solanaPaymentWalletAddress = solAdminKp.publicKey.toBase58();
+    } catch (e) {}
+    const solanaPaymentWallet = solanaPaymentWalletAddress ? {
+      walletAddress: solanaPaymentWalletAddress,
+      label: 'Solana Subscription Payments'
+    } : null;
 
     // Build tier order map from database (using sortOrder field)
     const tierOrderMap = {};
