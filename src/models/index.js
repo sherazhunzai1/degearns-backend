@@ -48,6 +48,7 @@ const CollectionChatMessage = require('./CollectionChatMessage')(sequelize, Data
 const WithdrawalOwner = require('./WithdrawalOwner')(sequelize, DataTypes);
 const Withdrawal = require('./Withdrawal')(sequelize, DataTypes);
 const WithdrawalSignature = require('./WithdrawalSignature')(sequelize, DataTypes);
+const SolanaWithdrawalOwner = require('./SolanaWithdrawalOwner')(sequelize, DataTypes);
 
 // Define associations
 // Collection and CollectionChatMessage
@@ -789,5 +790,6 @@ module.exports = {
   CollectionChatMessage,
   WithdrawalOwner,
   Withdrawal,
-  WithdrawalSignature
+  WithdrawalSignature,
+  SolanaWithdrawalOwner
 };

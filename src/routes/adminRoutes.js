@@ -501,8 +501,14 @@ router.post('/subscriptions/:subscriptionId/extend', adminScoringController.exte
 // WITHDRAWAL MANAGEMENT ROUTES
 // ============================================
 
-// GET /admin/withdrawals/owners/public - Public endpoint for login allowlist (no auth)
-router.get('/withdrawals/owners/public', withdrawalController.getOwnersPublic);
+// GET /admin/withdrawals/owners/public - Combined login allowlist for both networks (no auth)
+router.get('/withdrawals/owners/public', withdrawalController.getAllOwnersPublic);
+
+// GET /admin/withdrawals/owners/xrpl/public - XRPL owners only (no auth)
+router.get('/withdrawals/owners/xrpl/public', withdrawalController.getOwnersPublic);
+
+// GET /admin/withdrawals/owners/solana/public - Solana owners only (no auth)
+router.get('/withdrawals/owners/solana/public', withdrawalController.getSolanaOwnersPublic);
 
 // GET /admin/withdrawals/owners - Get all withdrawal owners
 router.get('/withdrawals/owners', withdrawalController.getOwners);
@@ -533,5 +539,13 @@ router.post('/withdrawals/:id/sign', withdrawalController.signWithdrawal);
 
 // POST /admin/withdrawals/:id/reject - Reject a withdrawal
 router.post('/withdrawals/:id/reject', withdrawalController.rejectWithdrawal);
+
+// ============================================
+// Solana Withdrawal Owners
+// ============================================
+router.get('/withdrawals/solana/owners', withdrawalController.getSolanaOwners);
+router.post('/withdrawals/solana/owners', withdrawalController.createSolanaOwner);
+router.put('/withdrawals/solana/owners/:id', withdrawalController.updateSolanaOwner);
+router.delete('/withdrawals/solana/owners/:id', withdrawalController.deleteSolanaOwner);
 
 module.exports = router;

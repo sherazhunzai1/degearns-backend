@@ -1,4 +1,4 @@
-const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, sequelize } = require('../models');
+const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, SolanaWithdrawalOwner, sequelize } = require('../models');
 const xrplConfig = require('../config/xrpl');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -717,5 +717,103 @@ module.exports = {
   getStats,
   createWithdrawal,
   signWithdrawal,
-  rejectWithdrawal
+  rejectWithdrawal,
+  // Solana withdrawal owners
+  getSolanaOwners,
+  getSolanaOwnersPublic,
+  createSolanaOwner,
+  updateSolanaOwner,
+  deleteSolanaOwner,
+  // Combined login allowlist
+  getAllOwnersPublic
 };
+
+// ==================== SOLANA WITHDRAWAL OWNERS ====================
+
+async function getSolanaOwners(req, res) {
+  const owners = await SolanaWithdrawalOwner.findAll({
+    where: { isActive: true },
+    order: [['position', 'ASC']]
+  });
+  res.status(200).json(new ApiResponse(200, { owners }, 'Solana withdrawal owners retrieved'));
+}
+
+async function getSolanaOwnersPublic(req, res) {
+  const owners = await SolanaWithdrawalOwner.findAll({
+    where: { isActive: true },
+    attributes: ['id', 'name', 'walletAddress'],
+    order: [['position', 'ASC']]
+  });
+  res.status(200).json(new ApiResponse(200, { owners }, 'Solana owners retrieved'));
+}
+
+async function createSolanaOwner(req, res) {
+  const { name, walletAddress } = req.body;
+  if (!name) throw new ApiError(400, 'Name is required');
+  if (!walletAddress) throw new ApiError(400, 'Wallet address is required');
+
+  const activeCount = await SolanaWithdrawalOwner.count({ where: { isActive: true } });
+  if (activeCount >= 3) throw new ApiError(409, 'Maximum of 3 active Solana withdrawal owners allowed');
+
+  const existing = await SolanaWithdrawalOwner.findOne({ where: { walletAddress } });
+  if (existing) throw new ApiError(409, 'A Solana withdrawal owner with this wallet address already exists');
+
+  const maxPos = await SolanaWithdrawalOwner.max('position') || 0;
+  const owner = await SolanaWithdrawalOwner.create({ name, walletAddress, position: maxPos + 1, isActive: true });
+
+  res.status(201).json(new ApiResponse(201, { owner }, 'Solana withdrawal owner created'));
+}
+
+async function updateSolanaOwner(req, res) {
+  const { id } = req.params;
+  const { name, walletAddress } = req.body;
+
+  const owner = await SolanaWithdrawalOwner.findByPk(id);
+  if (!owner) throw new ApiError(404, 'Solana withdrawal owner not found');
+
+  if (walletAddress && walletAddress !== owner.walletAddress) {
+    const dup = await SolanaWithdrawalOwner.findOne({ where: { walletAddress } });
+    if (dup) throw new ApiError(409, 'Wallet address already exists');
+  }
+
+  const updateData = {};
+  if (name !== undefined) updateData.name = name;
+  if (walletAddress !== undefined) updateData.walletAddress = walletAddress;
+  await owner.update(updateData);
+
+  res.status(200).json(new ApiResponse(200, { owner }, 'Solana withdrawal owner updated'));
+}
+
+async function deleteSolanaOwner(req, res) {
+  const { id } = req.params;
+  const owner = await SolanaWithdrawalOwner.findByPk(id);
+  if (!owner) throw new ApiError(404, 'Solana withdrawal owner not found');
+  await owner.update({ isActive: false });
+  res.status(200).json(new ApiResponse(200, null, 'Solana withdrawal owner removed'));
+}
+
+/**
+ * Combined public login allowlist — returns all active owners from BOTH networks.
+ * Frontend checks the connected wallet against this list to gate admin panel access.
+ */
+async function getAllOwnersPublic(req, res) {
+  const [xrplOwners, solanaOwners] = await Promise.all([
+    WithdrawalOwner.findAll({
+      where: { isActive: true },
+      attributes: ['id', 'name', 'walletAddress'],
+      order: [['position', 'ASC']]
+    }),
+    SolanaWithdrawalOwner.findAll({
+      where: { isActive: true },
+      attributes: ['id', 'name', 'walletAddress'],
+      order: [['position', 'ASC']]
+    })
+  ]);
+
+  const owners = [
+    ...xrplOwners.map(o => ({ ...o.toJSON(), network: 'xrpl' })),
+    ...solanaOwners.map(o => ({ ...o.toJSON(), network: 'solana' }))
+  ];
+
+  res.status(200).json(new ApiResponse(200, { owners }, 'All admin owners retrieved'));
+}
