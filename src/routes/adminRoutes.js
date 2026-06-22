@@ -548,4 +548,14 @@ router.post('/withdrawals/solana/owners', withdrawalController.createSolanaOwner
 router.put('/withdrawals/solana/owners/:id', withdrawalController.updateSolanaOwner);
 router.delete('/withdrawals/solana/owners/:id', withdrawalController.deleteSolanaOwner);
 
+// ============================================
+// Solana Withdrawal Operations
+// ============================================
+router.get('/withdrawals/solana/source-wallets', withdrawalController.getSolanaSourceWallets);
+router.get('/withdrawals/solana/stats', withdrawalController.getSolanaStats);
+router.get('/withdrawals/solana', withdrawalController.getSolanaWithdrawals);
+router.post('/withdrawals/solana', withdrawalController.createSolanaWithdrawal);
+router.post('/withdrawals/solana/:id/sign', withdrawalController.signSolanaWithdrawal);
+router.post('/withdrawals/solana/:id/reject', withdrawalController.rejectSolanaWithdrawal);
+
 module.exports = router;

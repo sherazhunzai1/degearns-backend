@@ -1,5 +1,8 @@
-const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, SolanaWithdrawalOwner, sequelize } = require('../models');
+const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, SolanaWithdrawalOwner, SolanaWithdrawal, SolanaWithdrawalSignature, sequelize } = require('../models');
 const xrplConfig = require('../config/xrpl');
+const { Keypair, SystemProgram, Transaction, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const bs58 = require('bs58');
+const solanaConfig = require('../config/solana');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
@@ -724,9 +727,548 @@ module.exports = {
   createSolanaOwner,
   updateSolanaOwner,
   deleteSolanaOwner,
+  // Solana withdrawal operations
+  getSolanaSourceWallets,
+  getSolanaWithdrawals,
+  getSolanaStats,
+  createSolanaWithdrawal,
+  signSolanaWithdrawal,
+  rejectSolanaWithdrawal,
   // Combined login allowlist
   getAllOwnersPublic
 };
+
+// ==================== SOLANA WITHDRAWAL OPERATIONS ====================
+
+/**
+ * Get Solana source wallets with live balances
+ */
+async function getSolanaSourceWallets(req, res) {
+  const wallets = [];
+
+  const secretKey = process.env.SOLANA_ADMIN_SECRET_KEY || process.env.SOL_WALLET_PRIVATE_KEY;
+
+  const walletInfo = {
+    type: 'solana_revenue',
+    label: 'Platform Revenue Wallet',
+    description: 'Solana platform revenue wallet',
+    walletAddress: null,
+    balanceLamports: '0',
+    configured: false
+  };
+
+  if (secretKey) {
+    try {
+      const adminKeypair = Keypair.fromSecretKey(bs58.decode(secretKey));
+      walletInfo.walletAddress = adminKeypair.publicKey.toBase58();
+      walletInfo.configured = true;
+
+      try {
+        const connection = solanaConfig.getConnection();
+        const balance = await connection.getBalance(adminKeypair.publicKey);
+        walletInfo.balanceLamports = balance.toString();
+      } catch (error) {
+        logger.warn(`Failed to fetch Solana balance for ${walletInfo.walletAddress}: ${error.message}`);
+      }
+    } catch (error) {
+      logger.warn(`Failed to load Solana admin keypair: ${error.message}`);
+    }
+  }
+
+  wallets.push(walletInfo);
+
+  res.status(200).json(new ApiResponse(200, { wallets }, 'Solana source wallets retrieved successfully'));
+}
+
+/**
+ * Get Solana withdrawals with pagination
+ */
+async function getSolanaWithdrawals(req, res) {
+  const {
+    page = 1,
+    limit = 20,
+    status
+  } = req.query;
+
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const where = {};
+  if (status) {
+    where.status = status;
+  }
+
+  const { count, rows: withdrawals } = await SolanaWithdrawal.findAndCountAll({
+    where,
+    order: [['createdAt', 'DESC']],
+    limit: parseInt(limit),
+    offset,
+    include: [
+      {
+        model: SolanaWithdrawalOwner,
+        as: 'initiator',
+        attributes: ['id', 'name', 'walletAddress']
+      },
+      {
+        model: SolanaWithdrawalSignature,
+        as: 'signatures',
+        include: [
+          {
+            model: SolanaWithdrawalOwner,
+            as: 'owner',
+            attributes: ['id', 'name', 'walletAddress']
+          }
+        ]
+      }
+    ]
+  });
+
+  const formattedWithdrawals = withdrawals.map(w => {
+    const data = w.toJSON();
+    return {
+      id: data.id,
+      chain: data.chain,
+      totalAmount: data.totalAmount,
+      perOwnerAmount: data.perOwnerAmount,
+      reason: data.reason,
+      status: data.status,
+      requiredSignatures: data.requiredSignatures,
+      currentSignatures: data.signatures ? data.signatures.length : 0,
+      initiator: data.initiator,
+      signatures: data.signatures,
+      splits: data.splits,
+      sourceBreakdown: data.sourceBreakdown,
+      transactionHashes: data.transactionHashes,
+      rejectedBy: data.rejectedBy,
+      rejectionReason: data.rejectionReason,
+      completedAt: data.completedAt,
+      rejectedAt: data.rejectedAt,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt
+    };
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    withdrawals: formattedWithdrawals,
+    pagination: {
+      total: count,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(count / parseInt(limit))
+    }
+  }, 'Solana withdrawals retrieved successfully'));
+}
+
+/**
+ * Get Solana withdrawal statistics
+ */
+async function getSolanaStats(req, res) {
+  const [pending, completed, rejected, completedSum] = await Promise.all([
+    SolanaWithdrawal.count({ where: { status: 'pending_signatures' } }),
+    SolanaWithdrawal.count({ where: { status: 'completed' } }),
+    SolanaWithdrawal.count({ where: { status: 'rejected' } }),
+    SolanaWithdrawal.findAll({
+      where: { status: 'completed' },
+      attributes: ['totalAmount']
+    })
+  ]);
+
+  let totalWithdrawnLamports = BigInt(0);
+  for (const w of completedSum) {
+    totalWithdrawnLamports += BigInt(w.totalAmount);
+  }
+
+  res.status(200).json(new ApiResponse(200, {
+    pending,
+    completed,
+    rejected,
+    totalWithdrawnLamports: totalWithdrawnLamports.toString()
+  }, 'Solana withdrawal statistics retrieved successfully'));
+}
+
+/**
+ * Create a new Solana withdrawal request
+ */
+async function createSolanaWithdrawal(req, res) {
+  const { totalAmount, reason, initiatedBy } = req.body;
+
+  if (!totalAmount) {
+    throw new ApiError(400, 'Total amount is required');
+  }
+
+  if (!initiatedBy) {
+    throw new ApiError(400, 'Initiating owner ID is required');
+  }
+
+  // Validate totalAmount is a valid positive number string
+  let totalBigInt;
+  try {
+    totalBigInt = BigInt(totalAmount);
+  } catch (e) {
+    throw new ApiError(400, 'Total amount must be a valid numeric string (lamports)');
+  }
+
+  if (totalBigInt <= BigInt(0)) {
+    throw new ApiError(400, 'Total amount must be greater than 0');
+  }
+
+  // Validate active Solana owners exist
+  const activeOwners = await SolanaWithdrawalOwner.findAll({
+    where: { isActive: true },
+    order: [['position', 'ASC']]
+  });
+
+  if (activeOwners.length === 0) {
+    throw new ApiError(400, 'No active Solana withdrawal owners found');
+  }
+
+  // Validate the initiator is an active owner
+  const initiator = activeOwners.find(o => o.id === initiatedBy);
+  if (!initiator) {
+    throw new ApiError(400, 'Initiating owner must be one of the active Solana withdrawal owners');
+  }
+
+  // Validate source wallet is configured and has sufficient balance
+  const secretKey = process.env.SOLANA_ADMIN_SECRET_KEY || process.env.SOL_WALLET_PRIVATE_KEY;
+  if (!secretKey) {
+    throw new ApiError(400, 'Solana admin wallet not configured. Set SOLANA_ADMIN_SECRET_KEY or SOL_WALLET_PRIVATE_KEY.');
+  }
+
+  let adminKeypair;
+  try {
+    adminKeypair = Keypair.fromSecretKey(bs58.decode(secretKey));
+  } catch (error) {
+    throw new ApiError(400, 'Failed to load Solana admin keypair: ' + error.message);
+  }
+
+  const adminAddress = adminKeypair.publicKey.toBase58();
+
+  // Get live balance
+  let balanceLamports = BigInt(0);
+  try {
+    const connection = solanaConfig.getConnection();
+    const balance = await connection.getBalance(adminKeypair.publicKey);
+    balanceLamports = BigInt(balance);
+  } catch (error) {
+    logger.warn(`Failed to fetch Solana balance: ${error.message}`);
+    throw new ApiError(400, 'Failed to fetch Solana wallet balance: ' + error.message);
+  }
+
+  if (totalBigInt > balanceLamports) {
+    throw new ApiError(400, `Insufficient balance. Requested: ${totalAmount} lamports, Available: ${balanceLamports.toString()} lamports`);
+  }
+
+  // Compute per-owner amount
+  const ownerCount = BigInt(activeOwners.length);
+  const perOwnerAmount = totalBigInt / ownerCount;
+  const remainder = totalBigInt % ownerCount;
+
+  // Build splits snapshot
+  const splits = activeOwners.map((owner, index) => ({
+    ownerId: owner.id,
+    name: owner.name,
+    walletAddress: owner.walletAddress,
+    amount: (index === 0 ? (perOwnerAmount + remainder) : perOwnerAmount).toString()
+  }));
+
+  // Single source breakdown
+  const sourceBreakdown = [{
+    type: 'solana_revenue',
+    label: 'Platform Revenue Wallet',
+    walletAddress: adminAddress,
+    amount: totalAmount,
+    availableBalance: balanceLamports.toString()
+  }];
+
+  // Create withdrawal within a transaction
+  const result = await sequelize.transaction(async (t) => {
+    const withdrawal = await SolanaWithdrawal.create({
+      chain: 'solana',
+      totalAmount: totalAmount,
+      perOwnerAmount: perOwnerAmount.toString(),
+      reason: reason || null,
+      initiatedBy,
+      status: 'pending_signatures',
+      requiredSignatures: 3,
+      splits,
+      sourceBreakdown,
+      transactionHashes: null
+    }, { transaction: t });
+
+    // Auto-create first signature for the initiator
+    await SolanaWithdrawalSignature.create({
+      withdrawalId: withdrawal.id,
+      ownerId: initiatedBy,
+      signedAt: new Date()
+    }, { transaction: t });
+
+    return withdrawal;
+  });
+
+  // Fetch the full withdrawal with associations
+  const withdrawal = await SolanaWithdrawal.findByPk(result.id, {
+    include: [
+      {
+        model: SolanaWithdrawalOwner,
+        as: 'initiator',
+        attributes: ['id', 'name', 'walletAddress']
+      },
+      {
+        model: SolanaWithdrawalSignature,
+        as: 'signatures',
+        include: [
+          {
+            model: SolanaWithdrawalOwner,
+            as: 'owner',
+            attributes: ['id', 'name', 'walletAddress']
+          }
+        ]
+      }
+    ]
+  });
+
+  logger.info(`Solana withdrawal created: ${withdrawal.id}, amount: ${totalAmount} lamports, initiated by: ${initiator.name}`);
+
+  await AdminActivity.create({
+    adminWalletAddress: initiator.walletAddress,
+    action: 'solana_withdrawal_created',
+    details: { withdrawalId: withdrawal.id, totalAmount, reason, initiatedBy: initiator.id, initiatorName: initiator.name, chain: 'solana' }
+  }).catch(() => {});
+
+  res.status(201).json(new ApiResponse(201, { withdrawal }, 'Solana withdrawal created successfully'));
+}
+
+/**
+ * Sign a Solana withdrawal (add signature)
+ * When all required signatures are collected, execute on-chain SOL transfers
+ */
+async function signSolanaWithdrawal(req, res) {
+  const { id } = req.params;
+  const { ownerId } = req.body;
+
+  if (!ownerId) {
+    throw new ApiError(400, 'Owner ID is required');
+  }
+
+  const withdrawal = await SolanaWithdrawal.findByPk(id, {
+    include: [
+      {
+        model: SolanaWithdrawalSignature,
+        as: 'signatures'
+      }
+    ]
+  });
+
+  if (!withdrawal) {
+    throw new ApiError(404, 'Solana withdrawal not found');
+  }
+
+  if (withdrawal.status !== 'pending_signatures') {
+    throw new ApiError(400, `Cannot sign a withdrawal with status: ${withdrawal.status}`);
+  }
+
+  // Validate ownerId is an active owner
+  const owner = await SolanaWithdrawalOwner.findOne({
+    where: { id: ownerId, isActive: true }
+  });
+
+  if (!owner) {
+    throw new ApiError(400, 'Owner not found or is not active');
+  }
+
+  // Check if already signed
+  const existingSignature = await SolanaWithdrawalSignature.findOne({
+    where: { withdrawalId: id, ownerId }
+  });
+
+  if (existingSignature) {
+    throw new ApiError(409, 'This owner has already signed this withdrawal');
+  }
+
+  // Use a sequelize transaction for atomicity
+  const result = await sequelize.transaction(async (t) => {
+    // Create the signature
+    await SolanaWithdrawalSignature.create({
+      withdrawalId: id,
+      ownerId,
+      signedAt: new Date()
+    }, { transaction: t });
+
+    // Count total signatures now
+    const signatureCount = withdrawal.signatures.length + 1;
+
+    // If we have all required signatures, execute on-chain
+    if (signatureCount >= withdrawal.requiredSignatures) {
+      logger.info(`Solana withdrawal ${id}: All ${withdrawal.requiredSignatures} signatures collected. Executing on-chain SOL transfers...`);
+
+      const transactionHashes = [];
+      const splits = withdrawal.splits;
+
+      try {
+        const connection = solanaConfig.getConnection();
+
+        // Load admin keypair from env
+        const secretKey = process.env.SOLANA_ADMIN_SECRET_KEY || process.env.SOL_WALLET_PRIVATE_KEY;
+        if (!secretKey) {
+          throw new Error('Solana admin wallet not configured');
+        }
+        const adminKeypair = Keypair.fromSecretKey(bs58.decode(secretKey));
+
+        for (const split of splits) {
+          try {
+            const transaction = new Transaction().add(
+              SystemProgram.transfer({
+                fromPubkey: adminKeypair.publicKey,
+                toPubkey: new PublicKey(split.walletAddress),
+                lamports: parseInt(split.amount)
+              })
+            );
+
+            const signature = await connection.sendTransaction(transaction, [adminKeypair]);
+            await connection.confirmTransaction(signature, 'confirmed');
+
+            transactionHashes.push({
+              ownerName: split.name,
+              ownerWallet: split.walletAddress,
+              amount: split.amount,
+              signature: signature,
+              status: 'success'
+            });
+
+            logger.info(`SOL payment to ${split.name} (${split.walletAddress}): ${split.amount} lamports - Sig: ${signature}`);
+          } catch (txError) {
+            transactionHashes.push({
+              ownerName: split.name,
+              ownerWallet: split.walletAddress,
+              amount: split.amount,
+              signature: null,
+              status: 'failed',
+              error: txError.message
+            });
+            logger.error(`SOL payment to ${split.name} failed: ${txError.message}`);
+          }
+        }
+
+        // Update withdrawal to completed
+        await withdrawal.update({
+          status: 'completed',
+          completedAt: new Date(),
+          transactionHashes
+        }, { transaction: t });
+
+        logger.info(`Solana withdrawal ${id} completed. ${transactionHashes.length} payments executed.`);
+      } catch (error) {
+        logger.error(`Solana withdrawal ${id} on-chain execution failed: ${error.message}`);
+        throw new ApiError(500, `On-chain SOL payment execution failed: ${error.message}`);
+      }
+    }
+
+    return signatureCount;
+  });
+
+  // Fetch the updated withdrawal
+  const updatedWithdrawal = await SolanaWithdrawal.findByPk(id, {
+    include: [
+      {
+        model: SolanaWithdrawalOwner,
+        as: 'initiator',
+        attributes: ['id', 'name', 'walletAddress']
+      },
+      {
+        model: SolanaWithdrawalSignature,
+        as: 'signatures',
+        include: [
+          {
+            model: SolanaWithdrawalOwner,
+            as: 'owner',
+            attributes: ['id', 'name', 'walletAddress']
+          }
+        ]
+      }
+    ]
+  });
+
+  const message = updatedWithdrawal.status === 'completed'
+    ? 'Solana withdrawal signed and executed successfully'
+    : 'Solana withdrawal signed successfully';
+
+  await AdminActivity.create({
+    adminWalletAddress: owner.walletAddress,
+    action: updatedWithdrawal.status === 'completed' ? 'solana_withdrawal_completed' : 'solana_withdrawal_signed',
+    details: { withdrawalId: withdrawal.id, ownerId, ownerName: owner.name, status: updatedWithdrawal.status, chain: 'solana' }
+  }).catch(() => {});
+
+  res.status(200).json(new ApiResponse(200, { withdrawal: updatedWithdrawal }, message));
+}
+
+/**
+ * Reject a Solana withdrawal
+ */
+async function rejectSolanaWithdrawal(req, res) {
+  const { id } = req.params;
+  const { ownerId, reason } = req.body;
+
+  if (!ownerId) {
+    throw new ApiError(400, 'Owner ID is required');
+  }
+
+  const withdrawal = await SolanaWithdrawal.findByPk(id);
+
+  if (!withdrawal) {
+    throw new ApiError(404, 'Solana withdrawal not found');
+  }
+
+  if (withdrawal.status !== 'pending_signatures') {
+    throw new ApiError(400, `Cannot reject a withdrawal with status: ${withdrawal.status}`);
+  }
+
+  // Validate ownerId is an active owner
+  const owner = await SolanaWithdrawalOwner.findOne({
+    where: { id: ownerId, isActive: true }
+  });
+
+  if (!owner) {
+    throw new ApiError(400, 'Owner not found or is not active');
+  }
+
+  await withdrawal.update({
+    status: 'rejected',
+    rejectedBy: ownerId,
+    rejectionReason: reason || null,
+    rejectedAt: new Date()
+  });
+
+  logger.info(`Solana withdrawal ${id} rejected by ${owner.name}: ${reason || 'No reason provided'}`);
+
+  // Fetch updated withdrawal with associations
+  const updatedWithdrawal = await SolanaWithdrawal.findByPk(id, {
+    include: [
+      {
+        model: SolanaWithdrawalOwner,
+        as: 'initiator',
+        attributes: ['id', 'name', 'walletAddress']
+      },
+      {
+        model: SolanaWithdrawalSignature,
+        as: 'signatures',
+        include: [
+          {
+            model: SolanaWithdrawalOwner,
+            as: 'owner',
+            attributes: ['id', 'name', 'walletAddress']
+          }
+        ]
+      }
+    ]
+  });
+
+  await AdminActivity.create({
+    adminWalletAddress: owner.walletAddress,
+    action: 'solana_withdrawal_rejected',
+    details: { withdrawalId: withdrawal.id, ownerId, ownerName: owner.name, reason, chain: 'solana' }
+  }).catch(() => {});
+
+  res.status(200).json(new ApiResponse(200, { withdrawal: updatedWithdrawal }, 'Solana withdrawal rejected successfully'));
+}
 
 // ==================== SOLANA WITHDRAWAL OWNERS ====================
 
