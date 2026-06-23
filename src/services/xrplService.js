@@ -1177,7 +1177,7 @@ class XRPLService {
     return {
       TransactionType: 'TrustSet',
       Account: creatorWallet,
-      Flags: 262144, // tfClearNoRipple — allows rippling (required for AMM/DEX trading)
+      Flags: 0, // No flags — rippling controlled by issuer's DefaultRipple setting
       LimitAmount: {
         currency: currencyHex,
         issuer: issuerAddress,
@@ -1260,6 +1260,50 @@ class XRPLService {
       return result;
     } catch (error) {
       logger.error('Error issuing token from admin:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Enable DefaultRipple on the admin/issuer account.
+   * This is required for AMM/DEX trading — without it, all trustlines
+   * to this issuer block rippling.
+   * Only needs to be called once per issuer account.
+   */
+  async enableDefaultRipple() {
+    try {
+      const wallet = xrplConfig.getAdminWallet();
+      const client = await xrplConfig.getClientAsync();
+
+      // Check if already enabled
+      const accountInfo = await client.request({
+        command: 'account_info',
+        account: wallet.address
+      });
+
+      const flags = accountInfo.result.account_data.Flags || 0;
+      const asfDefaultRipple = 8;
+      const lsfDefaultRipple = 0x00800000; // 8388608
+
+      if (flags & lsfDefaultRipple) {
+        logger.info(`DefaultRipple already enabled on ${wallet.address}`);
+        return { alreadyEnabled: true };
+      }
+
+      const tx = {
+        TransactionType: 'AccountSet',
+        Account: wallet.address,
+        SetFlag: asfDefaultRipple
+      };
+
+      const prepared = await client.autofill(tx);
+      const signed = wallet.sign(prepared);
+      const result = await client.submitAndWait(signed.tx_blob);
+
+      logger.info(`DefaultRipple enabled on ${wallet.address}, tx: ${result.result.hash}`);
+      return { enabled: true, hash: result.result.hash };
+    } catch (error) {
+      logger.error('Error enabling DefaultRipple:', error.message);
       throw error;
     }
   }

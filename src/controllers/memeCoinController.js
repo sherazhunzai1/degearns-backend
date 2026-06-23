@@ -245,6 +245,13 @@ const confirmTrustline = async (req, res, next) => {
 
     await memeCoin.update({ status: 'trust_set', trustSetTxHash });
 
+    // Ensure DefaultRipple is enabled on issuer (required for AMM/DEX)
+    try {
+      await xrplService.enableDefaultRipple();
+    } catch (e) {
+      logger.warn('Could not enable DefaultRipple:', e.message);
+    }
+
     try {
       const issueResult = await xrplService.issueTokenFromAdmin({
         destinationAddress: memeCoin.creatorWalletAddress,
