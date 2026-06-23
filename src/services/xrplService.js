@@ -1177,7 +1177,7 @@ class XRPLService {
     return {
       TransactionType: 'TrustSet',
       Account: creatorWallet,
-      Flags: 131072, // tfSetNoRipple — disables rippling on this trust line
+      Flags: 262144, // tfClearNoRipple — allows rippling (required for AMM/DEX trading)
       LimitAmount: {
         currency: currencyHex,
         issuer: issuerAddress,
