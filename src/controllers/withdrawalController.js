@@ -1,4 +1,4 @@
-const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, SolanaWithdrawalOwner, SolanaWithdrawal, SolanaWithdrawalSignature, sequelize } = require('../models');
+const { WithdrawalOwner, Withdrawal, WithdrawalSignature, AdminWallet, AdminActivity, SolanaWithdrawalOwner, SolanaWithdrawal, SolanaWithdrawalSignature, OwnerChangeRequest, OwnerChangeSignature, sequelize } = require('../models');
 const xrplConfig = require('../config/xrpl');
 const { Keypair, SystemProgram, Transaction, PublicKey, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const bs58 = require('bs58');
@@ -687,6 +687,313 @@ const rejectWithdrawal = async (req, res) => {
   res.status(200).json(new ApiResponse(200, { withdrawal: updatedWithdrawal }, 'Withdrawal rejected successfully'));
 };
 
+// ==================== OWNER CHANGE REQUEST OPERATIONS ====================
+
+/**
+ * Get owner change requests with pagination
+ */
+const getOwnerChangeRequests = async (req, res) => {
+  const { network, status, page = 1, limit = 20 } = req.query;
+
+  if (!network || !['xrpl', 'solana'].includes(network)) {
+    throw new ApiError(400, 'Query parameter "network" is required and must be "xrpl" or "solana"');
+  }
+
+  const offset = (parseInt(page) - 1) * parseInt(limit);
+
+  const where = { network };
+  if (status) {
+    where.status = status;
+  }
+
+  const { count, rows: requests } = await OwnerChangeRequest.findAndCountAll({
+    where,
+    order: [['createdAt', 'DESC']],
+    limit: parseInt(limit),
+    offset,
+    include: [
+      {
+        model: OwnerChangeSignature,
+        as: 'signatures'
+      }
+    ]
+  });
+
+  res.status(200).json(new ApiResponse(200, {
+    requests,
+    pagination: {
+      total: count,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(count / parseInt(limit))
+    }
+  }, 'Owner change requests retrieved successfully'));
+};
+
+/**
+ * Create a new owner change request
+ */
+const createOwnerChangeRequest = async (req, res) => {
+  const { network, targetOwnerId, newOwnerName, newOwnerWallet, initiatedBy } = req.body;
+
+  if (!network || !['xrpl', 'solana'].includes(network)) {
+    throw new ApiError(400, 'Field "network" is required and must be "xrpl" or "solana"');
+  }
+
+  if (!targetOwnerId) {
+    throw new ApiError(400, 'Target owner ID is required');
+  }
+
+  if (!newOwnerName) {
+    throw new ApiError(400, 'New owner name is required');
+  }
+
+  if (!newOwnerWallet) {
+    throw new ApiError(400, 'New owner wallet address is required');
+  }
+
+  if (!initiatedBy) {
+    throw new ApiError(400, 'Initiating owner ID is required');
+  }
+
+  // Select the correct model based on network
+  const OwnerModel = network === 'xrpl' ? WithdrawalOwner : SolanaWithdrawalOwner;
+
+  // Validate XRPL wallet format if applicable
+  if (network === 'xrpl' && !WALLET_ADDRESS_REGEX.test(newOwnerWallet)) {
+    throw new ApiError(400, 'Invalid XRPL wallet address format');
+  }
+
+  // Look up the target owner
+  const targetOwner = await OwnerModel.findOne({
+    where: { id: targetOwnerId, isActive: true }
+  });
+
+  if (!targetOwner) {
+    throw new ApiError(404, 'Target owner not found or is not active');
+  }
+
+  // Look up the initiator
+  const initiator = await OwnerModel.findOne({
+    where: { id: initiatedBy, isActive: true }
+  });
+
+  if (!initiator) {
+    throw new ApiError(400, 'Initiating owner not found or is not active');
+  }
+
+  // Initiator cannot target themselves
+  if (initiatedBy === targetOwnerId) {
+    throw new ApiError(400, 'You cannot propose to remove yourself');
+  }
+
+  // Check no pending change request already exists for this network
+  const existingPending = await OwnerChangeRequest.findOne({
+    where: { network, status: 'pending' }
+  });
+
+  if (existingPending) {
+    throw new ApiError(409, 'A pending owner change request already exists for this network. Resolve it before creating a new one.');
+  }
+
+  // Validate newOwnerWallet is not already an active owner
+  const existingOwner = await OwnerModel.findOne({
+    where: { walletAddress: newOwnerWallet, isActive: true }
+  });
+
+  if (existingOwner) {
+    throw new ApiError(409, 'The new wallet address is already an active owner');
+  }
+
+  // Create the request and auto-sign within a transaction
+  const result = await sequelize.transaction(async (t) => {
+    const changeRequest = await OwnerChangeRequest.create({
+      network,
+      targetOwnerId,
+      targetOwnerName: targetOwner.name,
+      targetOwnerWallet: targetOwner.walletAddress,
+      newOwnerName,
+      newOwnerWallet,
+      initiatedBy,
+      initiatorName: initiator.name,
+      status: 'pending',
+      requiredSignatures: 2
+    }, { transaction: t });
+
+    // Auto-sign for the initiator
+    await OwnerChangeSignature.create({
+      changeRequestId: changeRequest.id,
+      ownerId: initiatedBy,
+      ownerName: initiator.name,
+      signedAt: new Date()
+    }, { transaction: t });
+
+    return changeRequest;
+  });
+
+  // Fetch the full request with signatures
+  const changeRequest = await OwnerChangeRequest.findByPk(result.id, {
+    include: [{ model: OwnerChangeSignature, as: 'signatures' }]
+  });
+
+  logger.info(`Owner change request created: ${changeRequest.id}, network: ${network}, target: ${targetOwner.name}, replacement: ${newOwnerName}, initiated by: ${initiator.name}`);
+
+  res.status(201).json(new ApiResponse(201, { changeRequest }, 'Owner change request created successfully'));
+};
+
+/**
+ * Sign an owner change request
+ * When required signatures are met, execute the owner swap
+ */
+const signOwnerChangeRequest = async (req, res) => {
+  const { id } = req.params;
+  const { ownerId } = req.body;
+
+  if (!ownerId) {
+    throw new ApiError(400, 'Owner ID is required');
+  }
+
+  const changeRequest = await OwnerChangeRequest.findByPk(id, {
+    include: [{ model: OwnerChangeSignature, as: 'signatures' }]
+  });
+
+  if (!changeRequest) {
+    throw new ApiError(404, 'Owner change request not found');
+  }
+
+  if (changeRequest.status !== 'pending') {
+    throw new ApiError(400, `Cannot sign a change request with status: ${changeRequest.status}`);
+  }
+
+  // Select the correct model based on network
+  const OwnerModel = changeRequest.network === 'xrpl' ? WithdrawalOwner : SolanaWithdrawalOwner;
+
+  // Validate signer is an active owner
+  const signer = await OwnerModel.findOne({
+    where: { id: ownerId, isActive: true }
+  });
+
+  if (!signer) {
+    throw new ApiError(400, 'Signer not found or is not active');
+  }
+
+  // Target owner cannot sign their own removal
+  if (ownerId === changeRequest.targetOwnerId) {
+    throw new ApiError(400, 'The target owner cannot sign their own removal');
+  }
+
+  // Check if already signed
+  const existingSignature = await OwnerChangeSignature.findOne({
+    where: { changeRequestId: id, ownerId }
+  });
+
+  if (existingSignature) {
+    throw new ApiError(409, 'This owner has already signed this change request');
+  }
+
+  // Execute within a transaction
+  await sequelize.transaction(async (t) => {
+    // Create the signature
+    await OwnerChangeSignature.create({
+      changeRequestId: id,
+      ownerId,
+      ownerName: signer.name,
+      signedAt: new Date()
+    }, { transaction: t });
+
+    const signatureCount = changeRequest.signatures.length + 1;
+
+    // If we have enough signatures, execute the owner swap
+    if (signatureCount >= changeRequest.requiredSignatures) {
+      logger.info(`Owner change request ${id}: ${signatureCount} signatures collected (required: ${changeRequest.requiredSignatures}). Executing owner swap...`);
+
+      // Deactivate the target owner
+      const targetOwner = await OwnerModel.findByPk(changeRequest.targetOwnerId, { transaction: t });
+      if (targetOwner) {
+        await targetOwner.update({ isActive: false }, { transaction: t });
+      }
+
+      // Create the new owner with the same position
+      await OwnerModel.create({
+        name: changeRequest.newOwnerName,
+        walletAddress: changeRequest.newOwnerWallet,
+        position: targetOwner ? targetOwner.position : 1,
+        isActive: true
+      }, { transaction: t });
+
+      // Update the change request status
+      await changeRequest.update({
+        status: 'approved',
+        completedAt: new Date()
+      }, { transaction: t });
+
+      logger.info(`Owner change request ${id} approved. ${changeRequest.targetOwnerName} replaced by ${changeRequest.newOwnerName}`);
+    }
+  });
+
+  // Fetch the updated request with signatures
+  const updatedRequest = await OwnerChangeRequest.findByPk(id, {
+    include: [{ model: OwnerChangeSignature, as: 'signatures' }]
+  });
+
+  const message = updatedRequest.status === 'approved'
+    ? 'Owner change request signed and executed successfully'
+    : 'Owner change request signed successfully';
+
+  res.status(200).json(new ApiResponse(200, { changeRequest: updatedRequest }, message));
+};
+
+/**
+ * Reject an owner change request
+ */
+const rejectOwnerChangeRequest = async (req, res) => {
+  const { id } = req.params;
+  const { ownerId, reason } = req.body;
+
+  if (!ownerId) {
+    throw new ApiError(400, 'Owner ID is required');
+  }
+
+  const changeRequest = await OwnerChangeRequest.findByPk(id);
+
+  if (!changeRequest) {
+    throw new ApiError(404, 'Owner change request not found');
+  }
+
+  if (changeRequest.status !== 'pending') {
+    throw new ApiError(400, `Cannot reject a change request with status: ${changeRequest.status}`);
+  }
+
+  // Select the correct model based on network
+  const OwnerModel = changeRequest.network === 'xrpl' ? WithdrawalOwner : SolanaWithdrawalOwner;
+
+  // Any active owner (including the target) can reject
+  const rejecter = await OwnerModel.findOne({
+    where: { id: ownerId, isActive: true }
+  });
+
+  if (!rejecter) {
+    throw new ApiError(400, 'Owner not found or is not active');
+  }
+
+  await changeRequest.update({
+    status: 'rejected',
+    rejectedBy: ownerId,
+    rejectorName: rejecter.name,
+    rejectionReason: reason || null,
+    rejectedAt: new Date()
+  });
+
+  logger.info(`Owner change request ${id} rejected by ${rejecter.name}: ${reason || 'No reason provided'}`);
+
+  // Fetch updated request with signatures
+  const updatedRequest = await OwnerChangeRequest.findByPk(id, {
+    include: [{ model: OwnerChangeSignature, as: 'signatures' }]
+  });
+
+  res.status(200).json(new ApiResponse(200, { changeRequest: updatedRequest }, 'Owner change request rejected successfully'));
+};
+
 module.exports = {
   getOwners,
   getOwnersPublic,
@@ -713,7 +1020,12 @@ module.exports = {
   signSolanaWithdrawal,
   rejectSolanaWithdrawal,
   // Combined login allowlist
-  getAllOwnersPublic
+  getAllOwnersPublic,
+  // Owner change requests
+  getOwnerChangeRequests,
+  createOwnerChangeRequest,
+  signOwnerChangeRequest,
+  rejectOwnerChangeRequest
 };
 
 // ==================== SOLANA WITHDRAWAL OPERATIONS ====================

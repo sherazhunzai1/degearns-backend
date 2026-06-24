@@ -528,6 +528,12 @@ router.get('/withdrawals/source-wallets', withdrawalController.getSourceWallets)
 // GET /admin/withdrawals/stats - Get withdrawal statistics
 router.get('/withdrawals/stats', withdrawalController.getStats);
 
+// Owner Change Requests
+router.get('/withdrawals/owner-changes', withdrawalController.getOwnerChangeRequests);
+router.post('/withdrawals/owner-changes', withdrawalController.createOwnerChangeRequest);
+router.post('/withdrawals/owner-changes/:id/sign', withdrawalController.signOwnerChangeRequest);
+router.post('/withdrawals/owner-changes/:id/reject', withdrawalController.rejectOwnerChangeRequest);
+
 // GET /admin/withdrawals - Get all withdrawals (paginated)
 router.get('/withdrawals', withdrawalController.getWithdrawals);
 

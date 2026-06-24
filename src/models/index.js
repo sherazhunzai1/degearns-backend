@@ -51,6 +51,8 @@ const WithdrawalSignature = require('./WithdrawalSignature')(sequelize, DataType
 const SolanaWithdrawalOwner = require('./SolanaWithdrawalOwner')(sequelize, DataTypes);
 const SolanaWithdrawal = require('./SolanaWithdrawal')(sequelize, DataTypes);
 const SolanaWithdrawalSignature = require('./SolanaWithdrawalSignature')(sequelize, DataTypes);
+const OwnerChangeRequest = require('./OwnerChangeRequest')(sequelize, DataTypes);
+const OwnerChangeSignature = require('./OwnerChangeSignature')(sequelize, DataTypes);
 
 // Define associations
 // Collection and CollectionChatMessage
@@ -767,6 +769,16 @@ SolanaWithdrawalOwner.hasMany(SolanaWithdrawalSignature, {
   as: 'signatures'
 });
 
+// OwnerChangeRequest and OwnerChangeSignature associations
+OwnerChangeRequest.hasMany(OwnerChangeSignature, {
+  foreignKey: 'changeRequestId',
+  as: 'signatures'
+});
+OwnerChangeSignature.belongsTo(OwnerChangeRequest, {
+  foreignKey: 'changeRequestId',
+  as: 'changeRequest'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -825,5 +837,7 @@ module.exports = {
   WithdrawalSignature,
   SolanaWithdrawalOwner,
   SolanaWithdrawal,
-  SolanaWithdrawalSignature
+  SolanaWithdrawalSignature,
+  OwnerChangeRequest,
+  OwnerChangeSignature
 };
