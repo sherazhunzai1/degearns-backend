@@ -545,10 +545,16 @@ const getUpgradeOptions = async (req, res, next) => {
     const allTiers = await SubscriptionTier.getActiveTiers();
 
     // Get subscription payment wallets for both networks
-    const xrplPaymentWallet = await AdminWallet.findOne({
-      where: { type: 'subscriptions', isActive: true, network: 'xrpl' },
-      attributes: ['walletAddress', 'label']
-    });
+    // XRPL payment wallet from .env (admin wallet)
+    let xrplPaymentWallet = null;
+    try {
+      const xrplConfig = require('../config/xrpl');
+      const adminWallet = xrplConfig.getAdminWallet();
+      xrplPaymentWallet = {
+        walletAddress: adminWallet.address,
+        label: 'Platform Admin Wallet (XRP)'
+      };
+    } catch (e) {}
 
     // Solana payment wallet comes from the admin keypair in .env
     let solanaPaymentWalletAddress = null;
