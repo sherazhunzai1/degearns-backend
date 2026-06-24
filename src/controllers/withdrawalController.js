@@ -11,18 +11,15 @@ const { Op } = require('sequelize');
 const WALLET_ADDRESS_REGEX = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
 
 const SOURCE_TYPE_MAP = {
-  platformFees: 'minting',
-  subscriptions: 'subscriptions'
+  revenue: 'revenue'
 };
 
 const SOURCE_LABELS = {
-  minting: 'Platform Minting Wallet',
-  subscriptions: 'Subscriptions Wallet'
+  revenue: 'Platform Revenue Wallet'
 };
 
 const SOURCE_DESCRIPTIONS = {
-  minting: 'Collects revenue from NFT minting and platform fees',
-  subscriptions: 'Collects subscription revenue'
+  revenue: 'Collects all platform fees from XRP transactions'
 };
 
 /**
@@ -170,46 +167,41 @@ const deleteOwner = async (req, res) => {
  * Get source wallets with live XRPL balances
  */
 const getSourceWallets = async (req, res) => {
-  const sourceTypes = [
-    { adminType: 'platformFees', sourceType: 'minting' },
-    { adminType: 'subscriptions', sourceType: 'subscriptions' }
-  ];
+  // Single source wallet: the admin wallet from .env (ADMIN_WALLET_SECRET_NUMBERS / ADMIN_WALLET_SEED)
+  let walletAddress = null;
+  let configured = false;
 
-  const wallets = [];
+  try {
+    const adminWallet = xrplConfig.getAdminWallet();
+    walletAddress = adminWallet.address;
+    configured = true;
+  } catch (e) {}
 
-  for (const { adminType, sourceType } of sourceTypes) {
-    const adminWallet = await AdminWallet.findOne({
-      where: { type: adminType, isActive: true, network: 'xrpl' }
-    });
+  const walletInfo = {
+    type: 'revenue',
+    label: SOURCE_LABELS.revenue,
+    description: SOURCE_DESCRIPTIONS.revenue,
+    walletAddress,
+    balanceDrops: '0',
+    configured
+  };
 
-    const walletInfo = {
-      type: sourceType,
-      label: SOURCE_LABELS[sourceType],
-      description: SOURCE_DESCRIPTIONS[sourceType],
-      walletAddress: adminWallet ? adminWallet.walletAddress : null,
-      balanceDrops: '0',
-      configured: !!adminWallet
-    };
-
-    if (adminWallet) {
-      try {
-        const client = await xrplConfig.getClientAsync();
-        const response = await client.request({
-          command: 'account_info',
-          account: adminWallet.walletAddress
-        });
-        if (response.result && response.result.account_data) {
-          walletInfo.balanceDrops = response.result.account_data.Balance;
-        }
-      } catch (error) {
-        logger.warn(`Failed to fetch balance for ${sourceType} wallet (${adminWallet.walletAddress}): ${error.message}`);
+  if (walletAddress) {
+    try {
+      const client = await xrplConfig.getClientAsync();
+      const response = await client.request({
+        command: 'account_info',
+        account: walletAddress
+      });
+      if (response.result && response.result.account_data) {
+        walletInfo.balanceDrops = response.result.account_data.Balance;
       }
+    } catch (error) {
+      logger.warn(`Failed to fetch balance for admin wallet (${walletAddress}): ${error.message}`);
     }
-
-    wallets.push(walletInfo);
   }
 
-  res.status(200).json(new ApiResponse(200, { wallets }, 'Source wallets retrieved successfully'));
+  res.status(200).json(new ApiResponse(200, { wallets: [walletInfo] }, 'Source wallets retrieved successfully'));
 };
 
 /**
@@ -359,47 +351,36 @@ const createWithdrawal = async (req, res) => {
     throw new ApiError(400, 'Initiating owner must be one of the active withdrawal owners');
   }
 
-  // Validate 2 source wallets configured
-  const sourceTypes = ['platformFees', 'subscriptions'];
-  const sourceWallets = {};
-
-  for (const adminType of sourceTypes) {
-    const wallet = await AdminWallet.findOne({
-      where: { type: adminType, isActive: true, network: 'xrpl' }
-    });
-    if (!wallet) {
-      const sourceType = SOURCE_TYPE_MAP[adminType];
-      throw new ApiError(400, `Source wallet not configured: ${sourceType} (AdminWallet type: ${adminType})`);
-    }
-    sourceWallets[adminType] = wallet;
+  // Validate admin wallet (single source) from .env
+  let adminWalletObj;
+  try {
+    adminWalletObj = xrplConfig.getAdminWallet();
+  } catch (e) {
+    throw new ApiError(400, 'Admin wallet not configured in .env');
   }
 
-  // Get combined balance from all source wallets
-  let combinedBalance = BigInt(0);
-  const sourceBalances = {};
+  const adminAddress = adminWalletObj.address;
 
-  for (const [adminType, wallet] of Object.entries(sourceWallets)) {
+  // Get balance from admin wallet
+  let combinedBalance = BigInt(0);
+
+  {
     try {
       const client = await xrplConfig.getClientAsync();
       const response = await client.request({
         command: 'account_info',
-        account: wallet.walletAddress
+        account: adminAddress
       });
       if (response.result && response.result.account_data) {
-        const balance = BigInt(response.result.account_data.Balance);
-        sourceBalances[adminType] = balance;
-        combinedBalance += balance;
-      } else {
-        sourceBalances[adminType] = BigInt(0);
+        combinedBalance = BigInt(response.result.account_data.Balance);
       }
     } catch (error) {
-      logger.warn(`Failed to fetch balance for ${adminType} wallet: ${error.message}`);
-      sourceBalances[adminType] = BigInt(0);
+      logger.warn(`Failed to fetch balance for admin wallet: ${error.message}`);
     }
   }
 
   if (totalBigInt > combinedBalance) {
-    throw new ApiError(400, `Insufficient combined balance. Requested: ${totalAmount} drops, Available: ${combinedBalance.toString()} drops`);
+    throw new ApiError(400, `Insufficient balance. Requested: ${totalAmount} drops, Available: ${combinedBalance.toString()} drops`);
   }
 
   // Compute per-owner amount: floor(total / 3), remainder goes to first owner
@@ -414,17 +395,14 @@ const createWithdrawal = async (req, res) => {
     amount: (index === 0 ? (perOwnerAmount + remainder) : perOwnerAmount).toString()
   }));
 
-  // Compute per-source breakdown: floor(total / 2), remainder goes to first source
-  const perSourceAmount = totalBigInt / BigInt(sourceTypes.length);
-  const sourceRemainder = totalBigInt % BigInt(sourceTypes.length);
-
-  const sourceBreakdown = sourceTypes.map((adminType, index) => ({
-    type: SOURCE_TYPE_MAP[adminType],
-    adminWalletType: adminType,
-    walletAddress: sourceWallets[adminType].walletAddress,
-    amount: (index === 0 ? (perSourceAmount + sourceRemainder) : perSourceAmount).toString(),
-    availableBalance: sourceBalances[adminType].toString()
-  }));
+  // Single source — all funds from admin wallet
+  const sourceBreakdown = [{
+    type: 'revenue',
+    label: SOURCE_LABELS.revenue,
+    walletAddress: adminAddress,
+    amount: totalAmount,
+    availableBalance: combinedBalance.toString()
+  }];
 
   // Create withdrawal within a transaction
   const result = await sequelize.transaction(async (t) => {
@@ -551,18 +529,18 @@ const signWithdrawal = async (req, res) => {
 
       try {
         const client = await xrplConfig.getClientAsync();
-        const treasuryWallet = xrplConfig.getTreasuryWallet();
+        const adminWallet = xrplConfig.getAdminWallet();
 
         for (const split of splits) {
           const paymentTx = {
             TransactionType: 'Payment',
-            Account: treasuryWallet.address,
+            Account: adminWallet.address,
             Destination: split.walletAddress,
             Amount: split.amount
           };
 
           const prepared = await client.autofill(paymentTx);
-          const signed = treasuryWallet.sign(prepared);
+          const signed = adminWallet.sign(prepared);
           const result = await client.submitAndWait(signed.tx_blob);
 
           if (result.result.meta.TransactionResult === 'tesSUCCESS') {
