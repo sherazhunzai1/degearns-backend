@@ -48,6 +48,11 @@ const CollectionChatMessage = require('./CollectionChatMessage')(sequelize, Data
 const WithdrawalOwner = require('./WithdrawalOwner')(sequelize, DataTypes);
 const Withdrawal = require('./Withdrawal')(sequelize, DataTypes);
 const WithdrawalSignature = require('./WithdrawalSignature')(sequelize, DataTypes);
+const SolanaWithdrawalOwner = require('./SolanaWithdrawalOwner')(sequelize, DataTypes);
+const SolanaWithdrawal = require('./SolanaWithdrawal')(sequelize, DataTypes);
+const SolanaWithdrawalSignature = require('./SolanaWithdrawalSignature')(sequelize, DataTypes);
+const OwnerChangeRequest = require('./OwnerChangeRequest')(sequelize, DataTypes);
+const OwnerChangeSignature = require('./OwnerChangeSignature')(sequelize, DataTypes);
 
 // Define associations
 // Collection and CollectionChatMessage
@@ -734,6 +739,46 @@ WithdrawalOwner.hasMany(WithdrawalSignature, {
   as: 'signatures'
 });
 
+// SolanaWithdrawal and SolanaWithdrawalOwner associations
+SolanaWithdrawal.belongsTo(SolanaWithdrawalOwner, {
+  foreignKey: 'initiatedBy',
+  as: 'initiator'
+});
+SolanaWithdrawalOwner.hasMany(SolanaWithdrawal, {
+  foreignKey: 'initiatedBy',
+  as: 'initiatedWithdrawals'
+});
+
+// SolanaWithdrawal and SolanaWithdrawalSignature associations
+SolanaWithdrawal.hasMany(SolanaWithdrawalSignature, {
+  foreignKey: 'withdrawalId',
+  as: 'signatures'
+});
+SolanaWithdrawalSignature.belongsTo(SolanaWithdrawal, {
+  foreignKey: 'withdrawalId',
+  as: 'withdrawal'
+});
+
+// SolanaWithdrawalSignature and SolanaWithdrawalOwner associations
+SolanaWithdrawalSignature.belongsTo(SolanaWithdrawalOwner, {
+  foreignKey: 'ownerId',
+  as: 'owner'
+});
+SolanaWithdrawalOwner.hasMany(SolanaWithdrawalSignature, {
+  foreignKey: 'ownerId',
+  as: 'signatures'
+});
+
+// OwnerChangeRequest and OwnerChangeSignature associations
+OwnerChangeRequest.hasMany(OwnerChangeSignature, {
+  foreignKey: 'changeRequestId',
+  as: 'signatures'
+});
+OwnerChangeSignature.belongsTo(OwnerChangeRequest, {
+  foreignKey: 'changeRequestId',
+  as: 'changeRequest'
+});
+
 // Initialize notification service with models
 const notificationService = require('../services/notificationService');
 notificationService.init({ Notification, User, Follow });
@@ -789,5 +834,10 @@ module.exports = {
   CollectionChatMessage,
   WithdrawalOwner,
   Withdrawal,
-  WithdrawalSignature
+  WithdrawalSignature,
+  SolanaWithdrawalOwner,
+  SolanaWithdrawal,
+  SolanaWithdrawalSignature,
+  OwnerChangeRequest,
+  OwnerChangeSignature
 };

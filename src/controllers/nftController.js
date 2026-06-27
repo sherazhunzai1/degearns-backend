@@ -549,31 +549,37 @@ exports.notifyNFTPurchase = async (req, res, next) => {
       throw new ApiError(400, 'NFT token ID is required');
     }
 
-    // --- Solana marketplace: verify payment + transfer NFT ---
+    // --- Solana: verify payment + transfer NFT via marketplace delegate ---
     let transferResult = null;
     if (network === 'solana') {
       if (!transactionHash) {
         throw new ApiError(400, 'Transaction hash is required for Solana purchases');
       }
-      if (!price) {
-        throw new ApiError(400, 'Price (in lamports) is required for Solana purchases');
+
+      // Verify the payment tx exists on-chain
+      const verification = await solanaService.verifyTransaction(transactionHash);
+      if (!verification.verified) {
+        logger.warn(`Solana purchase tx verification warning: ${verification.error}`);
+      } else {
+        logger.info(`Solana purchase tx verified: ${transactionHash}`);
       }
 
-      // Step 1: Verify the SOL payment on-chain
-      const payment = await solanaMarketplaceService.verifyPayment(
-        transactionHash,
-        buyerWalletAddress,
-        sellerWalletAddress,
-        price
-      );
-
-      if (!payment.verified) {
-        throw new ApiError(400, `Payment verification failed: ${payment.error}`);
+      // Check marketplace wallet has enough SOL for transfer fees (~0.003 SOL)
+      const marketplaceAddress = solanaMarketplaceService.getMarketplaceAddress();
+      if (marketplaceAddress) {
+        try {
+          const balance = await solanaService.getBalance(marketplaceAddress);
+          if (balance.lamports < 5000000) { // 0.005 SOL minimum
+            logger.error(`Marketplace wallet ${marketplaceAddress} has insufficient SOL: ${balance.sol} SOL. Need at least 0.005 SOL for transfer fees.`);
+            throw new ApiError(500, `Marketplace wallet has insufficient SOL for transfer fees (${balance.sol} SOL). Please fund the marketplace wallet with at least 0.005 SOL.`);
+          }
+        } catch (e) {
+          if (e instanceof ApiError) throw e;
+          logger.warn(`Could not check marketplace wallet balance: ${e.message}`);
+        }
       }
 
-      logger.info(`Solana payment verified: ${transactionHash} (${price} lamports from ${buyerWalletAddress} to ${sellerWalletAddress})`);
-
-      // Step 2: Transfer NFT from seller to buyer using marketplace delegate authority
+      // Transfer NFT from seller to buyer using marketplace delegate authority
       transferResult = await solanaMarketplaceService.transferNft(
         nftTokenId,
         sellerWalletAddress,

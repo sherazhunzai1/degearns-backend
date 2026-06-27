@@ -172,7 +172,7 @@ class ScoringEngine {
 
     // Creator metrics
     const salesVolume = volumeSold;
-    const nftsSold = activities.nft_sell?.count || 0;
+    const nftsSold = sellData.count;
 
     // For collections, count those created in the month
     const collections = await Collection.count({
@@ -238,9 +238,10 @@ class ScoringEngine {
     }
 
     // Engagement metrics (giving) - from ActivityLog
-    const likesGiven = activities.like_give?.count || 0;
-    const commentsGiven = activities.comment_create?.count || 0;
-    const followsGiven = activities.follow_give?.count || 0;
+    // Engagement metrics (giving) - from activitiesByNetwork
+    const likesGiven = (activitiesByNetwork.like_give?.xrpl?.count || 0) + (activitiesByNetwork.like_give?.solana?.count || 0);
+    const commentsGiven = (activitiesByNetwork.comment_create?.xrpl?.count || 0) + (activitiesByNetwork.comment_create?.solana?.count || 0);
+    const followsGiven = (activitiesByNetwork.follow_give?.xrpl?.count || 0) + (activitiesByNetwork.follow_give?.solana?.count || 0);
 
     return {
       // Trader

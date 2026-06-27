@@ -56,6 +56,24 @@ module.exports = (sequelize, DataTypes) => {
         return value ? parseFloat(value) : null;
       }
     },
+    monthlyPriceSol: {
+      type: DataTypes.DECIMAL(10, 4),
+      allowNull: true,
+      comment: 'Monthly price in SOL',
+      get() {
+        const value = this.getDataValue('monthlyPriceSol');
+        return value ? parseFloat(value) : null;
+      }
+    },
+    yearlyPriceSol: {
+      type: DataTypes.DECIMAL(10, 4),
+      allowNull: true,
+      comment: 'Yearly price in SOL (discounted)',
+      get() {
+        const value = this.getDataValue('yearlyPriceSol');
+        return value ? parseFloat(value) : null;
+      }
+    },
     features: {
       type: DataTypes.JSON,
       allowNull: false,

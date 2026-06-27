@@ -2,6 +2,8 @@ const { AdminWallet } = require('../models');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const xrplConfig = require('../config/xrpl');
+const solanaConfig = require('../config/solana');
 
 /**
  * Create a new admin wallet
@@ -251,12 +253,31 @@ const getPlatformFeeConfig = async (req, res, next) => {
       throw new ApiError(400, 'Network must be xrpl or solana');
     }
 
-    const wallet = await AdminWallet.findOne({
-      where: { type: 'subscriptions', network, isActive: true }
-    });
+    let feeWalletAddress = null;
+    let feeWalletLabel = 'Platform Fee Wallet';
 
-    if (!wallet) {
-      throw new ApiError(404, `No active subscription wallet configured for ${network}`);
+    if (network === 'xrpl') {
+      // Use the admin wallet from ADMIN_WALLET_SECRET_NUMBERS / ADMIN_WALLET_SEED in .env
+      try {
+        const adminWallet = xrplConfig.getAdminWallet();
+        feeWalletAddress = adminWallet.address;
+        feeWalletLabel = 'Platform Admin Wallet (XRP)';
+      } catch (e) {
+        throw new ApiError(404, 'XRPL admin wallet not configured in .env');
+      }
+    } else {
+      // Solana: use the admin keypair from SOLANA_ADMIN_SECRET_KEY
+      try {
+        const adminKp = solanaConfig.getAdminKeypair();
+        if (adminKp) {
+          feeWalletAddress = adminKp.publicKey.toBase58();
+          feeWalletLabel = 'Platform Admin Wallet (SOL)';
+        }
+      } catch (e) {}
+
+      if (!feeWalletAddress) {
+        throw new ApiError(404, 'Solana admin wallet not configured in .env');
+      }
     }
 
     const fee = PLATFORM_FEES[network];
@@ -264,8 +285,8 @@ const getPlatformFeeConfig = async (req, res, next) => {
     res.status(200).json(
       new ApiResponse(200, {
         network,
-        walletAddress: wallet.walletAddress,
-        label: wallet.label || 'Platform Fee Wallet',
+        walletAddress: feeWalletAddress,
+        label: feeWalletLabel,
         fee: {
           amount: fee.amount,
           currency: fee.currency,

@@ -245,6 +245,13 @@ const confirmTrustline = async (req, res, next) => {
 
     await memeCoin.update({ status: 'trust_set', trustSetTxHash });
 
+    // Ensure DefaultRipple is enabled on issuer (required for AMM/DEX)
+    try {
+      await xrplService.enableDefaultRipple();
+    } catch (e) {
+      logger.warn('Could not enable DefaultRipple:', e.message);
+    }
+
     try {
       const issueResult = await xrplService.issueTokenFromAdmin({
         destinationAddress: memeCoin.creatorWalletAddress,
@@ -2201,15 +2208,17 @@ const confirmAMMCreate = async (req, res, next) => {
     // Verify the AMMCreate transaction on-chain
     let ammInfo = null;
     try {
-      const client = xrplConfig.getClient();
+      const client = await xrplConfig.getClientAsync();
       const txResponse = await client.request({
         command: 'tx',
         transaction: ammCreateTxHash
       });
 
       const tx = txResponse.result;
+      logger.info(`AMMCreate tx type: ${tx.TransactionType}, result: ${tx.meta?.TransactionResult || tx.metaData?.TransactionResult}`);
+
       if (tx.TransactionType !== 'AMMCreate') {
-        throw new ApiError(400, 'Transaction is not an AMMCreate');
+        throw new ApiError(400, `Transaction is not an AMMCreate. Got: ${tx.TransactionType}`);
       }
 
       const meta = tx.meta || tx.metaData;
@@ -2220,8 +2229,8 @@ const confirmAMMCreate = async (req, res, next) => {
       ammInfo = await xrplService.getAMMInfo(resolvedCurrencyHex, issuerWalletAddress);
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      logger.error('Error verifying AMMCreate:', error);
-      throw new ApiError(400, 'Could not verify the AMMCreate transaction on XRPL');
+      logger.error('Error verifying AMMCreate:', error.message || error);
+      throw new ApiError(400, `Could not verify the AMMCreate transaction on XRPL: ${error.message || 'Unknown error'}`);
     }
 
     if (!ammInfo) {
