@@ -1,4 +1,4 @@
-const { MemeCoin, MemeCoinPool, MemeCoinTrade, User, sequelize } = require('../models');
+const { MemeCoin, MemeCoinPool, MemeCoinTrade, MemeCoinLock, User, sequelize } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const solanaService = require('../services/solanaService');
@@ -346,11 +346,14 @@ const getMemeCoin = async (req, res, next) => {
       throw new ApiError(404, 'Meme coin not found');
     }
 
-    // Latest price from most recent trade
-    const latestTrade = await MemeCoinTrade.findOne({
-      where: { memeCoinId: id },
-      order: [['tradedAt', 'DESC']]
-    });
+    // Latest price from most recent trade + lock status
+    const [latestTrade, locks] = await Promise.all([
+      MemeCoinTrade.findOne({
+        where: { memeCoinId: id },
+        order: [['tradedAt', 'DESC']]
+      }),
+      MemeCoinLock.findAll({ where: { memeCoinId: id }, order: [['lockedAt', 'DESC']] })
+    ]);
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -361,7 +364,9 @@ const getMemeCoin = async (req, res, next) => {
           priceUsd: latestTrade.priceUsd,
           pairToken: latestTrade.pairToken,
           tradedAt: latestTrade.tradedAt
-        } : null
+        } : null,
+        locks,
+        lockStatus: summarizeLocks(locks)
       }, 'Meme coin retrieved successfully')
     );
   } catch (error) {
@@ -693,7 +698,7 @@ const getMyMemeCoins = async (req, res, next) => {
       }
     }));
 
-    // For Solana coins, hasPool = false for now (Raydium pools checked separately)
+    // Solana pool/lock status is surfaced via the /listed and /:id/locks endpoints
     allCoins.filter(c => c.network === 'solana').forEach(c => { c.hasPool = false; });
 
     res.status(200).json(
@@ -847,7 +852,7 @@ const getListedMemeCoins = async (req, res, next) => {
     const coinIds = memeCoins.map(c => c.id);
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const [latestTrades, recentTrades] = coinIds.length > 0 ? await Promise.all([
+    const [latestTrades, recentTrades, allLocks] = coinIds.length > 0 ? await Promise.all([
       MemeCoinTrade.findAll({
         attributes: ['memeCoinId', 'pricePerToken', 'priceUsd', 'pairToken', 'tradedAt'],
         where: { memeCoinId: { [Op.in]: coinIds } },
@@ -865,8 +870,12 @@ const getListedMemeCoins = async (req, res, next) => {
         },
         group: ['memeCoinId'],
         raw: true
+      }),
+      MemeCoinLock.findAll({
+        where: { memeCoinId: { [Op.in]: coinIds } },
+        order: [['lockedAt', 'DESC']]
       })
-    ]) : [[], []];
+    ]) : [[], [], []];
 
     const latestByCoin = {};
     for (const t of latestTrades) {
@@ -875,6 +884,10 @@ const getListedMemeCoins = async (req, res, next) => {
     const statsByCoin = {};
     for (const s of recentTrades) {
       statsByCoin[s.memeCoinId] = s;
+    }
+    const locksByCoin = {};
+    for (const l of allLocks) {
+      (locksByCoin[l.memeCoinId] = locksByCoin[l.memeCoinId] || []).push(l);
     }
 
     const enriched = memeCoins.map(c => {
@@ -892,7 +905,8 @@ const getListedMemeCoins = async (req, res, next) => {
         stats24h: {
           volumeUsd: st ? parseFloat(st.volume24h) || 0 : 0,
           trades: st ? parseInt(st.trades24h) || 0 : 0
-        }
+        },
+        lockStatus: summarizeLocks(locksByCoin[c.id] || [])
       };
     });
 
@@ -1514,42 +1528,17 @@ const getPriceHistory = async (req, res, next) => {
           .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
           .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
 
-        // Get current price + token info from on-chain
-        let currentSolPrice = 0;
+        // Current price (SOL-denominated, to match the Helius trade candles) from Jupiter
+        let currentSolPrice = await solanaService.getJupiterPrice(mintAddress, solanaService.SOL_MINT);
         let solTokenSymbol = mintAddress.slice(0, 8);
-        let poolDetails = null;
-
-        // 1. Try DAS for price (works for established tokens on Jupiter etc.)
         try {
           const asset = await solanaService.getAsset(mintAddress);
           solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
-          currentSolPrice = asset?.token_info?.price_info?.price_per_token || 0;
         } catch (e) {}
 
-        // 2. If DAS has no price, read Raydium pool balances on-chain
-        if (currentSolPrice === 0) {
-          // Find pool address — check registered pools in DB, or from query param
-          const poolAddr = req.query.poolAddress;
-          if (poolAddr) {
-            poolDetails = await solanaService.getRaydiumPoolPrice(poolAddr, mintAddress);
-            if (poolDetails && poolDetails.price > 0) {
-              currentSolPrice = poolDetails.price;
-            }
-          }
-
-          // If no poolAddress in query, try to find from DB (minimal DB use — just pool address)
-          if (currentSolPrice === 0) {
-            const memeCoinRecord = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' }, attributes: ['id'] });
-            if (memeCoinRecord) {
-              const pool = await MemeCoinPool.findOne({ where: { memeCoinId: memeCoinRecord.id, status: 'active' }, attributes: ['poolAddress'] });
-              if (pool) {
-                poolDetails = await solanaService.getRaydiumPoolPrice(pool.poolAddress, mintAddress);
-                if (poolDetails && poolDetails.price > 0) {
-                  currentSolPrice = poolDetails.price;
-                }
-              }
-            }
-          }
+        // Fall back to the most recent trade price if Jupiter has no quote yet
+        if (currentSolPrice === 0 && trades.length > 0) {
+          currentSolPrice = trades[0].pricePerToken;
         }
 
         if (trades.length === 0) {
@@ -1583,7 +1572,7 @@ const getPriceHistory = async (req, res, next) => {
               to: toDate,
               totalCandles: candles.length,
               candles
-            }, currentSolPrice > 0 ? 'Price from pool — no trades yet' : 'No price data available')
+            }, currentSolPrice > 0 ? 'Price from Jupiter — no trades yet' : 'No price data available')
           );
         }
 
@@ -1612,8 +1601,8 @@ const getPriceHistory = async (req, res, next) => {
             };
           });
 
-        // Use currentSolPrice from earlier if trades updated it
-        const latestTradePrice = trades.length > 0 ? trades[0].pricePerToken : currentSolPrice;
+        // Prefer the live Jupiter price; fall back to the most recent trade
+        const latestTradePrice = currentSolPrice > 0 ? currentSolPrice : trades[0].pricePerToken;
         const stats = await compute24hStats(trades, latestTradePrice);
 
         return res.status(200).json(
@@ -1631,33 +1620,13 @@ const getPriceHistory = async (req, res, next) => {
         );
       } catch (err) {
         logger.warn(`Helius price history fetch failed for ${mintAddress}: ${err.message}`);
-        // Even on Helius error, return what we can from on-chain
+        // Even on Helius error, return what we can: Jupiter price (SOL-denominated)
         let solTokenSymbolFb = mintAddress.slice(0, 8);
-        let fbPrice = 0;
+        let fbPrice = await solanaService.getJupiterPrice(mintAddress, solanaService.SOL_MINT);
         try {
           const asset = await solanaService.getAsset(mintAddress);
           solTokenSymbolFb = asset?.content?.metadata?.symbol || solTokenSymbolFb;
-          fbPrice = asset?.token_info?.price_info?.price_per_token || 0;
         } catch (e2) {}
-
-        // Try Raydium pool on-chain if DAS has no price
-        if (fbPrice === 0) {
-          const poolAddr = req.query.poolAddress;
-          if (poolAddr) {
-            const pd = await solanaService.getRaydiumPoolPrice(poolAddr, mintAddress);
-            if (pd && pd.price > 0) fbPrice = pd.price;
-          }
-          if (fbPrice === 0) {
-            const mc = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' }, attributes: ['id'] });
-            if (mc) {
-              const pl = await MemeCoinPool.findOne({ where: { memeCoinId: mc.id, status: 'active' }, attributes: ['poolAddress'] });
-              if (pl) {
-                const pd = await solanaService.getRaydiumPoolPrice(pl.poolAddress, mintAddress);
-                if (pd && pd.price > 0) fbPrice = pd.price;
-              }
-            }
-          }
-        }
 
         return res.status(200).json(
           new ApiResponse(200, {
@@ -2379,13 +2348,15 @@ const getAMMInfo = async (req, res, next) => {
   }
 };
 
-// ==================== SOLANA RAYDIUM POOL ====================
+// ==================== SOLANA POOL (Jupiter-routed) ====================
 
 /**
- * Register a Raydium pool after the frontend creates it on-chain.
- * Frontend creates the pool via Raydium SDK, then calls this to save the record.
+ * Register a Solana liquidity pool/market after the frontend creates it on-chain.
+ * With Jupiter as the routing layer, the underlying pool can live on any DEX
+ * (Meteora, Raydium, Orca, ...); the frontend creates it and registers it here so
+ * the coin shows as "listed" and trades can be associated with it.
  */
-const registerRaydiumPool = async (req, res, next) => {
+const registerSolanaPool = async (req, res, next) => {
   try {
     const {
       mintAddress,
@@ -2402,7 +2373,7 @@ const registerRaydiumPool = async (req, res, next) => {
 
     if (!mintAddress) throw new ApiError(400, 'mintAddress is required');
     if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
-    if (!poolAddress) throw new ApiError(400, 'poolAddress is required (Raydium pool ID)');
+    if (!poolAddress) throw new ApiError(400, 'poolAddress is required (pool/market address)');
 
     if (!solanaService.isValidAddress(mintAddress)) throw new ApiError(400, 'Invalid mint address');
 
@@ -2439,7 +2410,7 @@ const registerRaydiumPool = async (req, res, next) => {
         creatorWalletAddress: walletAddress,
         status: 'minted',
         logo,
-        metadata: { createdVia: 'raydium-pool-register' }
+        metadata: { createdVia: 'solana-pool-register' }
       });
     }
 
@@ -2465,17 +2436,17 @@ const registerRaydiumPool = async (req, res, next) => {
       poolAddress,
       poolId: poolId || null,
       pairToken,
-      pairTokenAddress: pairTokenAddress || null,
+      pairTokenAddress: pairTokenAddress || solanaService.resolvePairMint(pairToken),
       initialBaseAmount: initialBaseAmount || null,
       initialPairAmount: initialPairAmount || null,
       initialPrice,
       createTxHash: createTxHash || null,
       providerWalletAddress: walletAddress,
       status: 'active',
-      metadata: metadata || null
+      metadata: { router: 'jupiter', ...(metadata || {}) }
     });
 
-    logger.info(`Raydium pool registered: ${memeCoin.tokenSymbol}/${pairToken} pool=${poolAddress} by ${walletAddress}`);
+    logger.info(`Solana pool registered: ${memeCoin.tokenSymbol}/${pairToken} pool=${poolAddress} by ${walletAddress}`);
 
     res.status(201).json(
       new ApiResponse(201, {
@@ -2486,17 +2457,138 @@ const registerRaydiumPool = async (req, res, next) => {
           tokenSymbol: memeCoin.tokenSymbol,
           mintAddress: memeCoin.mintAddress
         }
-      }, 'Raydium pool registered successfully')
+      }, 'Solana pool registered successfully')
     );
   } catch (error) {
     next(error);
   }
 };
 
+// ==================== SOLANA SWAP (Jupiter Aggregator) ====================
+
 /**
- * Record a Raydium swap (buy/sell). Frontend calls this after a swap completes.
+ * Map a buy/sell intent to Jupiter input/output mints.
+ * buy  = pairToken -> meme coin
+ * sell = meme coin -> pairToken
  */
-const recordRaydiumSwap = async (req, res, next) => {
+const resolveSwapMints = (type, mintAddress, pairToken) => {
+  const pairMint = solanaService.resolvePairMint(pairToken || 'SOL');
+  if (type === 'buy') return { inputMint: pairMint, outputMint: mintAddress };
+  return { inputMint: mintAddress, outputMint: pairMint };
+};
+
+/**
+ * Get a Jupiter swap quote (price estimate) for a buy/sell before swapping.
+ * `amount` is in BASE units of the INPUT token (lamports for SOL, raw token units otherwise).
+ */
+const getJupiterQuote = async (req, res, next) => {
+  try {
+    const { mintAddress, type, pairToken = 'SOL', amount, slippageBps = 100, inputMint, outputMint, swapMode = 'ExactIn' } = req.body;
+
+    let inMint = inputMint;
+    let outMint = outputMint;
+    if (!inMint || !outMint) {
+      if (!mintAddress) throw new ApiError(400, 'mintAddress (or inputMint + outputMint) is required');
+      if (!type || !['buy', 'sell'].includes(type)) throw new ApiError(400, 'type must be "buy" or "sell"');
+      ({ inputMint: inMint, outputMint: outMint } = resolveSwapMints(type, mintAddress, pairToken));
+    }
+    if (!amount || parseFloat(amount) <= 0) throw new ApiError(400, 'amount is required (in base units of the input token)');
+
+    const quote = await solanaService.getJupiterQuote({
+      inputMint: inMint,
+      outputMint: outMint,
+      amount,
+      slippageBps: parseInt(slippageBps),
+      swapMode
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, { inputMint: inMint, outputMint: outMint, quote }, 'Jupiter quote retrieved')
+    );
+  } catch (error) {
+    if (error.response) {
+      return next(new ApiError(400, `Jupiter quote failed: ${error.response.data?.error || error.message}`));
+    }
+    next(error);
+  }
+};
+
+/**
+ * Build an unsigned Jupiter swap transaction (base64) for the frontend wallet to
+ * sign and send. The frontend signs Solana transactions — the backend only assembles
+ * the route + serialized transaction.
+ *
+ * Provide either a prior `quoteResponse`, or { mintAddress, type, pairToken, amount }
+ * to fetch a fresh quote first.
+ */
+const buildJupiterSwap = async (req, res, next) => {
+  try {
+    const {
+      walletAddress,
+      mintAddress,
+      type,
+      pairToken = 'SOL',
+      amount,
+      slippageBps = 100,
+      quoteResponse,
+      inputMint,
+      outputMint
+    } = req.body;
+
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required (the swapping wallet)');
+    if (!solanaService.isValidAddress(walletAddress)) throw new ApiError(400, 'Invalid Solana wallet address');
+
+    let quote = quoteResponse;
+    if (!quote) {
+      let inMint = inputMint;
+      let outMint = outputMint;
+      if (!inMint || !outMint) {
+        if (!mintAddress) throw new ApiError(400, 'mintAddress (or inputMint + outputMint, or quoteResponse) is required');
+        if (!type || !['buy', 'sell'].includes(type)) throw new ApiError(400, 'type must be "buy" or "sell"');
+        ({ inputMint: inMint, outputMint: outMint } = resolveSwapMints(type, mintAddress, pairToken));
+      }
+      if (!amount || parseFloat(amount) <= 0) {
+        throw new ApiError(400, 'amount is required (base units of the input token) when quoteResponse is not provided');
+      }
+      quote = await solanaService.getJupiterQuote({
+        inputMint: inMint,
+        outputMint: outMint,
+        amount,
+        slippageBps: parseInt(slippageBps)
+      });
+    }
+
+    const swap = await solanaService.buildJupiterSwapTransaction({
+      quoteResponse: quote,
+      userPublicKey: walletAddress
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        swapTransaction: swap.swapTransaction, // base64 — frontend signs & sends
+        lastValidBlockHeight: swap.lastValidBlockHeight,
+        prioritizationFeeLamports: swap.prioritizationFeeLamports,
+        quote,
+        instructions: {
+          action: 'Deserialize swapTransaction (base64 → VersionedTransaction), sign with the wallet, and send it',
+          nextStep: 'After the swap confirms, call POST /api/v1/memecoins/solana/swap/record to record it for price history',
+          nextEndpoint: '/api/v1/memecoins/solana/swap/record'
+        }
+      }, 'Jupiter swap transaction built. Sign and send from the wallet.')
+    );
+  } catch (error) {
+    if (error.response) {
+      return next(new ApiError(400, `Jupiter swap build failed: ${error.response.data?.error || error.message}`));
+    }
+    next(error);
+  }
+};
+
+/**
+ * Record a Solana swap (buy/sell) after it completes. Frontend calls this with the
+ * confirmed Jupiter swap signature so price history + volume populate.
+ */
+const recordSolanaSwap = async (req, res, next) => {
   try {
     const {
       mintAddress,
@@ -2568,7 +2660,7 @@ const recordRaydiumSwap = async (req, res, next) => {
       tradedAt: new Date()
     });
 
-    logger.info(`Raydium swap recorded: ${type} ${tokenAmount} ${memeCoin.tokenSymbol} for ${pairAmount} ${pairToken} (tx: ${txHash})`);
+    logger.info(`Solana swap recorded: ${type} ${tokenAmount} ${memeCoin.tokenSymbol} for ${pairAmount} ${pairToken} (tx: ${txHash})`);
 
     res.status(201).json(
       new ApiResponse(201, {
@@ -2582,6 +2674,420 @@ const recordRaydiumSwap = async (req, res, next) => {
           volumeUsd
         }
       }, `${type === 'buy' ? 'Buy' : 'Sell'} recorded successfully`)
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==================== LIQUIDITY LOCKS ====================
+
+/**
+ * Summarize a set of locks into a compact status object for UI badges.
+ */
+const summarizeLocks = (locks) => {
+  const active = locks.filter(l => l.status === 'active');
+  const totalLocked = active.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0);
+  let nextUnlockAt = null;
+  let hasPermanent = false;
+  for (const l of active) {
+    if (!l.unlockAt) { hasPermanent = true; continue; }
+    const t = new Date(l.unlockAt);
+    if (!nextUnlockAt || t < nextUnlockAt) nextUnlockAt = t;
+  }
+  return {
+    isLocked: active.length > 0,
+    activeLocks: active.length,
+    totalLockedAmount: totalLocked,
+    permanentLock: hasPermanent,
+    nextUnlockAt: nextUnlockAt ? nextUnlockAt.toISOString() : null
+  };
+};
+
+/**
+ * Record a liquidity/token lock created on-chain by the frontend.
+ *
+ * Solana: the frontend locks LP/tokens via Jupiter Lock (lock.jup.ag) — or burns
+ * them — then posts the lock details here. The backend verifies the tx on-chain and
+ * stores the lock so the coin shows a "liquidity locked" badge with an unlock countdown.
+ *
+ * For XRPL custodial LP locks use /xrpl/lock/build + /xrpl/lock/confirm instead.
+ */
+const registerLock = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const {
+      provider,
+      lockType = 'liquidity',
+      lockAddress,
+      assetMint,
+      assetCurrency,
+      assetIssuer,
+      amount,
+      ownerWalletAddress,
+      recipientWalletAddress,
+      lockTxHash,
+      unlockAt,
+      metadata
+    } = req.body;
+
+    const memeCoin = await MemeCoin.findByPk(id);
+    if (!memeCoin) throw new ApiError(404, 'Meme coin not found');
+
+    if (!ownerWalletAddress) throw new ApiError(400, 'ownerWalletAddress is required');
+    if (!amount || parseFloat(amount) <= 0) throw new ApiError(400, 'amount is required (locked amount > 0)');
+    if (!lockTxHash) throw new ApiError(400, 'lockTxHash is required (the on-chain lock transaction)');
+
+    const network = memeCoin.network;
+    const resolvedProvider = provider || (network === 'solana' ? 'jupiter_lock' : 'xrpl_custodial');
+
+    // Idempotency on the lock tx
+    const existing = await MemeCoinLock.findOne({ where: { lockTxHash } });
+    if (existing) {
+      return res.status(200).json(new ApiResponse(200, existing, 'Lock already recorded'));
+    }
+
+    // Verify the lock tx on-chain
+    if (network === 'solana') {
+      const verification = await solanaService.verifyTransaction(lockTxHash);
+      if (!verification.verified) {
+        throw new ApiError(400, `Lock tx verification failed: ${verification.error}`);
+      }
+    } else {
+      try {
+        const client = await xrplConfig.getClientAsync();
+        const txResponse = await client.request({ command: 'tx', transaction: lockTxHash });
+        const meta = txResponse.result.meta || txResponse.result.metaData;
+        if (meta && meta.TransactionResult !== 'tesSUCCESS') {
+          throw new ApiError(400, `Lock tx failed on XRPL: ${meta.TransactionResult}`);
+        }
+      } catch (e) {
+        if (e instanceof ApiError) throw e;
+        throw new ApiError(400, 'Could not verify the lock transaction on XRPL');
+      }
+    }
+
+    const lock = await MemeCoinLock.create({
+      memeCoinId: memeCoin.id,
+      network,
+      lockType,
+      provider: resolvedProvider,
+      status: 'active',
+      lockAddress: lockAddress || null,
+      assetMint: assetMint || (network === 'solana' ? (memeCoin.mintAddress || null) : null),
+      assetCurrency: assetCurrency || null,
+      assetIssuer: assetIssuer || null,
+      amount,
+      ownerWalletAddress,
+      recipientWalletAddress: recipientWalletAddress || ownerWalletAddress,
+      lockTxHash,
+      lockedAt: new Date(),
+      unlockAt: unlockAt ? new Date(unlockAt) : null,
+      metadata: metadata || null
+    });
+
+    logger.info(`Lock recorded: ${memeCoin.tokenSymbol} (${network}) ${amount} via ${resolvedProvider}, tx: ${lockTxHash}`);
+
+    res.status(201).json(new ApiResponse(201, lock, 'Liquidity lock recorded successfully'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get all locks for a meme coin (with a summary for UI badges).
+ */
+const getMemeCoinLocks = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const memeCoin = await MemeCoin.findByPk(id);
+    if (!memeCoin) throw new ApiError(404, 'Meme coin not found');
+
+    const locks = await MemeCoinLock.findAll({
+      where: { memeCoinId: id },
+      order: [['lockedAt', 'DESC']]
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, { locks, summary: summarizeLocks(locks) }, 'Locks retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Query locks by on-chain identifiers (mintAddress, or currencyHex+issuer) or owner.
+ */
+const getLocks = async (req, res, next) => {
+  try {
+    const { mintAddress, currencyHex, issuerWalletAddress, tokenSymbol, ownerWalletAddress, status, network } = req.query;
+
+    const where = {};
+    if (status) where.status = status;
+    if (network) where.network = network;
+    if (ownerWalletAddress) where.ownerWalletAddress = ownerWalletAddress;
+
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    let memeCoin = null;
+    if (mintAddress) {
+      memeCoin = await MemeCoin.findOne({ where: { mintAddress, network: 'solana' } });
+    } else if (resolvedHex && issuerWalletAddress) {
+      memeCoin = await MemeCoin.findOne({ where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' } });
+    }
+    if (memeCoin) where.memeCoinId = memeCoin.id;
+
+    const locks = await MemeCoinLock.findAll({ where, order: [['lockedAt', 'DESC']] });
+
+    res.status(200).json(
+      new ApiResponse(200, { locks, summary: summarizeLocks(locks) }, 'Locks retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==================== XRPL CUSTODIAL LP LOCK ====================
+
+/**
+ * Step 1: Build a Payment that sends the creator's AMM LP tokens to the platform's
+ * custodial locker (admin) wallet. Returned unsigned for Xaman signing.
+ */
+const buildXrplLpLock = async (req, res, next) => {
+  try {
+    const { walletAddress, currencyHex, issuerWalletAddress, tokenSymbol, lpAmount, unlockAt } = req.body;
+
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required (the LP provider)');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
+
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
+
+    // Find the AMM pool to get the LP token identity
+    const ammInfo = await xrplService.getAMMInfo(resolvedHex, issuerWalletAddress);
+    if (!ammInfo || !ammInfo.amm?.lp_token) {
+      throw new ApiError(400, 'No AMM pool found for this token — create the liquidity pool first');
+    }
+
+    const lpToken = ammInfo.amm.lp_token; // { currency, issuer, value }
+    const lpCurrency = lpToken.currency;
+    const lpIssuer = lpToken.issuer; // the AMM account
+
+    // Default to locking the creator's full LP balance
+    const creatorLpBalance = await xrplService.getTokenBalance({
+      account: walletAddress,
+      currencyHex: lpCurrency,
+      issuerAddress: lpIssuer
+    });
+    const lpBal = Math.abs(parseFloat(creatorLpBalance) || 0);
+
+    let amountToLock = lpAmount ? lpAmount.toString() : lpBal.toString();
+    if (!amountToLock || parseFloat(amountToLock) <= 0) {
+      throw new ApiError(400, 'No LP tokens available to lock for this wallet');
+    }
+    if (parseFloat(amountToLock) > lpBal) {
+      throw new ApiError(400, `Insufficient LP balance. Requested ${amountToLock}, available ${lpBal}`);
+    }
+
+    // Ensure the locker (admin) wallet can custody this LP token
+    const lockerAddress = xrplConfig.getAdminWallet().address;
+    try {
+      await xrplService.setTrustLineFromAdmin({ currencyHex: lpCurrency, issuerAddress: lpIssuer });
+    } catch (e) {
+      logger.error('Could not set locker trust line for LP token:', e.message);
+      throw new ApiError(500, 'Could not prepare the locker wallet to custody LP tokens. Please try again.');
+    }
+
+    // Build the Payment for the creator to sign (LP tokens → locker)
+    const lockTx = xrplService.buildTokenPaymentPayload({
+      account: walletAddress,
+      destination: lockerAddress,
+      currencyHex: lpCurrency,
+      issuerAddress: lpIssuer,
+      amount: amountToLock
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        lockerAddress,
+        lpToken: { currency: lpCurrency, issuer: lpIssuer },
+        amount: amountToLock,
+        unlockAt: unlockAt || null,
+        transaction: lockTx,
+        instructions: {
+          step: 1,
+          action: 'Sign this Payment with Xaman to send your AMM LP tokens to the lock wallet',
+          nextStep: 'After signing, call POST /api/v1/memecoins/xrpl/lock/confirm with { lockTxHash, walletAddress, currencyHex, issuerWalletAddress, unlockAt }',
+          nextEndpoint: '/api/v1/memecoins/xrpl/lock/confirm',
+          note: unlockAt ? `Liquidity will be held until ${unlockAt}` : 'Omit unlockAt for a permanent lock'
+        }
+      }, 'LP lock transaction ready. Sign with Xaman to lock your liquidity.')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Step 2: Confirm the LP lock Payment. Verifies the LP tokens reached the locker and
+ * records the lock with its unlock date.
+ */
+const confirmXrplLpLock = async (req, res, next) => {
+  try {
+    const { lockTxHash, walletAddress, currencyHex, issuerWalletAddress, tokenSymbol, unlockAt } = req.body;
+
+    if (!lockTxHash) throw new ApiError(400, 'lockTxHash is required');
+    if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
+    if (!issuerWalletAddress) throw new ApiError(400, 'issuerWalletAddress is required');
+
+    const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
+    if (!resolvedHex) throw new ApiError(400, 'currencyHex or tokenSymbol is required');
+
+    // Idempotency
+    const existing = await MemeCoinLock.findOne({ where: { lockTxHash } });
+    if (existing) {
+      return res.status(200).json(new ApiResponse(200, existing, 'Lock already recorded'));
+    }
+
+    const lockerAddress = xrplConfig.getAdminWallet().address;
+
+    // Verify the lock payment on-chain
+    const client = await xrplConfig.getClientAsync();
+    const txResponse = await client.request({ command: 'tx', transaction: lockTxHash });
+    const tx = txResponse.result;
+
+    if (tx.TransactionType !== 'Payment') {
+      throw new ApiError(400, 'Lock transaction is not a Payment');
+    }
+    const meta = tx.meta || tx.metaData;
+    if (meta && meta.TransactionResult !== 'tesSUCCESS') {
+      throw new ApiError(400, `Lock transaction failed: ${meta.TransactionResult}`);
+    }
+    if (tx.Account !== walletAddress) {
+      throw new ApiError(400, 'Lock transaction was not signed by the provided wallet');
+    }
+    if (tx.Destination !== lockerAddress) {
+      throw new ApiError(400, 'Lock transaction destination is not the platform lock wallet');
+    }
+
+    // Parse the delivered LP amount + LP token identity
+    let lpCurrency = null;
+    let lpIssuer = null;
+    let lockedAmount = '0';
+    const delivered = (meta && meta.delivered_amount) || tx.Amount;
+    if (delivered && typeof delivered === 'object') {
+      lpCurrency = delivered.currency;
+      lpIssuer = delivered.issuer;
+      lockedAmount = delivered.value;
+    }
+    if (!lpCurrency || parseFloat(lockedAmount) <= 0) {
+      throw new ApiError(400, 'Could not determine the locked LP amount from the transaction');
+    }
+
+    // Find or create the memecoin record for association
+    let memeCoin = await MemeCoin.findOne({ where: { currencyHex: resolvedHex, issuerWalletAddress, network: 'xrpl' } });
+    if (!memeCoin) {
+      let sym = resolvedHex;
+      try { sym = Buffer.from(resolvedHex, 'hex').toString('utf-8').replace(/\0/g, ''); } catch (e) {}
+      memeCoin = await MemeCoin.create({
+        tokenName: tokenSymbol || sym,
+        tokenSymbol: tokenSymbol || sym,
+        network: 'xrpl',
+        currencyHex: resolvedHex,
+        issuerWalletAddress,
+        creatorWalletAddress: walletAddress,
+        status: 'issued',
+        metadata: { createdVia: 'lock-confirm' }
+      });
+    }
+
+    const lock = await MemeCoinLock.create({
+      memeCoinId: memeCoin.id,
+      network: 'xrpl',
+      lockType: 'liquidity',
+      provider: 'xrpl_custodial',
+      status: 'active',
+      lockAddress: lockerAddress,
+      assetCurrency: lpCurrency,
+      assetIssuer: lpIssuer,
+      amount: lockedAmount,
+      ownerWalletAddress: walletAddress,
+      recipientWalletAddress: walletAddress,
+      lockTxHash,
+      lockedAt: new Date(),
+      unlockAt: unlockAt ? new Date(unlockAt) : null,
+      metadata: { lpToken: { currency: lpCurrency, issuer: lpIssuer } }
+    });
+
+    logger.info(`XRPL LP lock confirmed: ${memeCoin.tokenSymbol} ${lockedAmount} LP held by ${lockerAddress} (tx: ${lockTxHash})`);
+
+    res.status(201).json(
+      new ApiResponse(201, {
+        lock,
+        summary: {
+          lockedAmount,
+          lpToken: { currency: lpCurrency, issuer: lpIssuer },
+          lockerAddress,
+          unlockAt: unlockAt || null
+        }
+      }, 'Liquidity locked successfully')
+    );
+  } catch (error) {
+    if (error instanceof ApiError) return next(error);
+    logger.error('Error confirming XRPL LP lock:', error.message || error);
+    next(new ApiError(400, `Could not verify the lock transaction: ${error.message || 'Unknown error'}`));
+  }
+};
+
+/**
+ * Release a custodial XRPL LP lock after its unlock date. The locker (admin) wallet
+ * sends the LP tokens back to the original owner. The recipient is always the recorded
+ * owner — it cannot be overridden by the caller.
+ */
+const releaseXrplLpLock = async (req, res, next) => {
+  try {
+    const { lockId } = req.body;
+    if (!lockId) throw new ApiError(400, 'lockId is required');
+
+    const lock = await MemeCoinLock.findByPk(lockId);
+    if (!lock) throw new ApiError(404, 'Lock not found');
+    if (lock.network !== 'xrpl' || lock.provider !== 'xrpl_custodial') {
+      throw new ApiError(400, 'This endpoint only releases XRPL custodial LP locks');
+    }
+    if (lock.status !== 'active') {
+      throw new ApiError(400, `Lock is not active (status: ${lock.status})`);
+    }
+    if (!lock.unlockAt) {
+      throw new ApiError(400, 'This is a permanent lock and cannot be released');
+    }
+    if (new Date() < new Date(lock.unlockAt)) {
+      throw new ApiError(400, `Lock is still active until ${new Date(lock.unlockAt).toISOString()}`);
+    }
+
+    const recipient = lock.recipientWalletAddress || lock.ownerWalletAddress;
+
+    // Admin (locker) sends the LP tokens back to the owner
+    const result = await xrplService.sendTokenFromAdmin({
+      destinationAddress: recipient,
+      currencyHex: lock.assetCurrency,
+      issuerAddress: lock.assetIssuer,
+      amount: lock.amount
+    });
+
+    await lock.update({
+      status: 'released',
+      unlockTxHash: result.result.hash,
+      metadata: { ...(lock.metadata || {}), releasedAt: new Date().toISOString() }
+    });
+
+    logger.info(`XRPL LP lock released: lock=${lockId} ${lock.amount} LP → ${recipient} (tx: ${result.result.hash})`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        lock,
+        releaseTxHash: result.result.hash,
+        recipient
+      }, 'Liquidity unlocked and returned successfully')
     );
   } catch (error) {
     next(error);
@@ -2607,6 +3113,16 @@ module.exports = {
   buildAMMCreate,
   confirmAMMCreate,
   getAMMInfo,
-  registerRaydiumPool,
-  recordRaydiumSwap
+  // Solana (Jupiter)
+  registerSolanaPool,
+  getJupiterQuote,
+  buildJupiterSwap,
+  recordSolanaSwap,
+  // Liquidity locks
+  registerLock,
+  getMemeCoinLocks,
+  getLocks,
+  buildXrplLpLock,
+  confirmXrplLpLock,
+  releaseXrplLpLock
 };

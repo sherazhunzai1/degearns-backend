@@ -42,6 +42,7 @@ const ReferralAuditLog = require('./ReferralAuditLog')(sequelize, DataTypes);
 const MemeCoin = require('./MemeCoin')(sequelize, DataTypes);
 const MemeCoinPool = require('./MemeCoinPool')(sequelize, DataTypes);
 const MemeCoinTrade = require('./MemeCoinTrade')(sequelize, DataTypes);
+const MemeCoinLock = require('./MemeCoinLock')(sequelize, DataTypes);
 const UserWallet = require('./UserWallet')(sequelize, DataTypes);
 const SolanaNftListing = require('./SolanaNftListing')(sequelize, DataTypes);
 const CollectionChatMessage = require('./CollectionChatMessage')(sequelize, DataTypes);
@@ -709,6 +710,16 @@ MemeCoinTrade.belongsTo(MemeCoinPool, {
   as: 'pool'
 });
 
+// MemeCoin and MemeCoinLock associations (liquidity locks)
+MemeCoin.hasMany(MemeCoinLock, {
+  foreignKey: 'memeCoinId',
+  as: 'locks'
+});
+MemeCoinLock.belongsTo(MemeCoin, {
+  foreignKey: 'memeCoinId',
+  as: 'memeCoin'
+});
+
 // Withdrawal and WithdrawalOwner associations
 Withdrawal.belongsTo(WithdrawalOwner, {
   foreignKey: 'initiatedBy',
@@ -829,6 +840,7 @@ module.exports = {
   MemeCoin,
   MemeCoinPool,
   MemeCoinTrade,
+  MemeCoinLock,
   UserWallet,
   SolanaNftListing,
   CollectionChatMessage,

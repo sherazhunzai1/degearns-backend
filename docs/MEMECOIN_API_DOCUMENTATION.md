@@ -2,7 +2,9 @@
 
 Base URL: `/api/v1/memecoins`
 
-This document covers the meme coin creation, liquidity pool listing, trading, and price history APIs for both Solana (Raydium) and XRPL (native AMM) networks.
+This document covers the meme coin creation, liquidity pool listing, trading, price history, and **liquidity-lock** APIs for both Solana (**Jupiter** aggregator) and XRPL (native AMM) networks.
+
+> **Update — Solana now uses Jupiter, not Raydium.** Buy/sell swaps are routed through the [Jupiter aggregator](https://dev.jup.ag/) (best price across every Solana DEX). The backend builds the unsigned swap transaction; the **frontend signs and sends it**. Liquidity locking is supported on both chains — **Jupiter Lock** on Solana and a **custodial LP lock** on XRPL. The old `/raydium/*` endpoints have been replaced by `/solana/*` and `/jupiter/*` (see §15–§16).
 
 ---
 
@@ -22,6 +24,8 @@ This document covers the meme coin creation, liquidity pool listing, trading, an
 12. [Get Price History (OHLC)](#12-get-price-history-ohlc)
 13. [Frontend Flows](#13-frontend-flows)
 14. [Error Codes](#14-error-codes)
+15. [Solana Swaps & Pricing (Jupiter)](#15-solana-swaps--pricing-jupiter)
+16. [Liquidity Locks](#16-liquidity-locks)
 
 ---
 
@@ -645,7 +649,7 @@ candleSeries.setData(data.candles.map(c => ({
 
 ## 13. Frontend Flows
 
-### Solana Meme Coin — Create → List → Trade
+### Solana Meme Coin — Create → List → Lock → Trade (Jupiter)
 
 ```
 Step 1: Create SPL token on-chain (frontend, Metaplex/SPL)
@@ -658,16 +662,26 @@ Step 3: Optionally confirm mint
         POST /memecoins/:id/confirm-mint { mintTxHash }
         ↓ verified on-chain
 
-Step 4: Create Raydium pool (frontend, Raydium SDK)
+Step 4: Create a liquidity pool on-chain (frontend — any DEX Jupiter routes through)
         ↓ get poolAddress + createTxHash
-Step 5: POST /memecoins/:id/pool
-        { poolAddress, pairToken: "SOL", initialBaseAmount, initialPairAmount, ... }
+Step 5: POST /memecoins/solana/pool
+        { mintAddress, walletAddress, poolAddress, pairToken: "SOL", initialBaseAmount, initialPairAmount, ... }
         ↓ coin is now "listed"
 
-Step 6: After every swap on Raydium:
-        POST /memecoins/:id/trade
-        { txHash, type: "buy"/"sell", tokenAmount, pairAmount, pairToken: "SOL", ... }
+Step 6 (recommended): Lock the LP via Jupiter Lock (frontend, lock.jup.ag)
+        ↓ get the lock account + lock tx signature
+        POST /memecoins/:id/lock
+        { provider: "jupiter_lock", lockAddress, assetMint, amount, unlockAt, ownerWalletAddress, lockTxHash }
+        ↓ coin shows a "liquidity locked" badge
+
+Step 7: Buy/Sell via Jupiter:
+        POST /memecoins/jupiter/swap   { walletAddress, mintAddress, type: "buy"/"sell", pairToken: "SOL", amount }
+        ↓ returns base64 swapTransaction → frontend signs & sends
+        POST /memecoins/solana/swap/record
+        { mintAddress, txHash, traderWalletAddress, type, tokenAmount, pairAmount, pairToken: "SOL" }
 ```
+
+> The generic `POST /memecoins/:id/pool` and `POST /memecoins/:id/trade` endpoints still work for both networks. The Solana-specific `/solana/pool` and `/solana/swap/record` add on-chain tx verification and Jupiter defaults.
 
 ### XRPL Meme Coin — Create → List → Trade
 
@@ -736,7 +750,190 @@ const { data } = await axios.get(`/memecoins/${coinId}/price-history?interval=1h
 |--------|------|--------|
 | **Token creation** | Backend builds TrustSet → user signs → backend issues | Frontend mints SPL → registers on backend |
 | **Identifier** | `currencyHex` + `issuerWalletAddress` | `mintAddress` |
-| **Pool type** | XRPL native AMM (`AMMCreate`) | Raydium liquidity pool |
+| **Pool type** | XRPL native AMM (`AMMCreate`) | Pool on any DEX, **traded via Jupiter** |
+| **Swaps** | `Payment` via AMM (backend builds, Xaman signs) | **Jupiter** swap tx (backend builds, wallet signs) |
 | **Pair token** | XRP | SOL, USDC, etc. |
 | **Status flow** | `pending` → `trust_set` → `issued` | `pending` → `minted` |
 | **Price in** | XRP → converted to USD | SOL → converted to USD |
+| **Liquidity lock** | Custodial LP lock (LP → admin locker wallet, time-released) | **Jupiter Lock** / burn (frontend), recorded + verified by backend |
+
+---
+
+## 15. Solana Swaps & Pricing (Jupiter)
+
+All amounts below are in **base units** of the input token (lamports for SOL — 1 SOL = 1,000,000,000; raw token units otherwise = uiAmount × 10^decimals).
+
+### 15.1 Register a Solana pool
+
+```
+POST /memecoins/solana/pool
+```
+
+Replaces the old `/raydium/pool`. Call after the frontend creates a liquidity pool on-chain so the coin shows as "listed".
+
+```json
+{
+  "mintAddress": "YourMint...",
+  "walletAddress": "Creator...",
+  "poolAddress": "PoolOrMarketAddress...",
+  "pairToken": "SOL",
+  "initialBaseAmount": 500000000,
+  "initialPairAmount": 10.5,
+  "createTxHash": "PoolCreateSig..."
+}
+```
+
+Returns the registered pool. `pairTokenAddress` defaults to the resolved mint (SOL/USDC/USDT). Idempotent on `poolAddress`.
+
+### 15.2 Get a swap quote
+
+```
+POST /memecoins/jupiter/quote
+```
+
+```json
+{ "mintAddress": "YourMint...", "type": "buy", "pairToken": "SOL", "amount": "100000000", "slippageBps": 100 }
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `mintAddress` | Yes* | The meme coin. *Or pass `inputMint` + `outputMint` directly. |
+| `type` | Yes* | `"buy"` (pair → coin) or `"sell"` (coin → pair). |
+| `pairToken` | No | `SOL` (default), `USDC`, `USDT`, or a mint address. |
+| `amount` | Yes | Base units of the **input** token. |
+| `slippageBps` | No | Default 100 (1%). |
+
+**Response (200):** `{ inputMint, outputMint, quote }` — pass `quote` straight into the swap build.
+
+### 15.3 Build a swap transaction (buy / sell)
+
+```
+POST /memecoins/jupiter/swap
+```
+
+```json
+{ "walletAddress": "Trader...", "mintAddress": "YourMint...", "type": "buy", "pairToken": "SOL", "amount": "100000000", "slippageBps": 100 }
+```
+
+Pass either the four convenience fields above (a fresh quote is fetched), or a prior `quoteResponse` from §15.2.
+
+**Response (200):**
+```json
+{
+  "data": {
+    "swapTransaction": "<base64 VersionedTransaction>",
+    "lastValidBlockHeight": 1234567,
+    "quote": { ... },
+    "instructions": { "nextEndpoint": "/api/v1/memecoins/solana/swap/record" }
+  }
+}
+```
+
+**Frontend:** deserialize the base64 → `VersionedTransaction`, sign with the wallet, send, confirm.
+
+### 15.4 Record a completed swap
+
+```
+POST /memecoins/solana/swap/record
+```
+
+Replaces the old `/raydium/swap`. Verifies the signature on-chain and stores the trade for price history/volume.
+
+```json
+{ "mintAddress": "YourMint...", "txHash": "SwapSig...", "traderWalletAddress": "Trader...", "type": "buy", "tokenAmount": "50000", "pairAmount": "0.1", "pairToken": "SOL" }
+```
+
+Idempotent on `txHash`. **Trades and the price chart (`GET /memecoins/:id/price-history?mintAddress=...`) read current price from Jupiter** and candles from on-chain swap history.
+
+---
+
+## 16. Liquidity Locks
+
+A lock proves liquidity can't be rug-pulled. Lock status is surfaced on `GET /memecoins/:id`, `GET /memecoins/listed` (as `lockStatus`), and the lock endpoints below.
+
+**`lockStatus` / summary shape:**
+```json
+{ "isLocked": true, "activeLocks": 1, "totalLockedAmount": 1000000, "permanentLock": false, "nextUnlockAt": "2027-01-01T00:00:00Z" }
+```
+
+### 16.1 Record a lock (Solana — Jupiter Lock / burn)
+
+```
+POST /memecoins/:id/lock
+```
+
+The frontend locks the LP/tokens via **Jupiter Lock** (`lock.jup.ag`) or burns them, then records it here. The backend verifies `lockTxHash` on-chain.
+
+```json
+{
+  "provider": "jupiter_lock",
+  "lockType": "liquidity",
+  "lockAddress": "JupiterLockEscrow...",
+  "assetMint": "LpOrTokenMint...",
+  "amount": "1000000",
+  "ownerWalletAddress": "Creator...",
+  "recipientWalletAddress": "Creator...",
+  "unlockAt": "2027-01-01T00:00:00Z",
+  "lockTxHash": "LockSig..."
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `amount` | Yes | Locked amount (> 0). |
+| `ownerWalletAddress` | Yes | Who owns the locked liquidity. |
+| `lockTxHash` | Yes | On-chain lock tx (verified). |
+| `provider` | No | Default `jupiter_lock` (Solana). `burn`, `streamflow`, … also accepted. |
+| `unlockAt` | No | Omit for a **permanent** lock (e.g. burn). |
+| `lockAddress`, `assetMint`, `recipientWalletAddress`, `metadata` | No | |
+
+Idempotent on `lockTxHash`. Returns the created lock.
+
+### 16.2 Get locks for a coin
+
+```
+GET /memecoins/:id/locks
+```
+Returns `{ locks: [...], summary: { ... } }`.
+
+```
+GET /memecoins/locks?mintAddress=...                       (Solana)
+GET /memecoins/locks?currencyHex=...&issuerWalletAddress=...  (XRPL)
+GET /memecoins/locks?ownerWalletAddress=...&status=active
+```
+Query locks by on-chain identifiers / owner without the DB id.
+
+### 16.3 Lock liquidity on XRPL (custodial LP lock)
+
+XRPL has no smart contracts, so LP tokens are locked by sending them to the platform's server-controlled **locker (admin) wallet**, which holds them until the unlock date and then returns them.
+
+**Step 1 — build:**
+```
+POST /memecoins/xrpl/lock/build
+```
+```json
+{ "walletAddress": "rCreator...", "currencyHex": "4D4F4F4E...", "issuerWalletAddress": "rIssuer...", "lpAmount": "1000", "unlockAt": "2027-01-01T00:00:00Z" }
+```
+- Looks up the AMM, resolves the **LP token** (currency + AMM-account issuer), ensures the locker has a trust line, and returns an unsigned `Payment` (LP tokens → locker) for Xaman. Omit `lpAmount` to lock the creator's **full LP balance**.
+
+**Response:** `{ lockerAddress, lpToken, amount, transaction, instructions }`.
+
+**Step 2 — confirm:**
+```
+POST /memecoins/xrpl/lock/confirm
+```
+```json
+{ "lockTxHash": "...", "walletAddress": "rCreator...", "currencyHex": "4D4F4F4E...", "issuerWalletAddress": "rIssuer...", "unlockAt": "2027-01-01T00:00:00Z" }
+```
+Verifies the LP tokens reached the locker and records the lock (`provider: "xrpl_custodial"`). Idempotent on `lockTxHash`.
+
+**Step 3 — release (after `unlockAt`):**
+```
+POST /memecoins/xrpl/lock/release
+```
+```json
+{ "lockId": "uuid" }
+```
+The locker (admin) wallet sends the LP tokens **back to the original owner** (recipient cannot be overridden). Fails if the lock is still active, permanent, or not an XRPL custodial lock. Sets the lock to `released` with the `unlockTxHash`.
+
+> XRPL note: the owner must keep their trust line to the LP token to receive it back on release (it stays after they send the LP away).

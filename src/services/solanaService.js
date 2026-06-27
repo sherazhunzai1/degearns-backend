@@ -18,6 +18,16 @@ const NETWORK = 'solana';
 // SPL Token program - owner of all token accounts
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 
+// Well-known Solana mints used for pricing/quoting
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+
+// Jupiter aggregator API. Keyless "lite" endpoint by default; override with
+// JUPITER_API_URL (e.g. https://api.jup.ag) + optional JUPITER_API_KEY.
+const JUPITER_API_URL = (process.env.JUPITER_API_URL || 'https://lite-api.jup.ag').replace(/\/$/, '');
+const JUPITER_API_KEY = process.env.JUPITER_API_KEY || null;
+
 /**
  * Verify an Ed25519 signature produced by a Solana wallet (Phantom/Solflare).
  * @param {string} walletAddress - Signer's base58 public key
@@ -54,75 +64,100 @@ async function getBalance(walletAddress) {
   return { lamports, sol: lamports / LAMPORTS_PER_SOL };
 }
 
+// ==================== Jupiter Aggregator (Swaps & Pricing) ====================
+// Jupiter is the primary Solana liquidity/routing layer (replaces direct Raydium
+// SDK usage). It routes each swap through the best available pool(s) across every
+// Solana DEX. Docs: https://dev.jup.ag/docs/
+
+function jupiterHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (JUPITER_API_KEY) headers['x-api-key'] = JUPITER_API_KEY;
+  return headers;
+}
+
 /**
- * Get the current price of a token from a Raydium pool by reading
- * the pool's on-chain vault balances.
- *
- * Raydium CPMM pools store vault addresses inside the pool account data.
- * We parse the data to extract vault pubkeys, then read their balances.
- *
- * @param {string} poolAddress - Raydium pool address
- * @param {string} mintAddress - The meme coin's mint address
- * @returns {Promise<{price: number, baseBalance: number, quoteBalance: number} | null>}
+ * Resolve a pair-token symbol (SOL/USDC/USDT) to its mint address.
+ * If an actual mint address is passed, it is returned unchanged.
  */
-async function getRaydiumPoolPrice(poolAddress, mintAddress) {
+function resolvePairMint(pairToken) {
+  if (!pairToken) return SOL_MINT;
+  const upper = String(pairToken).toUpperCase();
+  if (upper === 'SOL' || upper === 'WSOL') return SOL_MINT;
+  if (upper === 'USDC') return USDC_MINT;
+  if (upper === 'USDT') return USDT_MINT;
+  return pairToken; // assume already a mint address
+}
+
+/**
+ * Get a Jupiter swap quote (best route across all Solana DEXs).
+ *
+ * @param {Object} p
+ * @param {string} p.inputMint - mint being sold
+ * @param {string} p.outputMint - mint being bought
+ * @param {string|number} p.amount - amount of inputMint in BASE units (lamports / token raw units)
+ * @param {number} [p.slippageBps=100] - slippage tolerance in basis points (100 = 1%)
+ * @param {string} [p.swapMode='ExactIn'] - 'ExactIn' or 'ExactOut'
+ * @returns {Promise<Object>} Jupiter quote object — pass it as-is to buildJupiterSwapTransaction
+ */
+async function getJupiterQuote({ inputMint, outputMint, amount, slippageBps = 100, swapMode = 'ExactIn' }) {
+  const params = new URLSearchParams({
+    inputMint,
+    outputMint,
+    amount: String(amount),
+    slippageBps: String(slippageBps),
+    swapMode
+  });
+  const url = `${JUPITER_API_URL}/swap/v1/quote?${params.toString()}`;
+  const { data } = await axios.get(url, { headers: jupiterHeaders(), timeout: 15000 });
+  return data;
+}
+
+/**
+ * Build an unsigned Jupiter swap transaction (base64-serialized) for the user to
+ * sign and send from the frontend wallet (Phantom/Solflare).
+ *
+ * @param {Object} p
+ * @param {Object} p.quoteResponse - the object returned by getJupiterQuote
+ * @param {string} p.userPublicKey - the swapping wallet
+ * @param {boolean} [p.wrapAndUnwrapSol=true] - auto-wrap/unwrap native SOL
+ * @param {string|number} [p.prioritizationFeeLamports='auto']
+ * @returns {Promise<Object>} { swapTransaction, lastValidBlockHeight, ... }
+ */
+async function buildJupiterSwapTransaction({ quoteResponse, userPublicKey, wrapAndUnwrapSol = true, prioritizationFeeLamports = 'auto' }) {
+  const body = {
+    quoteResponse,
+    userPublicKey,
+    wrapAndUnwrapSol,
+    dynamicComputeUnitLimit: true,
+    prioritizationFeeLamports
+  };
+  const url = `${JUPITER_API_URL}/swap/v1/swap`;
+  const { data } = await axios.post(url, body, { headers: jupiterHeaders(), timeout: 20000 });
+  return data;
+}
+
+/**
+ * Get the current price of a token from Jupiter's price API.
+ *
+ * @param {string} mintAddress - token mint
+ * @param {string} [vsToken=USDC] - mint to price against. Pass SOL_MINT for a SOL-denominated price.
+ * @returns {Promise<number>} price in vsToken units per 1 token, or 0 if unavailable
+ */
+async function getJupiterPrice(mintAddress, vsToken = USDC_MINT) {
   try {
-    const connection = solanaConfig.getConnection();
-    const poolPubkey = new PublicKey(poolAddress);
-
-    // Fetch the pool account data
-    const accountInfo = await connection.getAccountInfo(poolPubkey);
-    if (!accountInfo || !accountInfo.data) return null;
-
-    const data = accountInfo.data;
-
-    // Raydium CPMM pool layout:
-    // offset 72: token_0_vault (32 bytes)
-    // offset 104: token_1_vault (32 bytes)
-    // offset 168: token_0_mint (32 bytes)
-    // offset 200: token_1_mint (32 bytes)
-    if (data.length < 232) return null;
-
-    const vault0 = new PublicKey(data.slice(72, 104));
-    const vault1 = new PublicKey(data.slice(104, 136));
-    const mint0 = new PublicKey(data.slice(168, 200));
-    const mint1 = new PublicKey(data.slice(200, 232));
-
-    // Read vault balances
-    const [vault0Info, vault1Info] = await Promise.all([
-      connection.getParsedAccountInfo(vault0),
-      connection.getParsedAccountInfo(vault1)
-    ]);
-
-    const balance0 = parseFloat(vault0Info.value?.data?.parsed?.info?.tokenAmount?.uiAmountString || '0');
-    const balance1 = parseFloat(vault1Info.value?.data?.parsed?.info?.tokenAmount?.uiAmountString || '0');
-
-    // Determine which is base (meme coin) and which is quote (SOL/USDC)
-    const mint0Str = mint0.toBase58();
-    const mint1Str = mint1.toBase58();
-
-    let baseBalance, quoteBalance;
-    if (mint0Str === mintAddress) {
-      baseBalance = balance0;
-      quoteBalance = balance1;
-    } else if (mint1Str === mintAddress) {
-      baseBalance = balance1;
-      quoteBalance = balance0;
-    } else {
-      logger.warn(`Token ${mintAddress} not found in pool ${poolAddress} (mint0=${mint0Str}, mint1=${mint1Str})`);
-      return null;
-    }
-
-    if (baseBalance === 0) return null;
-
-    const price = quoteBalance / baseBalance;
-
-    logger.info(`Raydium pool price: ${poolAddress} | base=${baseBalance} quote=${quoteBalance} price=${price}`);
-
-    return { price, baseBalance, quoteBalance, mint0: mint0Str, mint1: mint1Str };
+    const params = new URLSearchParams({ ids: mintAddress });
+    if (vsToken && vsToken !== USDC_MINT) params.set('vsToken', vsToken);
+    const url = `${JUPITER_API_URL}/price/v2?${params.toString()}`;
+    const { data } = await axios.get(url, { headers: jupiterHeaders(), timeout: 12000 });
+    // Tolerate both Price API shapes — V2: { data: { <mint>: { price } } }
+    // and V3: { <mint>: { usdPrice } } — in case the endpoint version changes.
+    const entry = data?.data?.[mintAddress] || data?.[mintAddress];
+    const raw = entry ? (entry.price ?? entry.usdPrice) : null;
+    const price = raw != null ? parseFloat(raw) : 0;
+    return isNaN(price) ? 0 : price;
   } catch (error) {
-    logger.error(`Error fetching Raydium pool price for ${poolAddress}:`, error.message);
-    return null;
+    logger.warn(`Jupiter price fetch failed for ${mintAddress}: ${error.message}`);
+    return 0;
   }
 }
 
@@ -330,6 +365,9 @@ function getNetworkInfo() {
 
 module.exports = {
   NETWORK,
+  SOL_MINT,
+  USDC_MINT,
+  USDT_MINT,
   verifySignature,
   isValidAddress,
   getBalance,
@@ -342,6 +380,9 @@ module.exports = {
   verifyTransaction,
   getTokenTransactions,
   parseHeliusSwap,
-  getRaydiumPoolPrice,
+  resolvePairMint,
+  getJupiterQuote,
+  buildJupiterSwapTransaction,
+  getJupiterPrice,
   getNetworkInfo
 };

@@ -1448,6 +1448,124 @@ class XRPLService {
       throw error;
     }
   }
+
+  // ==================== Custodial Liquidity Lock (LP tokens) ====================
+  // XRPL has no smart contracts or native time-lock for IOUs, so liquidity is
+  // "locked" by transferring the AMM LP tokens to the platform's server-controlled
+  // admin (locker) wallet, which holds them until the unlock date and then sends
+  // them back. The flow mirrors token issuance: user signs via Xaman, admin signs
+  // server-side.
+
+  /**
+   * Set a trust line from the admin (locker) wallet to a token so the admin can
+   * custody it (required before the locker can receive AMM LP tokens). Signed
+   * server-side. Idempotent — skips if an adequate trust line already exists.
+   */
+  async setTrustLineFromAdmin({ currencyHex, issuerAddress, limit = '1000000000000000' }) {
+    try {
+      const wallet = xrplConfig.getAdminWallet();
+      const client = await xrplConfig.getClientAsync();
+
+      // Skip if a trust line with an adequate limit already exists
+      try {
+        const existing = await client.request({
+          command: 'account_lines',
+          account: wallet.address,
+          peer: issuerAddress,
+          ledger_index: 'validated'
+        });
+        const line = (existing.result.lines || []).find(l => l.currency === currencyHex);
+        if (line && parseFloat(line.limit) >= parseFloat(limit)) {
+          return { alreadySet: true, address: wallet.address };
+        }
+      } catch (e) { /* line/account may not exist yet — proceed to create it */ }
+
+      const tx = {
+        TransactionType: 'TrustSet',
+        Account: wallet.address,
+        LimitAmount: { currency: currencyHex, issuer: issuerAddress, value: limit.toString() }
+      };
+      const prepared = await client.autofill(tx);
+      const signed = wallet.sign(prepared);
+      const result = await client.submitAndWait(signed.tx_blob);
+
+      const code = result.result.meta?.TransactionResult;
+      if (code !== 'tesSUCCESS') {
+        throw new Error(`Admin TrustSet failed: ${code}`);
+      }
+      logger.info(`Admin (locker) trust line set for ${currencyHex}/${issuerAddress}, tx: ${result.result.hash}`);
+      return { set: true, address: wallet.address, hash: result.result.hash };
+    } catch (error) {
+      logger.error('Error setting admin trust line:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Build a Payment that transfers an IOU (e.g. AMM LP tokens) from a holder to a
+   * destination — used to move LP tokens into the custodial locker. Returned
+   * unsigned for the user to sign via Xaman.
+   */
+  buildTokenPaymentPayload({ account, destination, currencyHex, issuerAddress, amount }) {
+    return {
+      TransactionType: 'Payment',
+      Account: account,
+      Destination: destination,
+      Amount: { currency: currencyHex, issuer: issuerAddress, value: amount.toString() }
+    };
+  }
+
+  /**
+   * Send an IOU that the admin (locker) wallet currently holds back to a
+   * destination. Used to release a custodial LP-token lock. Signed server-side.
+   */
+  async sendTokenFromAdmin({ destinationAddress, currencyHex, issuerAddress, amount }) {
+    try {
+      const wallet = xrplConfig.getAdminWallet();
+      const client = await xrplConfig.getClientAsync();
+
+      const tx = {
+        TransactionType: 'Payment',
+        Account: wallet.address,
+        Destination: destinationAddress,
+        Amount: { currency: currencyHex, issuer: issuerAddress, value: amount.toString() }
+      };
+      const prepared = await client.autofill(tx);
+      const signed = wallet.sign(prepared);
+      const result = await client.submitAndWait(signed.tx_blob);
+
+      const code = result.result.meta?.TransactionResult;
+      if (code !== 'tesSUCCESS') {
+        throw new Error(`Admin token payment failed: ${code}`);
+      }
+      logger.info(`Admin (locker) released ${amount} ${currencyHex} to ${destinationAddress}, tx: ${result.result.hash}`);
+      return result;
+    } catch (error) {
+      logger.error('Error sending token from admin:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get an account's balance of a specific IOU (currency + issuer).
+   * Returns the balance as a string ('0' if no trust line / zero balance).
+   */
+  async getTokenBalance({ account, currencyHex, issuerAddress }) {
+    try {
+      const client = await xrplConfig.getClientAsync();
+      const response = await client.request({
+        command: 'account_lines',
+        account,
+        peer: issuerAddress,
+        ledger_index: 'validated'
+      });
+      const line = (response.result.lines || []).find(l => l.currency === currencyHex);
+      return line ? line.balance : '0';
+    } catch (error) {
+      logger.warn(`Error fetching token balance for ${account}: ${error.message}`);
+      return '0';
+    }
+  }
 }
 
 module.exports = new XRPLService();

@@ -19,8 +19,18 @@ const {
   buildAMMCreate,
   confirmAMMCreate,
   getAMMInfo,
-  registerRaydiumPool,
-  recordRaydiumSwap
+  // Solana (Jupiter)
+  registerSolanaPool,
+  getJupiterQuote,
+  buildJupiterSwap,
+  recordSolanaSwap,
+  // Liquidity locks
+  registerLock,
+  getMemeCoinLocks,
+  getLocks,
+  buildXrplLpLock,
+  confirmXrplLpLock,
+  releaseXrplLpLock
 } = require('../controllers/memeCoinController');
 
 // ==================== SPECIFIC ROUTES (must be before /:id wildcards) ====================
@@ -32,10 +42,13 @@ router.get('/wallet/:walletAddress', getMyMemeCoins);
 router.get('/trades', getTrades);
 router.get('/price-history', getPriceHistory);
 router.get('/amm', getAMMInfo);
+router.get('/locks', getLocks);
 
-// Raydium (Solana)
-router.post('/raydium/pool', registerRaydiumPool);
-router.post('/raydium/swap', recordRaydiumSwap);
+// Solana — Jupiter aggregator (swaps, pool/market registration, trade recording)
+router.post('/solana/pool', registerSolanaPool);
+router.post('/jupiter/quote', getJupiterQuote);
+router.post('/jupiter/swap', buildJupiterSwap);
+router.post('/solana/swap/record', recordSolanaSwap);
 
 // XRPL AMM
 router.post('/amm/create', buildAMMCreate);
@@ -46,6 +59,11 @@ router.post('/confirm-swap', confirmSwap);
 router.post('/swap/buy', buildBuyToken);
 router.post('/swap/sell', buildSellToken);
 
+// XRPL custodial liquidity lock (LP tokens)
+router.post('/xrpl/lock/build', buildXrplLpLock);
+router.post('/xrpl/lock/confirm', confirmXrplLpLock);
+router.post('/xrpl/lock/release', releaseXrplLpLock);
+
 // ==================== /:id WILDCARD ROUTES (must be last) ====================
 
 router.post('/:id/confirm-trustline', confirmTrustline);
@@ -55,6 +73,8 @@ router.get('/:id/pools', getMemeCoinPools);
 router.post('/:id/trade', recordTrade);
 router.get('/:id/trades', getTrades);
 router.get('/:id/price-history', getPriceHistory);
+router.post('/:id/lock', registerLock);
+router.get('/:id/locks', getMemeCoinLocks);
 router.get('/:id', getMemeCoin);
 
 module.exports = router;
