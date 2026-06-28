@@ -1,4 +1,4 @@
-const { Collection, User, UserWallet, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost, SolanaNftListing } = require('../models');
+const { Collection, User, UserWallet, DropMint, Drop, Follow, sequelize, Subscription, NftBoost, CollectionBoost, SolanaNftListing, AdminActivity } = require('../models');
 const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const solanaService = require('../services/solanaService');
@@ -2232,6 +2232,78 @@ const getCollectionHistory = async (req, res, next) => {
   }
 };
 
+/**
+ * Delist (delete) a collection from the marketplace.
+ *
+ * Public + ownership-verified: the caller must pass the collection's
+ * `creatorWalletAddress` (same gate as updateCollection). Works for both XRPL and
+ * Solana collections — they're identified by the network-agnostic collection id.
+ *
+ * Removes the marketplace DB record only (nothing on-chain). Blocked while the
+ * collection still has drops, to protect mint history — remove those first.
+ */
+const delistCollection = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { creatorWalletAddress, reason } = req.body;
+
+    if (!creatorWalletAddress) {
+      throw new ApiError(400, 'Creator wallet address is required');
+    }
+
+    const collection = await Collection.findByPk(id);
+    if (!collection) {
+      throw new ApiError(404, 'Collection not found');
+    }
+
+    if (collection.creatorWalletAddress !== creatorWalletAddress) {
+      throw new ApiError(403, 'You are not the creator of this collection');
+    }
+
+    // Protect mint history: block delisting while drops still reference it
+    const dropCount = await Drop.count({ where: { collectionId: id } });
+    if (dropCount > 0) {
+      throw new ApiError(400, `Cannot delist a collection with ${dropCount} associated drop(s). Remove the drops first.`);
+    }
+
+    const snapshot = collection.toJSON();
+
+    // Best-effort audit log — visible via GET /admin/dashboard/activities?action=collection_delete
+    try {
+      await AdminActivity.create({
+        adminWalletAddress: creatorWalletAddress,
+        action: 'collection_delete',
+        targetType: 'collection',
+        targetId: collection.id,
+        targetIdentifier: collection.name,
+        previousValue: JSON.stringify(snapshot),
+        reason: reason || null,
+        metadata: { via: 'public_delist', network: collection.network }
+      });
+    } catch (logErr) {
+      logger.warn(`Failed to log collection delist: ${logErr.message}`);
+    }
+
+    await collection.destroy();
+
+    logger.info(`Collection delisted: ${snapshot.name} (${snapshot.network}, id=${snapshot.id}) by ${creatorWalletAddress}`);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        id: snapshot.id,
+        name: snapshot.name,
+        slug: snapshot.slug,
+        network: snapshot.network,
+        mintAddress: snapshot.mintAddress || null,
+        taxon: snapshot.taxon ?? null,
+        creatorWalletAddress: snapshot.creatorWalletAddress
+      }, 'Collection delisted successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   listCollection,
   getCollections,
@@ -2244,5 +2316,6 @@ module.exports = {
   getNewNFTs,
   getTopSellers,
   getPopularCollections,
-  getCollectionHistory
+  getCollectionHistory,
+  delistCollection
 };

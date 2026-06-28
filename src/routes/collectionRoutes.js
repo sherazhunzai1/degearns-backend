@@ -12,7 +12,8 @@ const {
   getNewNFTs,
   getTopSellers,
   getPopularCollections,
-  getCollectionHistory
+  getCollectionHistory,
+  delistCollection
 } = require('../controllers/collectionController');
 
 /**
@@ -98,5 +99,13 @@ router.put('/:id', updateCollection);
  * @access  Public
  */
 router.put('/:id/stats', updateCollectionStats);
+
+/**
+ * @route   DELETE /api/v1/collections/:id
+ * @desc    Delist (delete) a collection from the marketplace. Works for XRPL and
+ *          Solana collections. Requires the collection's creatorWalletAddress.
+ * @access  Public (ownership-verified)
+ */
+router.delete('/:id', delistCollection);
 
 module.exports = router;
