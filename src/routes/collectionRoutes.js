@@ -102,8 +102,10 @@ router.put('/:id/stats', updateCollectionStats);
 
 /**
  * @route   DELETE /api/v1/collections/:id
- * @desc    Delist (delete) a collection from the marketplace. Works for XRPL and
- *          Solana collections. Requires the collection's creatorWalletAddress.
+ * @desc    Delist (delete) a collection from the marketplace after it has been
+ *          delisted on-chain. Body: { creatorWalletAddress, transactionHash, reason? }.
+ *          The backend verifies the on-chain delist transaction (Solana or XRPL)
+ *          before removing the DB record. Works for both networks.
  * @access  Public (ownership-verified)
  */
 router.delete('/:id', delistCollection);

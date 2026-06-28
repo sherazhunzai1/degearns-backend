@@ -6,6 +6,7 @@ const chainServiceFactory = require('../services/chainServiceFactory');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { translateXrplError } = require('../utils/xrplErrors');
 const { Op } = require('sequelize');
 const crypto = require('crypto');
 const { initBoostEngine } = require('../services/boostEngine');
@@ -2235,20 +2236,28 @@ const getCollectionHistory = async (req, res, next) => {
 /**
  * Delist (delete) a collection from the marketplace.
  *
+ * Flow: the frontend delists the collection ON-CHAIN first (the wallet signs and
+ * sends the transaction), then calls this endpoint with the transaction hash. The
+ * backend verifies that the on-chain delist transaction succeeded for the
+ * collection's network (Solana or XRPL) and only then removes the DB record.
+ *
  * Public + ownership-verified: the caller must pass the collection's
  * `creatorWalletAddress` (same gate as updateCollection). Works for both XRPL and
  * Solana collections — they're identified by the network-agnostic collection id.
  *
- * Removes the marketplace DB record only (nothing on-chain). Blocked while the
- * collection still has drops, to protect mint history — remove those first.
+ * Removes the marketplace DB record only. Blocked while the collection still has
+ * drops, to protect mint history — remove those first.
  */
 const delistCollection = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { creatorWalletAddress, reason } = req.body;
+    const { creatorWalletAddress, transactionHash, reason } = req.body;
 
     if (!creatorWalletAddress) {
       throw new ApiError(400, 'Creator wallet address is required');
+    }
+    if (!transactionHash) {
+      throw new ApiError(400, 'transactionHash is required — delist the collection on-chain first, then pass the transaction hash');
     }
 
     const collection = await Collection.findByPk(id);
@@ -2266,6 +2275,27 @@ const delistCollection = async (req, res, next) => {
       throw new ApiError(400, `Cannot delist a collection with ${dropCount} associated drop(s). Remove the drops first.`);
     }
 
+    // Verify the on-chain delist transaction succeeded before deleting the DB record
+    if (collection.network === 'solana') {
+      const verification = await solanaService.verifyTransaction(transactionHash);
+      if (!verification.verified) {
+        throw new ApiError(400, `On-chain delist transaction could not be verified: ${verification.error}`);
+      }
+    } else {
+      // XRPL — confirm the transaction exists on-chain and succeeded
+      try {
+        const client = await xrplConfig.getClientAsync();
+        const txResponse = await client.request({ command: 'tx', transaction: transactionHash });
+        const meta = txResponse.result.meta || txResponse.result.metaData;
+        if (meta && meta.TransactionResult !== 'tesSUCCESS') {
+          throw translateXrplError(meta.TransactionResult, { action: 'delist the collection on-chain' });
+        }
+      } catch (e) {
+        if (e instanceof ApiError) throw e;
+        throw translateXrplError(e, { action: 'verify the on-chain delist transaction' });
+      }
+    }
+
     const snapshot = collection.toJSON();
 
     // Best-effort audit log — visible via GET /admin/dashboard/activities?action=collection_delete
@@ -2278,7 +2308,7 @@ const delistCollection = async (req, res, next) => {
         targetIdentifier: collection.name,
         previousValue: JSON.stringify(snapshot),
         reason: reason || null,
-        metadata: { via: 'public_delist', network: collection.network }
+        metadata: { via: 'public_delist', network: collection.network, transactionHash }
       });
     } catch (logErr) {
       logger.warn(`Failed to log collection delist: ${logErr.message}`);
@@ -2286,7 +2316,7 @@ const delistCollection = async (req, res, next) => {
 
     await collection.destroy();
 
-    logger.info(`Collection delisted: ${snapshot.name} (${snapshot.network}, id=${snapshot.id}) by ${creatorWalletAddress}`);
+    logger.info(`Collection delisted: ${snapshot.name} (${snapshot.network}, id=${snapshot.id}) by ${creatorWalletAddress}, tx=${transactionHash}`);
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -2296,7 +2326,8 @@ const delistCollection = async (req, res, next) => {
         network: snapshot.network,
         mintAddress: snapshot.mintAddress || null,
         taxon: snapshot.taxon ?? null,
-        creatorWalletAddress: snapshot.creatorWalletAddress
+        creatorWalletAddress: snapshot.creatorWalletAddress,
+        transactionHash
       }, 'Collection delisted successfully')
     );
   } catch (error) {
