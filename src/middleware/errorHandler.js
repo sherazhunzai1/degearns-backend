@@ -1,5 +1,6 @@
 const ApiError = require('../utils/ApiError');
 const logger = require('../utils/logger');
+const { isXrplError, translateXrplError } = require('../utils/xrplErrors');
 
 /**
  * Error handler middleware
@@ -14,6 +15,19 @@ const errorHandler = (err, req, res, next) => {
     url: req.url,
     method: req.method
   });
+
+  // Safety net: convert any raw XRP Ledger error (engine result codes, RPC
+  // errors, or xrpl.js connection errors) that reached here into a
+  // plain-language message. Short-circuits so later branches don't reprocess it.
+  if (isXrplError(err)) {
+    const xrplError = translateXrplError(err);
+    return res.status(xrplError.statusCode).json({
+      success: false,
+      message: xrplError.message,
+      ...(xrplError.xrplCode && { code: xrplError.xrplCode }),
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    });
+  }
 
   // Mongoose bad ObjectId
   if (err.name === 'CastError') {

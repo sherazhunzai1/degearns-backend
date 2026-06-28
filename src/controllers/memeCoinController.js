@@ -7,6 +7,7 @@ const priceService = require('../services/priceService');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { translateXrplError } = require('../utils/xrplErrors');
 const { resolvePrimaryWallet } = require('../utils/userHelpers');
 const { Op } = require('sequelize');
 
@@ -235,7 +236,7 @@ const confirmTrustline = async (req, res, next) => {
 
       const meta = tx.meta || tx.metaData;
       if (meta && meta.TransactionResult !== 'tesSUCCESS') {
-        throw new ApiError(400, `TrustSet transaction failed: ${meta.TransactionResult}`);
+        throw translateXrplError(meta.TransactionResult, { action: 'set the trust line' });
       }
     } catch (error) {
       if (error instanceof ApiError) throw error;
@@ -1949,7 +1950,7 @@ const confirmSwap = async (req, res, next) => {
 
     const meta = tx.meta || tx.metaData;
     if (meta && meta.TransactionResult !== 'tesSUCCESS') {
-      throw new ApiError(400, `Transaction failed: ${meta.TransactionResult}`);
+      throw translateXrplError(meta.TransactionResult, { action: 'complete the swap' });
     }
 
     // Parse the actual delivered amounts from metadata
@@ -2192,7 +2193,7 @@ const confirmAMMCreate = async (req, res, next) => {
 
       const meta = tx.meta || tx.metaData;
       if (meta && meta.TransactionResult !== 'tesSUCCESS') {
-        throw new ApiError(400, `AMMCreate failed: ${meta.TransactionResult}`);
+        throw translateXrplError(meta.TransactionResult, { action: 'create the liquidity pool' });
       }
 
       ammInfo = await xrplService.getAMMInfo(resolvedCurrencyHex, issuerWalletAddress);
@@ -2759,7 +2760,7 @@ const registerLock = async (req, res, next) => {
         const txResponse = await client.request({ command: 'tx', transaction: lockTxHash });
         const meta = txResponse.result.meta || txResponse.result.metaData;
         if (meta && meta.TransactionResult !== 'tesSUCCESS') {
-          throw new ApiError(400, `Lock tx failed on XRPL: ${meta.TransactionResult}`);
+          throw translateXrplError(meta.TransactionResult, { action: 'lock the liquidity' });
         }
       } catch (e) {
         if (e instanceof ApiError) throw e;
@@ -2961,7 +2962,7 @@ const confirmXrplLpLock = async (req, res, next) => {
     }
     const meta = tx.meta || tx.metaData;
     if (meta && meta.TransactionResult !== 'tesSUCCESS') {
-      throw new ApiError(400, `Lock transaction failed: ${meta.TransactionResult}`);
+      throw translateXrplError(meta.TransactionResult, { action: 'lock the liquidity' });
     }
     if (tx.Account !== walletAddress) {
       throw new ApiError(400, 'Lock transaction was not signed by the provided wallet');

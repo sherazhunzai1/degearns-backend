@@ -8,6 +8,7 @@ const {
 } = require('xrpl');
 const xrplConfig = require('../config/xrpl');
 const logger = require('../utils/logger');
+const { ensureTxSuccess, translateXrplError } = require('../utils/xrplErrors');
 
 class XRPLService {
   /**
@@ -77,7 +78,7 @@ class XRPLService {
           account: wallet.address
         };
       } else {
-        throw new Error(`Mint failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'mint the NFT' });
       }
     } catch (error) {
       logger.error('Error minting NFT:', error);
@@ -121,7 +122,7 @@ class XRPLService {
           hash: result.result.hash
         };
       } else {
-        throw new Error(`Create sell offer failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'create the sell offer' });
       }
     } catch (error) {
       logger.error('Error creating sell offer:', error);
@@ -158,7 +159,7 @@ class XRPLService {
           hash: result.result.hash
         };
       } else {
-        throw new Error(`Create buy offer failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'create the buy offer' });
       }
     } catch (error) {
       logger.error('Error creating buy offer:', error);
@@ -190,7 +191,7 @@ class XRPLService {
           hash: result.result.hash
         };
       } else {
-        throw new Error(`Accept offer failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'accept the offer' });
       }
     } catch (error) {
       logger.error('Error accepting offer:', error);
@@ -222,7 +223,7 @@ class XRPLService {
           hash: result.result.hash
         };
       } else {
-        throw new Error(`Cancel offer failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'cancel the offer' });
       }
     } catch (error) {
       logger.error('Error cancelling offer:', error);
@@ -254,7 +255,7 @@ class XRPLService {
           hash: result.result.hash
         };
       } else {
-        throw new Error(`Burn NFT failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'burn the NFT' });
       }
     } catch (error) {
       logger.error('Error burning NFT:', error);
@@ -1135,7 +1136,7 @@ class XRPLService {
           amountXrp: (parseInt(amountDrops) / 1000000).toFixed(6)
         };
       } else {
-        throw new Error(`Payment failed: ${result.result.meta.TransactionResult}`);
+        throw translateXrplError(result, { action: 'send the payment' });
       }
     } catch (error) {
       logger.error('Error sending payment:', error);
@@ -1256,6 +1257,7 @@ class XRPLService {
       const signed = wallet.sign(prepared);
       const result = await client.submitAndWait(signed.tx_blob);
 
+      ensureTxSuccess(result, 'issue the token');
       logger.info(`Token issued: ${totalSupply} ${currencyHex} to ${destinationAddress}, tx: ${result.result.hash}`);
       return result;
     } catch (error) {
@@ -1300,6 +1302,7 @@ class XRPLService {
       const signed = wallet.sign(prepared);
       const result = await client.submitAndWait(signed.tx_blob);
 
+      ensureTxSuccess(result, 'enable rippling on the issuer account');
       logger.info(`DefaultRipple enabled on ${wallet.address}, tx: ${result.result.hash}`);
       return { enabled: true, hash: result.result.hash };
     } catch (error) {
@@ -1489,10 +1492,7 @@ class XRPLService {
       const signed = wallet.sign(prepared);
       const result = await client.submitAndWait(signed.tx_blob);
 
-      const code = result.result.meta?.TransactionResult;
-      if (code !== 'tesSUCCESS') {
-        throw new Error(`Admin TrustSet failed: ${code}`);
-      }
+      ensureTxSuccess(result, 'prepare the lock wallet');
       logger.info(`Admin (locker) trust line set for ${currencyHex}/${issuerAddress}, tx: ${result.result.hash}`);
       return { set: true, address: wallet.address, hash: result.result.hash };
     } catch (error) {
@@ -1534,10 +1534,7 @@ class XRPLService {
       const signed = wallet.sign(prepared);
       const result = await client.submitAndWait(signed.tx_blob);
 
-      const code = result.result.meta?.TransactionResult;
-      if (code !== 'tesSUCCESS') {
-        throw new Error(`Admin token payment failed: ${code}`);
-      }
+      ensureTxSuccess(result, 'release the locked liquidity');
       logger.info(`Admin (locker) released ${amount} ${currencyHex} to ${destinationAddress}, tx: ${result.result.hash}`);
       return result;
     } catch (error) {

@@ -6,6 +6,7 @@ const solanaConfig = require('../config/solana');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const logger = require('../utils/logger');
+const { translateXrplError, describeXrplCode } = require('../utils/xrplErrors');
 const { Op } = require('sequelize');
 
 const WALLET_ADDRESS_REGEX = /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/;
@@ -553,15 +554,18 @@ const signWithdrawal = async (req, res) => {
             });
             logger.info(`Payment to ${split.name} (${split.walletAddress}): ${split.amount} drops - TX: ${result.result.hash}`);
           } else {
+            const failCode = result.result.meta.TransactionResult;
+            const friendly = describeXrplCode(failCode);
             transactionHashes.push({
               ownerName: split.name,
               ownerWallet: split.walletAddress,
               amount: split.amount,
               hash: result.result.hash || null,
               status: 'failed',
-              error: result.result.meta.TransactionResult
+              error: friendly ? friendly.message : 'The payment could not be completed on the XRP Ledger.',
+              errorCode: failCode
             });
-            logger.error(`Payment to ${split.name} failed: ${result.result.meta.TransactionResult}`);
+            logger.error(`Payment to ${split.name} failed: ${failCode}`);
           }
         }
 
@@ -575,7 +579,8 @@ const signWithdrawal = async (req, res) => {
         logger.info(`Withdrawal ${id} completed. ${transactionHashes.length} payments executed.`);
       } catch (error) {
         logger.error(`Withdrawal ${id} on-chain execution failed: ${error.message}`);
-        throw new ApiError(500, `On-chain payment execution failed: ${error.message}`);
+        if (error instanceof ApiError) throw error;
+        throw translateXrplError(error, { action: 'execute the on-chain payout' });
       }
     }
 
