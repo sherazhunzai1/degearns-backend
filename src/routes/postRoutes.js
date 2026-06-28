@@ -12,6 +12,7 @@ const {
   getPostLikes,
   addComment,
   getPostComments,
+  getCommentReplies,
   updateComment,
   deleteComment,
   getFollowingPosts,
@@ -148,10 +149,19 @@ router.post('/:postId/comments', addComment);
 
 /**
  * @route   GET /api/v1/posts/:postId/comments
- * @desc    Get all comments for a post
+ * @desc    Get comments for a post (top-level by default; pass ?parentCommentId= for
+ *          a thread's replies, or ?includeReplies=true&repliesLimit=2 to inline a
+ *          preview of each top-level comment's latest replies)
  * @access  Public
  */
 router.get('/:postId/comments', getPostComments);
+
+/**
+ * @route   GET /api/v1/posts/comments/:commentId/replies
+ * @desc    Get all replies for a comment thread (flat, with @mention info)
+ * @access  Public
+ */
+router.get('/comments/:commentId/replies', getCommentReplies);
 
 /**
  * @route   PUT /api/v1/posts/comments/:commentId

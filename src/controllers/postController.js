@@ -1267,39 +1267,51 @@ const addComment = async (req, res, next) => {
       throw new ApiError(404, 'User not found');
     }
 
-    // If replying to a comment, verify parent exists
-    let parentComment = null;
+    // If replying, resolve the target comment + flatten the thread (Facebook-style:
+    // every reply attaches to the top-level root, carrying a "replying to" mention).
+    let targetComment = null;   // the comment actually being replied to
+    let rootCommentId = null;   // top-level thread root
+    let replyToUser = null;
     if (parentCommentId) {
-      parentComment = await PostComment.findOne({
+      targetComment = await PostComment.findOne({
         where: { id: parentCommentId, postId, isActive: true }
       });
 
-      if (!parentComment) {
+      if (!targetComment) {
         throw new ApiError(404, 'Parent comment not found');
       }
+
+      // Replying to a reply still lands under the same top-level root
+      rootCommentId = targetComment.parentCommentId || targetComment.id;
+      replyToUser = await User.findOne({
+        where: { walletAddress: targetComment.authorWalletAddress },
+        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+      });
     }
 
-    // Create comment
+    // Create comment (replies are flattened: parentCommentId = thread root)
     const comment = await PostComment.create({
       postId,
       authorWalletAddress,
       content: content.trim(),
-      parentCommentId: parentCommentId || null
+      parentCommentId: rootCommentId,
+      replyToCommentId: targetComment ? targetComment.id : null,
+      replyToWalletAddress: targetComment ? targetComment.authorWalletAddress : null
     });
 
     // Increment comments count on post
     await post.increment('commentsCount');
 
-    // If it's a reply, increment replies count on parent
-    if (parentComment) {
-      await parentComment.increment('repliesCount');
+    // If it's a reply, increment replies count on the thread root + notify the target
+    if (targetComment) {
+      await PostComment.increment('repliesCount', { where: { id: rootCommentId } });
 
-      // Create notification for parent comment author (reply notification)
+      // Create notification for the person being replied to
       notificationService.createCommentReplyNotification({
         postId,
         commentId: comment.id,
-        parentCommentId: parentCommentId,
-        parentCommentAuthorWalletAddress: parentComment.authorWalletAddress,
+        parentCommentId: targetComment.id,
+        parentCommentAuthorWalletAddress: targetComment.authorWalletAddress,
         replierWalletAddress: authorWalletAddress,
         replierUsername: author.username,
         replyPreview: content.trim(),
@@ -1374,6 +1386,9 @@ const addComment = async (req, res, next) => {
           },
           content: comment.content,
           parentCommentId: comment.parentCommentId,
+          replyToCommentId: comment.replyToCommentId,
+          replyToWalletAddress: comment.replyToWalletAddress,
+          replyTo: replyToUser ? replyToUser.toJSON() : null,
           likesCount: comment.likesCount,
           repliesCount: comment.repliesCount,
           createdAt: comment.createdAt
@@ -1387,12 +1402,57 @@ const addComment = async (req, res, next) => {
 };
 
 /**
- * Get comments for a post
+ * Resolve author + replyTo (@mention) user info + subscription plans for a set of
+ * comments and return them in API shape.
+ */
+const formatCommentsWithUsers = async (comments) => {
+  if (!comments || comments.length === 0) return [];
+
+  const authorAddresses = [...new Set(comments.map(c => c.authorWalletAddress))];
+  const replyToAddresses = [...new Set(comments.map(c => c.replyToWalletAddress).filter(Boolean))];
+  const allAddresses = [...new Set([...authorAddresses, ...replyToAddresses])];
+
+  const users = await User.findAll({
+    where: { walletAddress: { [Op.in]: allAddresses } },
+    attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
+  });
+  const userMap = {};
+  users.forEach(u => { userMap[u.walletAddress] = u.toJSON(); });
+
+  const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
+
+  return comments.map(c => {
+    const a = userMap[c.authorWalletAddress];
+    return {
+      id: c.id,
+      postId: c.postId,
+      authorWalletAddress: c.authorWalletAddress,
+      author: a ? { ...a, subscriptionPlan: subscriptionMap[c.authorWalletAddress] || 'free' } : null,
+      content: c.content,
+      parentCommentId: c.parentCommentId,
+      replyToCommentId: c.replyToCommentId || null,
+      replyToWalletAddress: c.replyToWalletAddress || null,
+      replyTo: c.replyToWalletAddress
+        ? (userMap[c.replyToWalletAddress] || { walletAddress: c.replyToWalletAddress, username: null, profileImage: null, isVerified: false })
+        : null,
+      likesCount: c.likesCount,
+      repliesCount: c.repliesCount,
+      isEdited: c.isEdited,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt
+    };
+  });
+};
+
+/**
+ * Get comments for a post. Returns top-level comments by default, or replies for a
+ * thread when `parentCommentId` is provided. Pass `includeReplies=true` to attach a
+ * preview of the latest replies (count `repliesLimit`) to each top-level comment.
  */
 const getPostComments = async (req, res, next) => {
   try {
     const { postId } = req.params;
-    const { page = 1, limit = 20, parentCommentId } = req.query;
+    const { page = 1, limit = 20, parentCommentId, includeReplies, repliesLimit = 2 } = req.query;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -1430,41 +1490,26 @@ const getPostComments = async (req, res, next) => {
       offset
     });
 
-    // Get author details
-    const authorAddresses = [...new Set(comments.map(c => c.authorWalletAddress))];
-    const authors = await User.findAll({
-      where: { walletAddress: { [Op.in]: authorAddresses } },
-      attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-    });
+    const formattedComments = await formatCommentsWithUsers(comments);
 
-    const authorMap = {};
-    authors.forEach(a => { authorMap[a.walletAddress] = a; });
-
-    // Fetch subscription plans for all comment authors
-    const subscriptionMap = await getActiveSubscriptionsForWallets(authorAddresses);
-
-    const formattedComments = comments.map(comment => {
-      const author = authorMap[comment.authorWalletAddress];
-      return {
-        id: comment.id,
-        postId: comment.postId,
-        authorWalletAddress: comment.authorWalletAddress,
-        author: author ? {
-          walletAddress: author.walletAddress,
-          username: author.username,
-          profileImage: author.profileImage,
-          isVerified: author.isVerified,
-          subscriptionPlan: subscriptionMap[author.walletAddress] || 'free'
-        } : null,
-        content: comment.content,
-        parentCommentId: comment.parentCommentId,
-        likesCount: comment.likesCount,
-        repliesCount: comment.repliesCount,
-        isEdited: comment.isEdited,
-        createdAt: comment.createdAt,
-        updatedAt: comment.updatedAt
-      };
-    });
+    // Optionally attach a preview of the latest replies to each top-level comment
+    if (!parentCommentId && includeReplies === 'true' && comments.length > 0) {
+      const rootIds = comments.map(c => c.id);
+      const allReplies = await PostComment.findAll({
+        where: { postId, parentCommentId: { [Op.in]: rootIds }, isActive: true },
+        order: [['createdAt', 'ASC']]
+      });
+      const formattedReplies = await formatCommentsWithUsers(allReplies);
+      const repliesByRoot = {};
+      formattedReplies.forEach(r => {
+        (repliesByRoot[r.parentCommentId] = repliesByRoot[r.parentCommentId] || []).push(r);
+      });
+      const previewCount = Math.max(0, parseInt(repliesLimit) || 0);
+      formattedComments.forEach(c => {
+        const all = repliesByRoot[c.id] || [];
+        c.replies = previewCount > 0 ? all.slice(-previewCount) : []; // latest N, chronological
+      });
+    }
 
     logger.info(`Comments fetched for post: ${postId}`);
 
@@ -1479,6 +1524,55 @@ const getPostComments = async (req, res, next) => {
           totalPages: Math.ceil(count / parseInt(limit))
         }
       }, 'Comments retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get the replies for a comment thread (flat, oldest-first), each with @mention info.
+ * Works whether `commentId` is the top-level comment or any reply within the thread.
+ */
+const getCommentReplies = async (req, res, next) => {
+  try {
+    const { commentId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    if (!commentId) {
+      throw new ApiError(400, 'Comment ID is required');
+    }
+
+    const parent = await PostComment.findOne({ where: { id: commentId, isActive: true } });
+    if (!parent) {
+      throw new ApiError(404, 'Comment not found');
+    }
+
+    // Replies always live flat under the thread root
+    const rootId = parent.parentCommentId || parent.id;
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const { count, rows: replies } = await PostComment.findAndCountAll({
+      where: { parentCommentId: rootId, isActive: true },
+      order: [['createdAt', 'ASC']],
+      limit: parseInt(limit),
+      offset
+    });
+
+    const formatted = await formatCommentsWithUsers(replies);
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        commentId: rootId,
+        replies: formatted,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Replies retrieved successfully')
     );
   } catch (error) {
     next(error);
@@ -2319,6 +2413,7 @@ module.exports = {
   getPostLikes,
   addComment,
   getPostComments,
+  getCommentReplies,
   updateComment,
   deleteComment,
   getFollowingPosts,

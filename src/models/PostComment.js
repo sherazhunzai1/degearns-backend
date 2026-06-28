@@ -24,7 +24,17 @@ module.exports = (sequelize, DataTypes) => {
     parentCommentId: {
       type: DataTypes.UUID,
       allowNull: true,
-      comment: 'Reference to parent comment for replies (null for top-level comments)'
+      comment: 'Thread root (top-level comment) for replies; null for top-level comments'
+    },
+    replyToCommentId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      comment: 'The specific comment a reply targets (for @mention); null for top-level comments'
+    },
+    replyToWalletAddress: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Wallet of the user being replied to (for "replying to @username")'
     },
     likesCount: {
       type: DataTypes.INTEGER,
@@ -61,6 +71,10 @@ module.exports = (sequelize, DataTypes) => {
       {
         fields: ['parentCommentId'],
         name: 'idx_postcomment_parent'
+      },
+      {
+        fields: ['replyToCommentId'],
+        name: 'idx_postcomment_replyto'
       },
       {
         fields: ['postId', 'createdAt'],
