@@ -56,15 +56,9 @@ const OwnerChangeRequest = require('./OwnerChangeRequest')(sequelize, DataTypes)
 const OwnerChangeSignature = require('./OwnerChangeSignature')(sequelize, DataTypes);
 
 // Define associations
-// Collection and CollectionChatMessage
-Collection.hasMany(CollectionChatMessage, {
-  foreignKey: 'collectionId',
-  as: 'chatMessages'
-});
-CollectionChatMessage.belongsTo(Collection, {
-  foreignKey: 'collectionId',
-  as: 'collection'
-});
+// CollectionChatMessage.collectionId is a free-form on-chain collection identifier
+// (Solana mint address / XRPL taxon), NOT a foreign key to Collections — so a
+// chatroom works for any collection on-chain, not just ones in our DB.
 User.hasMany(CollectionChatMessage, {
   foreignKey: 'senderWalletAddress',
   sourceKey: 'walletAddress',

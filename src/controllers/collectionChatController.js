@@ -1,4 +1,5 @@
 const { CollectionChatMessage, Collection, User } = require('../models');
+const sequelize = require('sequelize');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -6,28 +7,63 @@ const logger = require('../utils/logger');
 const { resolvePrimaryWallet, getActiveSubscriptionsForWallets } = require('../utils/userHelpers');
 
 /**
+ * Normalize a network value to the supported ENUM, or null.
+ */
+const normalizeNetwork = (network) => {
+  return network === 'solana' || network === 'xrpl' ? network : null;
+};
+
+/**
+ * Best-effort lookup of a DB collection for a chatroom identifier (for display
+ * enrichment only — the chatroom works whether or not the collection is in the DB).
+ *   - numeric identifier  -> XRPL taxon
+ *   - everything else      -> Solana mint address
+ */
+const findDbCollection = async (collectionId, network) => {
+  if (!collectionId) return null;
+  const where = {};
+  if (/^\d+$/.test(String(collectionId))) {
+    where.taxon = parseInt(collectionId, 10);
+  } else {
+    where.mintAddress = collectionId;
+  }
+  if (network) where.network = network;
+  try {
+    return await Collection.findOne({
+      where,
+      attributes: ['id', 'name', 'slug', 'image', 'network', 'mintAddress', 'taxon', 'creatorWalletAddress']
+    });
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
  * Send a message to a collection chatroom.
- * Any registered user can send a message to any collection's chatroom.
+ *
+ * The chatroom is keyed by an on-chain collection identifier (Solana mint address
+ * or XRPL taxon) — the collection does NOT need to exist in our database, so anyone
+ * can chat about any collection on either network. The sender must be a known user
+ * (for identity).
  */
 const sendMessage = async (req, res, next) => {
   try {
-    let { collectionId, walletAddress, content, messageType = 'text', metadata, replyToMessageId } = req.body;
+    let { collectionId, network, walletAddress, content, messageType = 'text', metadata, replyToMessageId } = req.body;
 
-    if (!collectionId) throw new ApiError(400, 'collectionId is required');
+    if (!collectionId) throw new ApiError(400, 'collectionId is required (Solana mint address or XRPL taxon)');
     if (!walletAddress) throw new ApiError(400, 'walletAddress is required');
     if (!content || content.trim() === '') throw new ApiError(400, 'Message content is required');
 
+    collectionId = String(collectionId).trim();
+    network = normalizeNetwork(network);
     walletAddress = await resolvePrimaryWallet(walletAddress);
 
-    // Verify collection exists
-    const collection = await Collection.findByPk(collectionId);
-    if (!collection) throw new ApiError(404, 'Collection not found');
-
-    // Verify user exists
+    // Sender must be a known user (for profile/identity). The collection itself
+    // need NOT exist in our DB — chatrooms are open for any on-chain collection.
     const user = await User.findOne({ where: { walletAddress } });
     if (!user) throw new ApiError(404, 'User not found');
 
-    // Verify reply target exists if provided
+    // Verify reply target belongs to the same chatroom if provided
     if (replyToMessageId) {
       const replyTarget = await CollectionChatMessage.findByPk(replyToMessageId);
       if (!replyTarget || replyTarget.collectionId !== collectionId) {
@@ -37,6 +73,7 @@ const sendMessage = async (req, res, next) => {
 
     const message = await CollectionChatMessage.create({
       collectionId,
+      network,
       senderWalletAddress: walletAddress,
       content: content.trim(),
       messageType,
@@ -44,7 +81,7 @@ const sendMessage = async (req, res, next) => {
       replyToMessageId: replyToMessageId || null
     });
 
-    logger.info(`Collection chat message sent: ${collectionId} by ${walletAddress}`);
+    logger.info(`Collection chat message sent: ${collectionId} (${network || 'unknown'}) by ${walletAddress}`);
 
     // Fetch with sender info
     const fullMessage = await CollectionChatMessage.findByPk(message.id, {
@@ -71,19 +108,15 @@ const sendMessage = async (req, res, next) => {
 };
 
 /**
- * Get messages for a collection chatroom (paginated, newest first).
+ * Get messages for a collection chatroom (paginated, newest first in DB; returned
+ * oldest-first for display). Works for any on-chain collection identifier.
  */
 const getMessages = async (req, res, next) => {
   try {
     const { collectionId } = req.params;
-    const { page = 1, limit = 50 } = req.query;
+    const { page = 1, limit = 50, network } = req.query;
 
     if (!collectionId) throw new ApiError(400, 'collectionId is required');
-
-    const collection = await Collection.findByPk(collectionId, {
-      attributes: ['id', 'name', 'slug', 'image', 'network']
-    });
-    if (!collection) throw new ApiError(404, 'Collection not found');
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -128,9 +161,13 @@ const getMessages = async (req, res, next) => {
     // Reverse for display (oldest first in UI)
     enrichedMessages.reverse();
 
+    // Best-effort collection info for the chat header (may be null if not in DB)
+    const resolvedNetwork = normalizeNetwork(network) || messages[0]?.network || null;
+    const dbCollection = await findDbCollection(collectionId, resolvedNetwork);
+
     res.status(200).json(
       new ApiResponse(200, {
-        collection: collection.toJSON(),
+        collection: dbCollection ? dbCollection.toJSON() : { collectionId, network: resolvedNetwork },
         messages: enrichedMessages,
         pagination: {
           page: parseInt(page),
@@ -146,7 +183,7 @@ const getMessages = async (req, res, next) => {
 };
 
 /**
- * Delete a message (only by the sender or collection creator).
+ * Delete a message (only by the sender, or the DB collection's creator if it exists).
  */
 const deleteMessage = async (req, res, next) => {
   try {
@@ -160,11 +197,17 @@ const deleteMessage = async (req, res, next) => {
     const message = await CollectionChatMessage.findByPk(messageId);
     if (!message) throw new ApiError(404, 'Message not found');
 
-    // Check if user is the sender or the collection creator
-    const collection = await Collection.findByPk(message.collectionId);
-    if (message.senderWalletAddress !== walletAddress && collection?.creatorWalletAddress !== walletAddress) {
-      throw new ApiError(403, 'You can only delete your own messages');
+    let canDelete = message.senderWalletAddress === walletAddress;
+
+    // If the collection happens to exist in our DB, its creator can also moderate
+    if (!canDelete) {
+      const dbCollection = await findDbCollection(message.collectionId, message.network);
+      if (dbCollection && dbCollection.creatorWalletAddress === walletAddress) {
+        canDelete = true;
+      }
     }
+
+    if (!canDelete) throw new ApiError(403, 'You can only delete your own messages');
 
     await message.destroy();
 
@@ -179,67 +222,51 @@ const deleteMessage = async (req, res, next) => {
 };
 
 /**
- * Get all collections that have chatrooms (collections in DB with message counts).
+ * Get the active chatrooms — i.e. collections people are actually chatting about
+ * (distinct on-chain collection identifiers that have messages), regardless of
+ * whether the collection exists in our DB. Enriched with DB collection info when
+ * available.
  */
 const getChatrooms = async (req, res, next) => {
   try {
     const { page = 1, limit = 20, network } = req.query;
-
-    const where = {};
-    if (network) where.network = network;
-
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const collections = await Collection.findAll({
-      where,
-      attributes: [
-        'id', 'name', 'slug', 'image', 'network', 'mintAddress', 'taxon',
-        'creatorWalletAddress', 'category'
-      ],
-      include: [{
-        association: 'creator',
-        attributes: ['walletAddress', 'username', 'profileImage', 'isVerified']
-      }],
-      order: [['createdAt', 'DESC']],
-      limit: parseInt(limit),
-      offset
-    });
+    const where = {};
+    const normalizedNetwork = normalizeNetwork(network);
+    if (normalizedNetwork) where.network = normalizedNetwork;
 
-    // Get message counts + last message for each collection
-    const collectionIds = collections.map(c => c.id);
-    const messageCounts = collectionIds.length > 0 ? await CollectionChatMessage.findAll({
-      attributes: [
-        'collectionId',
-        [require('sequelize').fn('COUNT', require('sequelize').col('id')), 'messageCount'],
-        [require('sequelize').fn('MAX', require('sequelize').col('createdAt')), 'lastMessageAt']
-      ],
-      where: { collectionId: { [Op.in]: collectionIds } },
-      group: ['collectionId'],
-      raw: true
-    }) : [];
+    const [rooms, total] = await Promise.all([
+      CollectionChatMessage.findAll({
+        attributes: [
+          'collectionId',
+          'network',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'messageCount'],
+          [sequelize.fn('MAX', sequelize.col('createdAt')), 'lastMessageAt']
+        ],
+        where,
+        group: ['collectionId', 'network'],
+        order: [[sequelize.fn('MAX', sequelize.col('createdAt')), 'DESC']],
+        limit: parseInt(limit),
+        offset,
+        raw: true
+      }),
+      CollectionChatMessage.count({ where, distinct: true, col: 'collectionId' })
+    ]);
 
-    const countMap = {};
-    messageCounts.forEach(mc => {
-      countMap[mc.collectionId] = {
-        messageCount: parseInt(mc.messageCount),
-        lastMessageAt: mc.lastMessageAt
+    // Enrich each room with DB collection info when it exists
+    const enriched = await Promise.all(rooms.map(async (r) => {
+      const dbCollection = await findDbCollection(r.collectionId, r.network);
+      return {
+        collectionId: r.collectionId,
+        network: r.network || dbCollection?.network || null,
+        collection: dbCollection ? dbCollection.toJSON() : null,
+        chat: {
+          messageCount: parseInt(r.messageCount),
+          lastMessageAt: r.lastMessageAt
+        }
       };
-    });
-
-    const enriched = collections.map(c => ({
-      ...c.toJSON(),
-      chat: countMap[c.id] || { messageCount: 0, lastMessageAt: null }
     }));
-
-    // Sort: most recent chat activity first
-    enriched.sort((a, b) => {
-      if (a.chat.lastMessageAt && b.chat.lastMessageAt) {
-        return new Date(b.chat.lastMessageAt) - new Date(a.chat.lastMessageAt);
-      }
-      if (a.chat.lastMessageAt) return -1;
-      if (b.chat.lastMessageAt) return 1;
-      return 0;
-    });
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -247,8 +274,8 @@ const getChatrooms = async (req, res, next) => {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: collections.length,
-          totalPages: 1
+          total,
+          totalPages: Math.ceil(total / parseInt(limit))
         }
       }, 'Collection chatrooms retrieved successfully')
     );

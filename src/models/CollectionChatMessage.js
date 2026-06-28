@@ -7,9 +7,14 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     collectionId: {
-      type: DataTypes.UUID,
+      type: DataTypes.STRING(100),
       allowNull: false,
-      comment: 'Reference to the collection this chatroom belongs to'
+      comment: 'On-chain collection identifier — Solana mint address or XRPL taxon (no FK; works for any blockchain collection)'
+    },
+    network: {
+      type: DataTypes.ENUM('xrpl', 'solana'),
+      allowNull: true,
+      comment: 'Blockchain network of the collection this chatroom belongs to'
     },
     senderWalletAddress: {
       type: DataTypes.STRING(100),
@@ -41,6 +46,7 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       { fields: ['collectionId', 'createdAt'], name: 'idx_colchat_collection_time' },
       { fields: ['senderWalletAddress'], name: 'idx_colchat_sender' },
+      { fields: ['network'], name: 'idx_colchat_network' },
       { fields: ['createdAt'], name: 'idx_colchat_created' }
     ]
   });
