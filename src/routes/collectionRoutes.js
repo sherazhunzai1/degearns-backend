@@ -25,9 +25,9 @@ router.post('/list', listCollection);
 
 /**
  * @route   POST /api/v1/collections/delist
- * @desc    Delist (delete) a collection from the DB. Identify by on-chain id + owner:
- *          Solana { mintAddress, ownerWalletAddress } | XRPL { taxon, ownerWalletAddress }.
- * @access  Public (ownership-verified)
+ * @desc    Delist (delete) a collection from the DB by on-chain id.
+ *          Solana { mintAddress } | XRPL { taxon (+ optional ownerWalletAddress) }.
+ * @access  Public (no ownership check)
  */
 router.post('/delist', delist);
 

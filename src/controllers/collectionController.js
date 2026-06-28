@@ -2235,50 +2235,42 @@ const getCollectionHistory = async (req, res, next) => {
 /**
  * Delist (delete) a collection from the marketplace DB.
  *
- * Identify the collection by its on-chain identifier + owner wallet:
- *   - Solana: { mintAddress, ownerWalletAddress }
- *   - XRPL:   { taxon, ownerWalletAddress }
+ * Identify the collection by its on-chain identifier:
+ *   - Solana: { mintAddress }
+ *   - XRPL:   { taxon }  (optionally + ownerWalletAddress to disambiguate, since
+ *             taxon is unique per creator)
  *
- * Ownership-verified — the wallet must be the collection's creator/owner. Removes
- * the DB record only (nothing on-chain). Blocked while drops still reference the
- * collection, to protect mint history.
+ * No ownership check — any caller can delist. Removes the DB record only (nothing
+ * on-chain). Blocked while drops still reference the collection, to protect mint
+ * history.
  */
 const delist = async (req, res, next) => {
   try {
     const { mintAddress, taxon, ownerWalletAddress } = req.body;
-
-    if (!ownerWalletAddress) {
-      throw new ApiError(400, 'ownerWalletAddress is required');
-    }
 
     const hasTaxon = taxon !== undefined && taxon !== null && taxon !== '';
     if (!mintAddress && !hasTaxon) {
       throw new ApiError(400, 'Provide mintAddress (Solana) or taxon (XRPL)');
     }
 
-    // Resolve the collection by its network-specific identifier
+    // Resolve the collection by its network-specific identifier (no owner check)
     let collection;
     if (mintAddress) {
       collection = await Collection.findOne({ where: { mintAddress, network: 'solana' } });
-      if (!collection) {
-        throw new ApiError(404, 'Collection not found');
-      }
-      if (collection.creatorWalletAddress !== ownerWalletAddress) {
-        throw new ApiError(403, 'You are not the owner of this collection');
-      }
     } else {
       const taxonNum = parseInt(taxon, 10);
       if (isNaN(taxonNum)) {
         throw new ApiError(400, 'taxon must be a number');
       }
-      // XRPL collections are unique per (taxon, creatorWalletAddress)
-      collection = await Collection.findOne({
-        where: { taxon: taxonNum, creatorWalletAddress: ownerWalletAddress, network: 'xrpl' }
-      });
-      if (!collection) {
-        const exists = await Collection.findOne({ where: { taxon: taxonNum, network: 'xrpl' }, attributes: ['id'] });
-        throw new ApiError(exists ? 403 : 404, exists ? 'You are not the owner of this collection' : 'Collection not found');
-      }
+      // taxon is unique per creator on XRPL — if ownerWalletAddress is provided,
+      // use it to target the exact collection; otherwise take the latest match.
+      const where = { taxon: taxonNum, network: 'xrpl' };
+      if (ownerWalletAddress) where.creatorWalletAddress = ownerWalletAddress;
+      collection = await Collection.findOne({ where, order: [['createdAt', 'DESC']] });
+    }
+
+    if (!collection) {
+      throw new ApiError(404, 'Collection not found');
     }
 
     // Protect mint history: block delisting while drops still reference it
@@ -2288,11 +2280,12 @@ const delist = async (req, res, next) => {
     }
 
     const snapshot = collection.toJSON();
+    const actor = ownerWalletAddress || snapshot.creatorWalletAddress;
 
     // Best-effort audit log — visible via GET /admin/dashboard/activities?action=collection_delete
     try {
       await AdminActivity.create({
-        adminWalletAddress: ownerWalletAddress,
+        adminWalletAddress: actor,
         action: 'collection_delete',
         targetType: 'collection',
         targetId: collection.id,
@@ -2306,7 +2299,7 @@ const delist = async (req, res, next) => {
 
     await collection.destroy();
 
-    logger.info(`Collection delisted: ${snapshot.name} (${snapshot.network}, id=${snapshot.id}) by ${ownerWalletAddress}`);
+    logger.info(`Collection delisted: ${snapshot.name} (${snapshot.network}, id=${snapshot.id})`);
 
     res.status(200).json(
       new ApiResponse(200, {
@@ -2315,7 +2308,7 @@ const delist = async (req, res, next) => {
         network: snapshot.network,
         mintAddress: snapshot.mintAddress || null,
         taxon: snapshot.taxon ?? null,
-        ownerWalletAddress
+        creatorWalletAddress: snapshot.creatorWalletAddress
       }, 'Collection delisted successfully')
     );
   } catch (error) {
