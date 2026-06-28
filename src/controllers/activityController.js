@@ -722,10 +722,13 @@ exports.logNftList = async (req, res) => {
  */
 exports.logNftDelist = async (req, res) => {
   try {
-    const {
+    let {
       walletAddress,
       nftTokenId,
+      mintAddress,
       taxon,
+      collectionMintAddress,
+      network,
       issuerAddress,
       transactionHash,
       offerId,
@@ -739,6 +742,12 @@ exports.logNftDelist = async (req, res) => {
     if (!transactionHash) {
       throw new ApiError(400, 'Transaction hash is required');
     }
+
+    const resolvedNetwork = network === 'solana' || mintAddress || collectionMintAddress ? 'solana' : 'xrpl';
+
+    // Resolve linked wallet to primary user wallet — the ActivityLog FK references
+    // Users.walletAddress, so a linked (e.g. Solana) wallet must map to its primary.
+    walletAddress = await resolvePrimaryWallet(walletAddress);
 
     // Check for duplicate
     const existingActivity = await ActivityLog.findOne({
@@ -765,15 +774,18 @@ exports.logNftDelist = async (req, res) => {
       relatedType: 'nft',
       transactionHash: transactionHash,
       metadata: {
-        nftTokenId: nftTokenId || null,
+        nftTokenId: nftTokenId || mintAddress || null,
+        mintAddress: mintAddress || nftTokenId || null,
         taxon: taxon || null,
+        collectionMintAddress: collectionMintAddress || null,
+        network: resolvedNetwork,
         issuerAddress: issuerAddress || null,
         offerId: offerId || null,
         ...metadata
       }
     });
 
-    logger.info(`NFT delist activity logged: ${walletAddress} delisted NFT`);
+    logger.info(`NFT delist activity logged: ${walletAddress} delisted ${resolvedNetwork} NFT, tx: ${transactionHash}`);
 
     res.status(201).json(
       new ApiResponse(201, { activity }, 'NFT delisting activity logged successfully')
@@ -785,6 +797,14 @@ exports.logNftDelist = async (req, res) => {
         success: false,
         statusCode: error.statusCode,
         message: error.message
+      });
+    }
+    // Wallet not registered as a primary user (FK to Users.walletAddress)
+    if (error.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(400).json({
+        success: false,
+        statusCode: 400,
+        message: 'Wallet is not a registered user. Please sign in before logging activity.'
       });
     }
     res.status(500).json({
