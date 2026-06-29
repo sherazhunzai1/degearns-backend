@@ -1125,6 +1125,16 @@ const getUserCollections = async (req, res, next) => {
       walletsToQuery = [{ address: walletAddress, network }];
     }
 
+    // De-duplicate wallets (a wallet can be linked more than once) to avoid
+    // fetching — and therefore returning — the same collections multiple times
+    const seenWallets = new Set();
+    walletsToQuery = walletsToQuery.filter(w => {
+      const key = `${w.network}:${w.address}`;
+      if (seenWallets.has(key)) return false;
+      seenWallets.add(key);
+      return true;
+    });
+
     logger.info(`Fetching collections for ${walletsToQuery.length} wallet(s): ${walletsToQuery.map(w => `${w.address.slice(0, 8)}...(${w.network})`).join(', ')}`);
 
     // Fetch collections from each network in parallel
@@ -1154,11 +1164,30 @@ const getUserCollections = async (req, res, next) => {
       return b.items - a.items;
     });
 
+    // De-duplicate per network by a STABLE identity (the same collection can be held
+    // across multiple linked wallets, and unregistered XRPL collections get a random
+    // id on each fetch). Sorted first, so the best entry (registered / most items) is kept.
+    //   - Solana: collection mint address (or the NFT mint for standalone items)
+    //   - XRPL:   taxon + issuer (creator wallet)
+    const collectionKey = (c) => {
+      if (c.network === 'solana') {
+        return `solana:${c.collectionMintAddress || c.id}`;
+      }
+      return `xrpl:${c.taxon}:${c.creator?.walletAddress || ''}`;
+    };
+    const seenCollections = new Set();
+    const collections = allCollections.filter(c => {
+      const key = collectionKey(c);
+      if (seenCollections.has(key)) return false;
+      seenCollections.add(key);
+      return true;
+    });
+
     res.status(200).json(
       new ApiResponse(200, {
         wallets: walletsToQuery,
-        totalCollections: allCollections.length,
-        collections: allCollections
+        totalCollections: collections.length,
+        collections
       }, 'Collections retrieved successfully')
     );
   } catch (error) {
