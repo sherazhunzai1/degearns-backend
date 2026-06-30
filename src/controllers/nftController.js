@@ -2,6 +2,7 @@ const xrplService = require('../services/xrplService');
 const bithompService = require('../services/bithompService');
 const solanaService = require('../services/solanaService');
 const solanaMarketplaceService = require('../services/solanaMarketplaceService');
+const nftService = require('../services/nftService');
 const { User, Collection, NftBoost, SolanaNftListing, Nft } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
@@ -1084,32 +1085,13 @@ exports.getSolanaNftHistory = async (req, res, next) => {
  */
 exports.saveNft = async (req, res, next) => {
   try {
-    let {
-      network,
-      nftTokenId,
-      mintAddress,
-      name,
-      description,
-      image,
-      metadataUri,
-      attributes,
-      collectionId,
-      taxon,
-      issuerWalletAddress,
-      ownerWalletAddress,
-      minterWalletAddress,
-      mintTransactionHash,
-      royaltyPercentage,
-      metadata
-    } = req.body;
-
-    network = (network || '').toLowerCase();
+    const network = String(req.body.network || '').toLowerCase();
     if (network !== 'xrpl' && network !== 'solana') {
       throw new ApiError(400, 'network must be "xrpl" or "solana"');
     }
 
     // Solana usually identifies the NFT by its mint address
-    const tokenId = nftTokenId || mintAddress;
+    const tokenId = req.body.nftTokenId || req.body.mintAddress;
     if (!tokenId) {
       throw new ApiError(400, network === 'solana'
         ? 'mintAddress (or nftTokenId) is required'
@@ -1120,48 +1102,11 @@ exports.saveNft = async (req, res, next) => {
       throw new ApiError(400, 'Invalid Solana mint address');
     }
 
-    const ownerWallet = ownerWalletAddress || minterWalletAddress || null;
+    const { nft, created } = await nftService.saveNft({ ...req.body, network });
 
-    const fields = {
-      network,
-      nftTokenId: tokenId,
-      mintAddress: network === 'solana' ? (mintAddress || tokenId) : (mintAddress || null),
-      name: name || null,
-      description: description || null,
-      image: image || null,
-      metadataUri: metadataUri || null,
-      attributes: attributes || null,
-      collectionId: collectionId != null && collectionId !== '' ? String(collectionId) : null,
-      taxon: (taxon !== undefined && taxon !== null && taxon !== '') ? parseInt(taxon, 10) : null,
-      issuerWalletAddress: issuerWalletAddress || null,
-      ownerWalletAddress: ownerWallet,
-      minterWalletAddress: minterWalletAddress || ownerWallet || null,
-      mintTransactionHash: mintTransactionHash || null,
-      royaltyPercentage: (royaltyPercentage !== undefined && royaltyPercentage !== null && royaltyPercentage !== '') ? royaltyPercentage : null,
-      metadata: metadata || null,
-      isActive: true
-    };
-
-    // Upsert by (nftTokenId, network)
-    const existing = await Nft.findOne({ where: { nftTokenId: tokenId, network } });
-    if (existing) {
-      // Only overwrite with values that were actually provided (don't null out data)
-      const updateFields = {};
-      Object.entries(fields).forEach(([k, v]) => {
-        if (k === 'network' || k === 'nftTokenId') return;
-        if (v !== null && v !== undefined) updateFields[k] = v;
-      });
-      await existing.update(updateFields);
-      logger.info(`NFT updated: ${network} ${tokenId}`);
-      return res.status(200).json(
-        new ApiResponse(200, existing, 'NFT already saved — record updated')
-      );
-    }
-
-    const nft = await Nft.create(fields);
-    logger.info(`NFT saved: ${network} ${tokenId} owner=${ownerWallet || 'unknown'}`);
-    res.status(201).json(
-      new ApiResponse(201, nft, 'NFT saved successfully')
+    logger.info(`NFT ${created ? 'saved' : 'updated'}: ${network} ${tokenId}`);
+    res.status(created ? 201 : 200).json(
+      new ApiResponse(created ? 201 : 200, nft, created ? 'NFT saved successfully' : 'NFT already saved — record updated')
     );
   } catch (error) {
     next(error);

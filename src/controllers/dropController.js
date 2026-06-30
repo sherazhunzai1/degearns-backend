@@ -7,6 +7,7 @@ const xrplService = require('../services/xrplService');
 const xrplConfig = require('../config/xrpl');
 const solanaService = require('../services/solanaService');
 const chainServiceFactory = require('../services/chainServiceFactory');
+const nftService = require('../services/nftService');
 const { initBoostEngine } = require('../services/boostEngine');
 const {
   getActiveSubscriptionsForWallets,
@@ -3968,6 +3969,30 @@ const mintDropNftsByTaxon = async (req, res, next) => {
             nftImage: nft.image
           }
         }, { transaction });
+
+        // Save the freshly minted NFT to the generic Nfts table (best-effort,
+        // non-blocking — the NFT already exists on-chain regardless of this).
+        try {
+          await nftService.saveNft({
+            network: 'xrpl',
+            nftTokenId: mintResult.nftokenID,
+            name: nft.name,
+            description: nft.description,
+            image: nft.image,
+            metadataUri: nft.metadataUri,
+            attributes: nft.attributes,
+            collectionId: String(drop.taxonId),
+            taxon: drop.taxonId,
+            issuerWalletAddress: adminWallet.address,
+            ownerWalletAddress: buyerWalletAddress,
+            minterWalletAddress: buyerWalletAddress,
+            mintTransactionHash: mintResult.hash,
+            royaltyPercentage: drop.royaltyPercentage,
+            metadata: { source: 'drop-mint', dropId: drop.id, mintIndex }
+          });
+        } catch (nftSaveErr) {
+          logger.warn(`Could not save minted NFT ${mintResult.nftokenID} to Nfts table: ${nftSaveErr.message}`);
+        }
 
         mintedNfts.push({
           id: nft.id,
