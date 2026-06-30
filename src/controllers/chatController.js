@@ -1,4 +1,4 @@
-const { User, Conversation, Message } = require('../models');
+const { User, Conversation, Message, Follow } = require('../models');
 const { Op } = require('sequelize');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
@@ -493,8 +493,8 @@ const getUnreadCount = async (req, res, next) => {
 };
 
 /**
- * Get all users available for chat (excluding the current user)
- * This returns all registered users that can be messaged
+ * Get the users that this wallet follows (available for chat).
+ * Only returns accounts the wallet is following.
  */
 const getAllUsers = async (req, res, next) => {
   try {
@@ -509,10 +509,32 @@ const getAllUsers = async (req, res, next) => {
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    // Build where clause
+    // Get the wallets this user follows
+    const following = await Follow.findAll({
+      where: { followerWalletAddress: walletAddress },
+      attributes: ['followingWalletAddress']
+    });
+    const followingAddresses = following.map(f => f.followingWalletAddress);
+
+    // Not following anyone → empty list
+    if (followingAddresses.length === 0) {
+      return res.status(200).json(
+        new ApiResponse(200, {
+          users: [],
+          pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: 0,
+            totalPages: 0
+          }
+        }, 'Users retrieved successfully')
+      );
+    }
+
+    // Build where clause — only users this wallet follows
     const whereClause = {
       walletAddress: {
-        [Op.ne]: walletAddress // Exclude current user
+        [Op.in]: followingAddresses
       }
     };
 
@@ -546,7 +568,7 @@ const getAllUsers = async (req, res, next) => {
       subscriptionPlan: subscriptionMap[user.walletAddress] || 'free'
     }));
 
-    logger.info(`All users fetched for chat by wallet: ${walletAddress}`);
+    logger.info(`Followed users fetched for chat by wallet: ${walletAddress} (${count} following)`);
 
     res.status(200).json(
       new ApiResponse(200, {
