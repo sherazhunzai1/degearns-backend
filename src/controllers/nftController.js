@@ -69,6 +69,66 @@ exports.getNFTDetail = async (req, res) => {
       const royaltyBasisPoints = asset.royalty?.basis_points || 0;
       const royaltyPercentage = royaltyBasisPoints / 100;
 
+      // Build collection info (parallel to the XRPL collection object)
+      let collectionInfo = null;
+      if (collectionAddress) {
+        let colName = collection?.name || null;
+        let colImage = collection?.image || null;
+        let colDescription = collection?.description || null;
+
+        // Fall back to the on-chain collection NFT's own metadata
+        if (!colName || !colImage || !colDescription) {
+          try {
+            const colAsset = await solanaService.getAsset(collectionAddress);
+            if (colAsset) {
+              colName = colName || colAsset.content?.metadata?.name || null;
+              colImage = colImage || colAsset.content?.links?.image || colAsset.content?.files?.[0]?.uri || null;
+              colDescription = colDescription || colAsset.content?.metadata?.description || null;
+            }
+          } catch (e) {
+            logger.warn(`Could not fetch Solana collection asset ${collectionAddress}: ${e.message}`);
+          }
+        }
+
+        // Total supply (NFTs in the collection) via Helius DAS group total
+        let totalSupply = 0;
+        try {
+          const colItems = await solanaService.getAssetsByCollection(collectionAddress, 1, 1);
+          totalSupply = colItems?.total || 0;
+        } catch (e) {}
+
+        // Floor price (lamports) + listed count from active marketplace listings
+        let floorPrice = null;
+        let listedCount = 0;
+        try {
+          const listings = await SolanaNftListing.findAll({
+            where: { collectionMintAddress: collectionAddress, status: 'active' },
+            attributes: ['price']
+          });
+          listedCount = listings.length;
+          let minPrice = null;
+          for (const l of listings) {
+            try {
+              const p = BigInt(l.price);
+              if (p > 0n && (minPrice === null || p < minPrice)) minPrice = p;
+            } catch (e) {}
+          }
+          if (minPrice !== null) floorPrice = minPrice.toString();
+        } catch (e) {}
+
+        collectionInfo = {
+          id: collection?.id || null,
+          mintAddress: collectionAddress,
+          name: colName,
+          image: colImage,
+          description: colDescription,
+          totalSupply,
+          floorPrice,
+          listedCount,
+          isRegistered: !!collection
+        };
+      }
+
       return res.status(200).json(new ApiResponse(200, {
         nftTokenId,
         network: 'solana',
@@ -81,7 +141,7 @@ exports.getNFTDetail = async (req, res) => {
           ...creatorUser.toJSON(),
           subscriptionPlan: subscriptionMap[creatorAddress] || 'free'
         } : (creatorAddress ? { walletAddress: creatorAddress } : null),
-        collection: collection ? collection.toJSON() : (collectionAddress ? { mintAddress: collectionAddress } : null),
+        collection: collectionInfo,
         owner: ownerAddress,
         ownerInfo: ownerUser ? {
           ...ownerUser.toJSON(),
