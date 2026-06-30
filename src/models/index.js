@@ -32,6 +32,7 @@ const ActivityLog = require('./ActivityLog')(sequelize, DataTypes);
 const PostView = require('./PostView')(sequelize, DataTypes);
 const PostBoost = require('./PostBoost')(sequelize, DataTypes);
 const NftBoost = require('./NftBoost')(sequelize, DataTypes);
+const Nft = require('./Nft')(sequelize, DataTypes);
 const CollectionBoost = require('./CollectionBoost')(sequelize, DataTypes);
 const Repost = require('./Repost')(sequelize, DataTypes);
 const LuckyDraw = require('./LuckyDraw')(sequelize, DataTypes);
@@ -805,6 +806,7 @@ module.exports = {
   PostView,
   PostBoost,
   NftBoost,
+  Nft,
   CollectionBoost,
   Follow,
   Notification,

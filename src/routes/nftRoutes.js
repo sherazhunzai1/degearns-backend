@@ -12,7 +12,9 @@ const {
   createSolanaListing,
   cancelSolanaListing,
   getSolanaListings,
-  getSolanaNftHistory
+  getSolanaNftHistory,
+  saveNft,
+  getMintedNfts
 } = require('../controllers/nftController');
 
 /**
@@ -37,6 +39,27 @@ router.get('/solana/wallet/:walletAddress', getSolanaNFTsByOwner);
  * @query   page, limit
  */
 router.get('/solana/collection/:collectionMintAddress', getSolanaNFTsByCollection);
+
+/**
+ * @route   POST /api/v1/nfts/minted
+ * @desc    Save a newly minted NFT to the DB (XRPL or Solana, with metadata).
+ *          Idempotent on (nftTokenId, network).
+ * @body    network, nftTokenId (or mintAddress for Solana), name, description, image,
+ *          metadataUri, attributes, collectionId, taxon, issuerWalletAddress,
+ *          ownerWalletAddress, minterWalletAddress, mintTransactionHash,
+ *          royaltyPercentage, metadata
+ * @access  Public
+ */
+router.post('/minted', saveNft);
+
+/**
+ * @route   GET /api/v1/nfts/minted
+ * @desc    Fetch newly minted NFTs saved in the DB (newest first)
+ * @query   page, limit, network, ownerWalletAddress, minterWalletAddress,
+ *          collectionId, taxon, issuerWalletAddress, search, sortBy, order
+ * @access  Public
+ */
+router.get('/minted', getMintedNfts);
 
 /**
  * @route   GET /api/v1/nfts/:nftTokenId

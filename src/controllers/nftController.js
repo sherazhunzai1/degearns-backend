@@ -2,7 +2,7 @@ const xrplService = require('../services/xrplService');
 const bithompService = require('../services/bithompService');
 const solanaService = require('../services/solanaService');
 const solanaMarketplaceService = require('../services/solanaMarketplaceService');
-const { User, Collection, NftBoost, SolanaNftListing } = require('../models');
+const { User, Collection, NftBoost, SolanaNftListing, Nft } = require('../models');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 const notificationService = require('../services/notificationService');
@@ -1069,6 +1069,165 @@ exports.getSolanaNftHistory = async (req, res, next) => {
         totalSales: history.length,
         history: enrichedHistory
       }, 'NFT sale history retrieved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Save a newly minted NFT to the database (works for both XRPL and Solana).
+ * Idempotent: keyed by (nftTokenId, network) — a repeat save updates the record
+ * with any newly provided fields instead of erroring.
+ *
+ * @route POST /api/v1/nfts/minted
+ */
+exports.saveNft = async (req, res, next) => {
+  try {
+    let {
+      network,
+      nftTokenId,
+      mintAddress,
+      name,
+      description,
+      image,
+      metadataUri,
+      attributes,
+      collectionId,
+      taxon,
+      issuerWalletAddress,
+      ownerWalletAddress,
+      minterWalletAddress,
+      mintTransactionHash,
+      royaltyPercentage,
+      metadata
+    } = req.body;
+
+    network = (network || '').toLowerCase();
+    if (network !== 'xrpl' && network !== 'solana') {
+      throw new ApiError(400, 'network must be "xrpl" or "solana"');
+    }
+
+    // Solana usually identifies the NFT by its mint address
+    const tokenId = nftTokenId || mintAddress;
+    if (!tokenId) {
+      throw new ApiError(400, network === 'solana'
+        ? 'mintAddress (or nftTokenId) is required'
+        : 'nftTokenId is required');
+    }
+
+    if (network === 'solana' && !solanaService.isValidAddress(tokenId)) {
+      throw new ApiError(400, 'Invalid Solana mint address');
+    }
+
+    const ownerWallet = ownerWalletAddress || minterWalletAddress || null;
+
+    const fields = {
+      network,
+      nftTokenId: tokenId,
+      mintAddress: network === 'solana' ? (mintAddress || tokenId) : (mintAddress || null),
+      name: name || null,
+      description: description || null,
+      image: image || null,
+      metadataUri: metadataUri || null,
+      attributes: attributes || null,
+      collectionId: collectionId != null && collectionId !== '' ? String(collectionId) : null,
+      taxon: (taxon !== undefined && taxon !== null && taxon !== '') ? parseInt(taxon, 10) : null,
+      issuerWalletAddress: issuerWalletAddress || null,
+      ownerWalletAddress: ownerWallet,
+      minterWalletAddress: minterWalletAddress || ownerWallet || null,
+      mintTransactionHash: mintTransactionHash || null,
+      royaltyPercentage: (royaltyPercentage !== undefined && royaltyPercentage !== null && royaltyPercentage !== '') ? royaltyPercentage : null,
+      metadata: metadata || null,
+      isActive: true
+    };
+
+    // Upsert by (nftTokenId, network)
+    const existing = await Nft.findOne({ where: { nftTokenId: tokenId, network } });
+    if (existing) {
+      // Only overwrite with values that were actually provided (don't null out data)
+      const updateFields = {};
+      Object.entries(fields).forEach(([k, v]) => {
+        if (k === 'network' || k === 'nftTokenId') return;
+        if (v !== null && v !== undefined) updateFields[k] = v;
+      });
+      await existing.update(updateFields);
+      logger.info(`NFT updated: ${network} ${tokenId}`);
+      return res.status(200).json(
+        new ApiResponse(200, existing, 'NFT already saved — record updated')
+      );
+    }
+
+    const nft = await Nft.create(fields);
+    logger.info(`NFT saved: ${network} ${tokenId} owner=${ownerWallet || 'unknown'}`);
+    res.status(201).json(
+      new ApiResponse(201, nft, 'NFT saved successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Fetch newly minted NFTs saved in the database (newest first by default).
+ * Filterable by network, owner, minter, collection, taxon, issuer, or search.
+ *
+ * @route GET /api/v1/nfts/minted
+ */
+exports.getMintedNfts = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      network,
+      ownerWalletAddress,
+      minterWalletAddress,
+      collectionId,
+      taxon,
+      issuerWalletAddress,
+      search,
+      sortBy = 'createdAt',
+      order = 'DESC'
+    } = req.query;
+
+    const where = { isActive: true };
+    if (network) where.network = network;
+    if (ownerWalletAddress) where.ownerWalletAddress = ownerWalletAddress;
+    if (minterWalletAddress) where.minterWalletAddress = minterWalletAddress;
+    if (collectionId) where.collectionId = String(collectionId);
+    if (taxon !== undefined && taxon !== '') where.taxon = parseInt(taxon, 10);
+    if (issuerWalletAddress) where.issuerWalletAddress = issuerWalletAddress;
+    if (search) {
+      where[Op.or] = [
+        { name: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } },
+        { nftTokenId: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    const allowedSort = ['createdAt', 'updatedAt', 'name'];
+    const sortField = allowedSort.includes(sortBy) ? sortBy : 'createdAt';
+    const sortOrder = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    const { count, rows: nfts } = await Nft.findAndCountAll({
+      where,
+      order: [[sortField, sortOrder]],
+      limit: parseInt(limit),
+      offset
+    });
+
+    res.status(200).json(
+      new ApiResponse(200, {
+        nfts,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: count,
+          totalPages: Math.ceil(count / parseInt(limit))
+        }
+      }, 'Minted NFTs retrieved successfully')
     );
   } catch (error) {
     next(error);
