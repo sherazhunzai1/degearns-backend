@@ -1377,6 +1377,31 @@ const recordMint = async (req, res, next) => {
 
     logger.info(`Mint recorded: ${nftTokenId} for drop ${id} by ${minterWalletAddress}`);
 
+    // Persist the newly minted NFT to the generic Nfts table (best-effort, post-commit)
+    try {
+      const isSolana = (drop.network || 'xrpl') === 'solana';
+      await nftService.saveNft({
+        network: drop.network || 'xrpl',
+        nftTokenId,
+        mintAddress: isSolana ? nftTokenId : null,
+        name: metadata?.nftName || metadata?.name || null,
+        description: metadata?.description || null,
+        image: metadata?.nftImage || metadata?.image || null,
+        attributes: metadata?.attributes || null,
+        metadataUri: nftUri || null,
+        collectionId: isSolana ? (drop.collectionMintAddress || null) : (drop.taxonId != null ? String(drop.taxonId) : null),
+        taxon: isSolana ? null : drop.taxonId,
+        issuerWalletAddress: drop.authorizedMinterWallet || drop.creatorWalletAddress || null,
+        ownerWalletAddress: minterWalletAddress,
+        minterWalletAddress,
+        mintTransactionHash: transactionHash,
+        royaltyPercentage: drop.royaltyPercentage,
+        metadata: { source: 'drop-record-mint', dropId: drop.id, mintIndex }
+      });
+    } catch (nftSaveErr) {
+      logger.warn(`Could not save recorded mint ${nftTokenId} to Nfts table: ${nftSaveErr.message}`);
+    }
+
     // Fetch mint with associations
     const recordedMint = await DropMint.findByPk(mint.id, {
       include: [
@@ -2451,6 +2476,33 @@ const confirmMint = async (req, res, next) => {
     await transaction.commit();
 
     logger.info(`Confirmed ${confirmedMints.length} mints for drop ${id} by ${minterWalletAddress}`);
+
+    // Persist confirmed NFTs to the generic Nfts table (best-effort, post-commit)
+    const isSolanaDrop = (drop.network || 'xrpl') === 'solana';
+    for (const cm of confirmedMints) {
+      try {
+        await nftService.saveNft({
+          network: drop.network || 'xrpl',
+          nftTokenId: cm.mint.nftTokenId,
+          mintAddress: isSolanaDrop ? cm.mint.nftTokenId : null,
+          name: cm.nft.name,
+          description: cm.nft.description,
+          image: cm.nft.image,
+          attributes: cm.nft.attributes,
+          metadataUri: cm.nft.metadataUri,
+          collectionId: isSolanaDrop ? (drop.collectionMintAddress || null) : (drop.taxonId != null ? String(drop.taxonId) : null),
+          taxon: isSolanaDrop ? null : drop.taxonId,
+          issuerWalletAddress: drop.authorizedMinterWallet || drop.creatorWalletAddress || null,
+          ownerWalletAddress: minterWalletAddress,
+          minterWalletAddress,
+          mintTransactionHash: cm.mint.transactionHash,
+          royaltyPercentage: drop.royaltyPercentage,
+          metadata: { source: 'drop-confirm-mint', dropId: drop.id, mintIndex: cm.mint.mintIndex }
+        });
+      } catch (nftSaveErr) {
+        logger.warn(`Could not save confirmed mint ${cm.mint.nftTokenId} to Nfts table: ${nftSaveErr.message}`);
+      }
+    }
 
     res.status(200).json(
       new ApiResponse(200, {
