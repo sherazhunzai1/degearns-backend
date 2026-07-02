@@ -162,6 +162,47 @@ async function getJupiterPrice(mintAddress, vsToken = USDC_MINT) {
 }
 
 /**
+ * Read the current token price directly from a liquidity pool's on-chain vault
+ * balances (SOL/quote per token). Used as a fallback when Jupiter hasn't indexed a
+ * brand-new token yet but the frontend knows the pool address. Assumes a Raydium
+ * CPMM-style layout (token_0_vault @72, token_1_vault @104, mint_0 @168, mint_1 @200).
+ *
+ * @returns {Promise<{price:number, baseBalance:number, quoteBalance:number}|null>}
+ */
+async function getOnChainPoolPrice(poolAddress, mintAddress) {
+  try {
+    if (!poolAddress || !mintAddress) return null;
+    const connection = solanaConfig.getConnection();
+    const accountInfo = await connection.getAccountInfo(new PublicKey(poolAddress));
+    if (!accountInfo || !accountInfo.data || accountInfo.data.length < 232) return null;
+
+    const data = accountInfo.data;
+    const vault0 = new PublicKey(data.slice(72, 104));
+    const vault1 = new PublicKey(data.slice(104, 136));
+    const mint0 = new PublicKey(data.slice(168, 200)).toBase58();
+    const mint1 = new PublicKey(data.slice(200, 232)).toBase58();
+
+    const [vault0Info, vault1Info] = await Promise.all([
+      connection.getParsedAccountInfo(vault0),
+      connection.getParsedAccountInfo(vault1)
+    ]);
+    const balance0 = parseFloat(vault0Info.value?.data?.parsed?.info?.tokenAmount?.uiAmountString || '0');
+    const balance1 = parseFloat(vault1Info.value?.data?.parsed?.info?.tokenAmount?.uiAmountString || '0');
+
+    let baseBalance, quoteBalance;
+    if (mint0 === mintAddress) { baseBalance = balance0; quoteBalance = balance1; }
+    else if (mint1 === mintAddress) { baseBalance = balance1; quoteBalance = balance0; }
+    else return null;
+
+    if (!baseBalance || baseBalance === 0) return null;
+    return { price: quoteBalance / baseBalance, baseBalance, quoteBalance };
+  } catch (error) {
+    logger.warn(`On-chain pool price read failed for ${poolAddress}: ${error.message}`);
+    return null;
+  }
+}
+
+/**
  * Discover NFT mint addresses held by a wallet.
  * An SPL token is treated as an NFT when it has 0 decimals and a balance of 1.
  * @returns {Promise<string[]>} Array of NFT mint addresses
@@ -384,5 +425,6 @@ module.exports = {
   getJupiterQuote,
   buildJupiterSwapTransaction,
   getJupiterPrice,
+  getOnChainPoolPrice,
   getNetworkInfo
 };

@@ -1309,7 +1309,7 @@ const compute24hStats = async (trades, currentPrice) => {
 const getPriceHistory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { interval = '1h', from, to, currencyHex, issuerWalletAddress, mintAddress, tokenSymbol } = req.query;
+    const { interval = '1h', from, to, currencyHex, issuerWalletAddress, mintAddress, poolAddress, tokenSymbol } = req.query;
 
     const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
 
@@ -1521,138 +1521,158 @@ const getPriceHistory = async (req, res, next) => {
       );
     }
 
-    // For Solana — fetch from Helius enhanced transactions API
+    // For Solana — merge DB-recorded trades with on-chain Helius swaps, then
+    // resolve the current price via Jupiter → on-chain pool vaults → latest trade.
     if (mintAddress) {
+      // Resolve token symbol (best-effort)
+      let solTokenSymbol = mintAddress.slice(0, 8);
       try {
-        const rawTxs = await solanaService.getTokenTransactions(mintAddress, 500);
-        const trades = rawTxs
-          .map(tx => solanaService.parseHeliusSwap(tx, mintAddress))
-          .filter(t => t !== null && t.timestamp && t.timestamp >= fromDate && t.timestamp <= toDate);
+        const asset = await solanaService.getAsset(mintAddress);
+        solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
+      } catch (e) {}
 
-        // Current price (SOL-denominated, to match the Helius trade candles) from Jupiter
-        let currentSolPrice = await solanaService.getJupiterPrice(mintAddress, solanaService.SOL_MINT);
-        let solTokenSymbol = mintAddress.slice(0, 8);
-        try {
-          const asset = await solanaService.getAsset(mintAddress);
-          solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
-        } catch (e) {}
+      // Gather trades from two sources, keyed by txHash so on-chain + DB dedupe.
+      const tradesByHash = new Map();
 
-        // Fall back to the most recent trade price if Jupiter has no quote yet
-        if (currentSolPrice === 0 && trades.length > 0) {
-          currentSolPrice = trades[0].pricePerToken;
-        }
-
-        if (trades.length === 0) {
-          const stats = {
-            currentPrice: currentSolPrice,
-            changePercent24h: 0,
-            high24h: currentSolPrice,
-            low24h: currentSolPrice,
-            volumeUsd24h: 0,
-            trades24h: 0
-          };
-
-          const candles = currentSolPrice > 0 ? [{
-            time: new Date(Math.floor(Date.now() / intervalMs) * intervalMs).toISOString(),
-            open: currentSolPrice,
-            high: currentSolPrice,
-            low: currentSolPrice,
-            close: currentSolPrice,
-            volume: 0,
-            trades: 0
-          }] : [];
-
-          return res.status(200).json(
-            new ApiResponse(200, {
-              network: 'solana',
-              tokenSymbol: solTokenSymbol,
-              mintAddress,
-              stats,
-              interval,
-              from: fromDate,
-              to: toDate,
-              totalCandles: candles.length,
-              candles
-            }, currentSolPrice > 0 ? 'Price from Jupiter — no trades yet' : 'No price data available')
-          );
-        }
-
-        // Build OHLC candles
-        const buckets = {};
-        for (const trade of trades) {
-          const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
-          if (!buckets[bucketTime]) buckets[bucketTime] = { trades: [] };
-          buckets[bucketTime].trades.push(trade);
-        }
-
-        const candles = Object.entries(buckets)
-          .sort(([a], [b]) => new Date(a) - new Date(b))
-          .map(([time, bucket]) => {
-            bucket.trades.sort((a, b) => a.timestamp - b.timestamp);
-            const prices = bucket.trades.map(t => t.pricePerToken);
-            const volumes = bucket.trades.map(t => t.tokenAmount);
-            return {
-              time,
-              open: prices[0],
-              high: Math.max(...prices),
-              low: Math.min(...prices),
-              close: prices[prices.length - 1],
-              volume: volumes.reduce((sum, v) => sum + v, 0),
-              trades: bucket.trades.length
-            };
+      // Source 1: trades recorded through our platform (authoritative, always present
+      // even for brand-new tokens that no indexer/aggregator has picked up yet).
+      try {
+        const memeCoin = await findMemeCoinByIdentifier({ id, mintAddress });
+        if (memeCoin) {
+          const dbRows = await MemeCoinTrade.findAll({
+            where: {
+              memeCoinId: memeCoin.id,
+              tradedAt: { [Op.between]: [fromDate, toDate] }
+            },
+            order: [['tradedAt', 'ASC']]
           });
+          for (const r of dbRows) {
+            const key = r.txHash || `db-${r.id}`;
+            tradesByHash.set(key, {
+              txHash: r.txHash,
+              trader: r.traderWalletAddress,
+              type: r.type,
+              tokenAmount: parseFloat(r.tokenAmount) || 0,
+              pairAmount: parseFloat(r.pairAmount) || 0,
+              pairToken: r.pairToken || 'SOL',
+              pricePerToken: parseFloat(r.pricePerToken) || 0,
+              timestamp: r.tradedAt instanceof Date ? r.tradedAt : new Date(r.tradedAt)
+            });
+          }
+        }
+      } catch (e) {
+        logger.warn(`DB trade fetch failed for price-history ${mintAddress}: ${e.message}`);
+      }
 
-        // Prefer the live Jupiter price; fall back to the most recent trade
-        const latestTradePrice = currentSolPrice > 0 ? currentSolPrice : trades[0].pricePerToken;
-        const stats = await compute24hStats(trades, latestTradePrice);
+      // Source 2: on-chain swaps. Swaps live on the pool/market account, not the mint,
+      // so query the pool address when the caller supplies it and fall back to the mint.
+      const swapAddress = poolAddress || mintAddress;
+      try {
+        const rawTxs = await solanaService.getTokenTransactions(swapAddress, 500);
+        for (const tx of rawTxs || []) {
+          const parsed = solanaService.parseHeliusSwap(tx, mintAddress);
+          if (!parsed || !parsed.timestamp) continue;
+          if (parsed.timestamp < fromDate || parsed.timestamp > toDate) continue;
+          const key = parsed.txHash || `helius-${parsed.timestamp.getTime()}`;
+          if (!tradesByHash.has(key)) tradesByHash.set(key, parsed);
+        }
+      } catch (e) {
+        logger.warn(`Helius swap fetch failed for price-history ${swapAddress}: ${e.message}`);
+      }
+
+      const trades = Array.from(tradesByHash.values())
+        .filter(t => t.timestamp && t.pricePerToken > 0)
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      // Current price fallback chain: Jupiter (SOL-denominated) → on-chain pool vault
+      // ratio → most recent known trade → 0.
+      let currentSolPrice = await solanaService.getJupiterPrice(mintAddress, solanaService.SOL_MINT);
+      if ((!currentSolPrice || currentSolPrice === 0) && poolAddress) {
+        const poolPrice = await solanaService.getOnChainPoolPrice(poolAddress, mintAddress);
+        if (poolPrice && poolPrice.price > 0) currentSolPrice = poolPrice.price;
+      }
+      if ((!currentSolPrice || currentSolPrice === 0) && trades.length > 0) {
+        currentSolPrice = trades[trades.length - 1].pricePerToken;
+      }
+
+      // No trades in range: return a single candle at the current price (if we have one).
+      if (trades.length === 0) {
+        const candles = currentSolPrice > 0 ? [{
+          time: new Date(Math.floor(Date.now() / intervalMs) * intervalMs).toISOString(),
+          open: currentSolPrice,
+          high: currentSolPrice,
+          low: currentSolPrice,
+          close: currentSolPrice,
+          volume: 0,
+          trades: 0
+        }] : [];
 
         return res.status(200).json(
           new ApiResponse(200, {
             network: 'solana',
             tokenSymbol: solTokenSymbol,
             mintAddress,
-            stats,
-            interval,
-            from: fromDate,
-            to: toDate,
-            totalCandles: candles.length,
-            candles
-          }, 'Price history retrieved from on-chain')
-        );
-      } catch (err) {
-        logger.warn(`Helius price history fetch failed for ${mintAddress}: ${err.message}`);
-        // Even on Helius error, return what we can: Jupiter price (SOL-denominated)
-        let solTokenSymbolFb = mintAddress.slice(0, 8);
-        let fbPrice = await solanaService.getJupiterPrice(mintAddress, solanaService.SOL_MINT);
-        try {
-          const asset = await solanaService.getAsset(mintAddress);
-          solTokenSymbolFb = asset?.content?.metadata?.symbol || solTokenSymbolFb;
-        } catch (e2) {}
-
-        return res.status(200).json(
-          new ApiResponse(200, {
-            network: 'solana',
-            tokenSymbol: solTokenSymbolFb,
-            mintAddress,
+            poolAddress: poolAddress || null,
             stats: {
-              currentPrice: fbPrice,
+              currentPrice: currentSolPrice,
               changePercent24h: 0,
-              high24h: fbPrice,
-              low24h: fbPrice,
+              high24h: currentSolPrice,
+              low24h: currentSolPrice,
               volumeUsd24h: 0,
               trades24h: 0
             },
             interval,
             from: fromDate,
             to: toDate,
-            totalCandles: fbPrice > 0 ? 1 : 0,
-            candles: fbPrice > 0 ? [{
-              time: new Date(Math.floor(Date.now() / intervalMs) * intervalMs).toISOString(),
-              open: fbPrice, high: fbPrice, low: fbPrice, close: fbPrice, volume: 0, trades: 0
-            }] : []
-          }, 'Price data from on-chain')
+            totalCandles: candles.length,
+            candles
+          }, currentSolPrice > 0 ? 'Current price from pool — no trades in range yet' : 'No price data available')
         );
       }
+
+      // Build OHLC candles from the merged trade set.
+      const buckets = {};
+      for (const trade of trades) {
+        const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
+        if (!buckets[bucketTime]) buckets[bucketTime] = { trades: [] };
+        buckets[bucketTime].trades.push(trade);
+      }
+
+      const candles = Object.entries(buckets)
+        .sort(([a], [b]) => new Date(a) - new Date(b))
+        .map(([time, bucket]) => {
+          bucket.trades.sort((a, b) => a.timestamp - b.timestamp);
+          const prices = bucket.trades.map(t => t.pricePerToken);
+          const volumes = bucket.trades.map(t => t.tokenAmount);
+          return {
+            time,
+            open: prices[0],
+            high: Math.max(...prices),
+            low: Math.min(...prices),
+            close: prices[prices.length - 1],
+            volume: volumes.reduce((sum, v) => sum + v, 0),
+            trades: bucket.trades.length
+          };
+        });
+
+      // Prefer the live/pool price; fall back to the most recent trade.
+      const latestPrice = currentSolPrice > 0 ? currentSolPrice : trades[trades.length - 1].pricePerToken;
+      const stats = await compute24hStats(trades, latestPrice);
+
+      return res.status(200).json(
+        new ApiResponse(200, {
+          network: 'solana',
+          tokenSymbol: solTokenSymbol,
+          mintAddress,
+          poolAddress: poolAddress || null,
+          stats,
+          interval,
+          from: fromDate,
+          to: toDate,
+          totalCandles: candles.length,
+          candles
+        }, 'Price history retrieved')
+      );
     }
 
     // DB fallback only for requests without on-chain identifiers
