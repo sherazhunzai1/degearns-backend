@@ -488,47 +488,57 @@ exports.getNFTHistory = async (req, res) => {
       });
     }
 
-    // Use Bithomp API to get complete NFT data with transaction history
-    const nftData = await bithompService.getNFTHistory(nftTokenId);
+    // Primary source: Bithomp API (complete NFT data + ownership history)
+    let nftData = null;
+    try {
+      nftData = await bithompService.getNFTHistory(nftTokenId);
+    } catch (bithompErr) {
+      logger.warn(`Bithomp NFT history unavailable for ${nftTokenId}: ${bithompErr.message}`);
+    }
 
-    logger.info(`NFT history fetched from Bithomp for: ${nftTokenId}, ${nftData.history?.length || 0} ownership changes`);
+    // Fallback to on-chain history when Bithomp errored or returned no history
+    let history = nftData?.history || [];
+    let source = 'bithomp';
+    if (!nftData || history.length === 0) {
+      const onChain = await xrplService.getOnChainNFTHistory(nftTokenId);
+      if (onChain.length > 0) {
+        history = onChain;
+        source = nftData ? 'bithomp+onchain' : 'onchain';
+      } else if (!nftData) {
+        source = 'onchain';
+      }
+    }
+
+    logger.info(`NFT history for ${nftTokenId}: ${history.length} entries (source: ${source})`);
 
     res.json({
       success: true,
       data: {
-        nftTokenId: nftData.nftTokenId,
-        issuer: nftData.issuer,
-        issuerDetails: nftData.issuerDetails,
-        owner: nftData.owner,
-        ownerDetails: nftData.ownerDetails,
-        taxon: nftData.taxon,
-        transferFee: nftData.transferFee,
-        sequence: nftData.sequence,
-        flags: nftData.flags,
-        uri: nftData.uri,
-        metadata: nftData.metadata,
-        issuedAt: nftData.issuedAt,
-        ownerChangedAt: nftData.ownerChangedAt,
-        deletedAt: nftData.deletedAt,
-        totalOwnershipChanges: nftData.history?.length || 0,
-        history: nftData.history || [],
-        sellOffers: nftData.sellOffers || [],
-        buyOffers: nftData.buyOffers || []
+        nftTokenId: nftData?.nftTokenId || nftTokenId,
+        issuer: nftData?.issuer || xrplService.extractIssuerFromNFTokenID(nftTokenId),
+        issuerDetails: nftData?.issuerDetails || null,
+        owner: nftData?.owner || null,
+        ownerDetails: nftData?.ownerDetails || null,
+        taxon: nftData?.taxon ?? null,
+        transferFee: nftData?.transferFee ?? null,
+        sequence: nftData?.sequence ?? null,
+        flags: nftData?.flags ?? null,
+        uri: nftData?.uri || null,
+        metadata: nftData?.metadata || null,
+        issuedAt: nftData?.issuedAt || null,
+        ownerChangedAt: nftData?.ownerChangedAt || null,
+        deletedAt: nftData?.deletedAt || null,
+        totalOwnershipChanges: history.length,
+        history,
+        sellOffers: nftData?.sellOffers || [],
+        buyOffers: nftData?.buyOffers || [],
+        source
       },
       message: 'NFT transaction history fetched successfully'
     });
 
   } catch (error) {
     logger.error('Error fetching NFT history:', error.message);
-
-    // Check if it's a Bithomp API error
-    if (error.status === 404) {
-      return res.status(404).json({
-        success: false,
-        message: 'NFT not found or no transaction history available'
-      });
-    }
-
     res.status(500).json({
       success: false,
       message: 'Failed to fetch NFT transaction history',

@@ -461,6 +461,47 @@ class XRPLService {
   }
 
   /**
+   * Deterministically extract the issuer r-address from an NFTokenID.
+   * The 160-bit issuer AccountID lives at hex offset 8..48 of the 64-hex id.
+   */
+  extractIssuerFromNFTokenID(nftokenID) {
+    try {
+      if (!nftokenID || nftokenID.length !== 64) return null;
+      const { encodeAccountID } = require('ripple-address-codec');
+      return encodeAccountID(Buffer.from(nftokenID.substring(8, 48), 'hex'));
+    } catch (error) {
+      logger.warn(`Could not extract issuer from NFTokenID: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Best-effort on-chain NFT history — used as a fallback when Bithomp is
+   * unavailable. Queries the issuer's transactions for this NFT (captures the
+   * mint and any issuer-side transfers), normalized to the history shape.
+   */
+  async getOnChainNFTHistory(nftokenID) {
+    try {
+      const issuer = this.extractIssuerFromNFTokenID(nftokenID);
+      if (!issuer) return [];
+      const txs = await this.getNFTTransactionHistory(issuer, nftokenID, 100);
+      return (txs || []).map(t => ({
+        owner: t.buyer || t.account || t.seller || null,
+        changedAt: t.date ? (t.date + 946684800) : null, // ripple epoch -> unix
+        date: t.date ? new Date((t.date + 946684800) * 1000).toISOString() : null,
+        ledgerIndex: t.ledgerIndex || null,
+        txHash: t.hash || null,
+        type: t.type || null,
+        amount: t.amount || null,
+        marketplace: null
+      }));
+    } catch (error) {
+      logger.warn(`On-chain NFT history fallback failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Extract NFTokenID from transaction metadata
    */
   extractNFTokenID(meta) {
