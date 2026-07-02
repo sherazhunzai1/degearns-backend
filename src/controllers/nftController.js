@@ -11,8 +11,20 @@ const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const {
   getActiveSubscriptionsForWallets,
-  enrichItemsWithSubscriptions
+  enrichItemsWithSubscriptions,
+  resolvePrimaryWallet
 } = require('../utils/userHelpers');
+
+/**
+ * Resolve an on-chain wallet (primary OR linked) to its User record + primary
+ * wallet. Returns null if the wallet isn't associated with any user.
+ */
+const resolveUserByWallet = async (address, attributes) => {
+  if (!address) return null;
+  const primary = await resolvePrimaryWallet(address);
+  const user = await User.findOne({ where: { walletAddress: primary }, attributes });
+  return user ? { user, primaryWallet: primary } : null;
+};
 
 /**
  * Get single NFT detail with sale info and transaction history
@@ -38,9 +50,11 @@ exports.getNFTDetail = async (req, res) => {
       const collectionAddress = asset.grouping?.find(g => g.group_key === 'collection')?.group_value;
       const creatorAddress = asset.creators?.[0]?.address || null;
 
-      const [ownerUser, creatorUser, collection] = await Promise.all([
-        ownerAddress ? User.findOne({ where: { walletAddress: ownerAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
-        creatorAddress ? User.findOne({ where: { walletAddress: creatorAddress }, attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }) : null,
+      // Resolve owner + creator via primary OR linked wallet, so usernames show
+      // even when the on-chain Solana wallet is a linked (secondary) wallet.
+      const [ownerResolved, creatorResolved, collection] = await Promise.all([
+        resolveUserByWallet(ownerAddress, ['walletAddress', 'username', 'profileImage', 'isVerified', 'bio']),
+        resolveUserByWallet(creatorAddress, ['walletAddress', 'username', 'profileImage', 'isVerified']),
         collectionAddress ? Collection.findOne({ where: { mintAddress: collectionAddress, network: 'solana' }, include: [{ association: 'creator', attributes: ['walletAddress', 'username', 'profileImage', 'isVerified'] }] }) : null
       ]);
 
@@ -61,9 +75,9 @@ exports.getNFTDetail = async (req, res) => {
         marketplaceAuthority
       };
 
-      // Subscription plans
-      const walletAddresses = [ownerAddress, creatorAddress].filter(Boolean);
-      const subscriptionMap = await getActiveSubscriptionsForWallets(walletAddresses);
+      // Subscription plans — keyed by the resolved PRIMARY wallets
+      const subWallets = [ownerResolved?.primaryWallet, creatorResolved?.primaryWallet].filter(Boolean);
+      const subscriptionMap = await getActiveSubscriptionsForWallets(subWallets);
 
       // Royalty info
       const royaltyBasisPoints = asset.royalty?.basis_points || 0;
@@ -137,15 +151,22 @@ exports.getNFTDetail = async (req, res) => {
         image: asset.content?.links?.image || asset.content?.files?.[0]?.uri || null,
         attributes: asset.content?.metadata?.attributes || [],
         issuer: creatorAddress,
-        issuerInfo: creatorUser ? {
-          ...creatorUser.toJSON(),
-          subscriptionPlan: subscriptionMap[creatorAddress] || 'free'
+        issuerInfo: creatorResolved ? {
+          walletAddress: creatorAddress,
+          username: creatorResolved.user.username,
+          profileImage: creatorResolved.user.profileImage,
+          isVerified: creatorResolved.user.isVerified,
+          subscriptionPlan: subscriptionMap[creatorResolved.primaryWallet] || 'free'
         } : (creatorAddress ? { walletAddress: creatorAddress } : null),
         collection: collectionInfo,
         owner: ownerAddress,
-        ownerInfo: ownerUser ? {
-          ...ownerUser.toJSON(),
-          subscriptionPlan: subscriptionMap[ownerAddress] || 'free'
+        ownerInfo: ownerResolved ? {
+          walletAddress: ownerAddress,
+          username: ownerResolved.user.username,
+          profileImage: ownerResolved.user.profileImage,
+          isVerified: ownerResolved.user.isVerified,
+          bio: ownerResolved.user.bio,
+          subscriptionPlan: subscriptionMap[ownerResolved.primaryWallet] || 'free'
         } : (ownerAddress ? { walletAddress: ownerAddress } : null),
         saleInfo,
         royalty: {
