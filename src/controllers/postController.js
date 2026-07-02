@@ -305,6 +305,7 @@ const getUserPosts = async (req, res, next) => {
     }
 
     walletAddress = await resolvePrimaryWallet(walletAddress);
+    const resolvedViewer = viewerWalletAddress ? await resolvePrimaryWallet(viewerWalletAddress) : null;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -388,7 +389,7 @@ const getUserPosts = async (req, res, next) => {
     for (const post of ownPosts) {
       const author = userMap[post.authorWalletAddress];
       const subPlan = subscriptionMap[post.authorWalletAddress] || 'free';
-      const formatted = await formatPostWithEngagement(post, author, viewerWalletAddress, true, subPlan);
+      const formatted = await formatPostWithEngagement(post, author, resolvedViewer, true, subPlan);
       formatted.isBoosted = boostedPostIds.has(post.id);
       formatted.isRepost = false;
       formatted.repostInfo = null;
@@ -403,7 +404,7 @@ const getUserPosts = async (req, res, next) => {
       const originalPost = repost.post;
       const originalAuthor = userMap[originalPost.authorWalletAddress];
       const subPlan = subscriptionMap[originalPost.authorWalletAddress] || 'free';
-      const formatted = await formatPostWithEngagement(originalPost, originalAuthor, viewerWalletAddress, true, subPlan);
+      const formatted = await formatPostWithEngagement(originalPost, originalAuthor, resolvedViewer, true, subPlan);
       formatted.isBoosted = boostedPostIds.has(originalPost.id);
       formatted.isRepost = true;
       formatted.repostInfo = {
@@ -485,6 +486,9 @@ const getAllPosts = async (req, res, next) => {
       sortBy = 'recent' // Secondary sort: 'recent' (default), 'popular'
     } = req.query;
 
+    // Resolve a linked viewer wallet to its primary (for self-exclusion + isLiked)
+    const resolvedViewer = viewerWalletAddress ? await resolvePrimaryWallet(viewerWalletAddress) : null;
+
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
     // Build where clause for regular posts
@@ -494,8 +498,8 @@ const getAllPosts = async (req, res, next) => {
     };
 
     // Exclude viewer's own posts from the feed
-    if (viewerWalletAddress) {
-      whereClause.authorWalletAddress = { [Op.ne]: viewerWalletAddress };
+    if (resolvedViewer) {
+      whereClause.authorWalletAddress = { [Op.ne]: resolvedViewer };
     }
 
     // Filter by post type if specified
@@ -527,8 +531,8 @@ const getAllPosts = async (req, res, next) => {
       };
 
       // Exclude viewer's own boosted posts from the feed
-      if (viewerWalletAddress) {
-        boostedWhereClause.authorWalletAddress = { [Op.ne]: viewerWalletAddress };
+      if (resolvedViewer) {
+        boostedWhereClause.authorWalletAddress = { [Op.ne]: resolvedViewer };
       }
 
       boostedPosts = await Post.findAll({
@@ -674,7 +678,7 @@ const getAllPosts = async (req, res, next) => {
         const formatted = await formatPostWithEngagement(
           post.toJSON ? post : { ...post, toJSON: () => post },
           author,
-          viewerWalletAddress,
+          resolvedViewer,
           true,
           subscriptionPlan
         );
@@ -726,6 +730,7 @@ const getPostById = async (req, res, next) => {
   try {
     const { postId } = req.params;
     const { viewerWalletAddress } = req.query;
+    const resolvedViewer = viewerWalletAddress ? await resolvePrimaryWallet(viewerWalletAddress) : null;
 
     if (!postId) {
       throw new ApiError(400, 'Post ID is required');
@@ -761,7 +766,7 @@ const getPostById = async (req, res, next) => {
 
     logger.info(`Post fetched: ${postId}`);
 
-    const formattedPost = await formatPostWithEngagement(post, author, viewerWalletAddress, true, subscriptionPlan);
+    const formattedPost = await formatPostWithEngagement(post, author, resolvedViewer, true, subscriptionPlan);
 
     res.status(200).json(
       new ApiResponse(200, { post: formattedPost }, 'Post retrieved successfully')
@@ -1735,8 +1740,10 @@ const getFollowingPosts = async (req, res, next) => {
 
     walletAddress = await resolvePrimaryWallet(walletAddress);
 
-    // Use viewerWalletAddress if provided, otherwise use walletAddress
-    const viewerWallet = viewerWalletAddress || walletAddress;
+    // Use viewerWalletAddress if provided (resolved to its primary), else this user
+    const viewerWallet = viewerWalletAddress
+      ? await resolvePrimaryWallet(viewerWalletAddress)
+      : walletAddress;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
