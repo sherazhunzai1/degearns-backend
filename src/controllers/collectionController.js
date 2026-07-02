@@ -1523,7 +1523,9 @@ const searchCollectionsAndNFTs = async (req, res, next) => {
     const matchingCollections = collections.map(col => ({
       type: 'collection',
       id: col.id,
+      network: col.network,
       taxon: col.taxon,
+      mintAddress: col.mintAddress || null,
       name: col.name,
       slug: col.slug,
       image: col.image,
@@ -1537,9 +1539,53 @@ const searchCollectionsAndNFTs = async (req, res, next) => {
       }
     }));
 
-    // Fetch NFTs from XRPL for all collections and search by name
+    // Fetch NFTs for all collections and search by name (network-aware)
     for (const collection of collections) {
       try {
+        // ---- Solana collection: search its NFTs via Helius DAS ----
+        if (collection.network === 'solana') {
+          if (!collection.mintAddress) continue;
+
+          const result = await solanaService.getAssetsByCollection(collection.mintAddress, 1, 100).catch(() => ({ items: [] }));
+          for (const item of (result.items || [])) {
+            const nftName = item.content?.metadata?.name || '';
+            if (!nftName.toLowerCase().includes(searchTerm)) continue;
+
+            let isOnSale = false;
+            let lowestPrice = null;
+            try {
+              const listing = await SolanaNftListing.findOne({
+                where: { mintAddress: item.id, status: 'active' },
+                attributes: ['price']
+              });
+              if (listing) { isOnSale = true; lowestPrice = listing.price; }
+            } catch (e) {}
+
+            matchingNFTs.push({
+              type: 'nft',
+              network: 'solana',
+              nftTokenId: item.id,
+              mintAddress: item.id,
+              name: nftName,
+              description: item.content?.metadata?.description || null,
+              image: item.content?.links?.image || item.content?.files?.[0]?.uri || null,
+              taxon: null,
+              issuer: item.creators?.[0]?.address || null,
+              collection: {
+                id: collection.id,
+                name: collection.name,
+                slug: collection.slug,
+                mintAddress: collection.mintAddress
+              },
+              isOnSale,
+              lowestPrice,
+              uri: item.content?.json_uri || null
+            });
+          }
+          continue;
+        }
+
+        // ---- XRPL collection ----
         const taxon = collection.taxon;
         const creatorWallet = collection.creatorWalletAddress;
 
@@ -1585,7 +1631,9 @@ const searchCollectionsAndNFTs = async (req, res, next) => {
                 // Add matching NFT to results
                 matchingNFTs.push({
                   type: 'nft',
+                  network: 'xrpl',
                   nftTokenId: nft.NFTokenID,
+                  mintAddress: null,
                   name: metadata.name,
                   description: metadata.description || null,
                   image: imageUrl,
