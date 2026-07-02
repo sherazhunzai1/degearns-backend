@@ -1521,8 +1521,9 @@ const getPriceHistory = async (req, res, next) => {
       );
     }
 
-    // For Solana — merge DB-recorded trades with on-chain Helius swaps, then
-    // resolve the current price via Jupiter → on-chain pool vaults → latest trade.
+    // For Solana — build candles directly from on-chain swaps, mirroring the XRPL
+    // branch which reads the AMM account's transaction history. The current price
+    // comes from Jupiter, then the on-chain pool vaults, then the latest on-chain trade.
     if (mintAddress) {
       // Resolve token symbol (best-effort)
       let solTokenSymbol = mintAddress.slice(0, 8);
@@ -1531,41 +1532,9 @@ const getPriceHistory = async (req, res, next) => {
         solTokenSymbol = asset?.content?.metadata?.symbol || solTokenSymbol;
       } catch (e) {}
 
-      // Gather trades from two sources, keyed by txHash so on-chain + DB dedupe.
+      // On-chain swaps live on the pool/market account, not the mint — query the pool
+      // address when the caller supplies it and fall back to the mint. Deduped by txHash.
       const tradesByHash = new Map();
-
-      // Source 1: trades recorded through our platform (authoritative, always present
-      // even for brand-new tokens that no indexer/aggregator has picked up yet).
-      try {
-        const memeCoin = await findMemeCoinByIdentifier({ id, mintAddress });
-        if (memeCoin) {
-          const dbRows = await MemeCoinTrade.findAll({
-            where: {
-              memeCoinId: memeCoin.id,
-              tradedAt: { [Op.between]: [fromDate, toDate] }
-            },
-            order: [['tradedAt', 'ASC']]
-          });
-          for (const r of dbRows) {
-            const key = r.txHash || `db-${r.id}`;
-            tradesByHash.set(key, {
-              txHash: r.txHash,
-              trader: r.traderWalletAddress,
-              type: r.type,
-              tokenAmount: parseFloat(r.tokenAmount) || 0,
-              pairAmount: parseFloat(r.pairAmount) || 0,
-              pairToken: r.pairToken || 'SOL',
-              pricePerToken: parseFloat(r.pricePerToken) || 0,
-              timestamp: r.tradedAt instanceof Date ? r.tradedAt : new Date(r.tradedAt)
-            });
-          }
-        }
-      } catch (e) {
-        logger.warn(`DB trade fetch failed for price-history ${mintAddress}: ${e.message}`);
-      }
-
-      // Source 2: on-chain swaps. Swaps live on the pool/market account, not the mint,
-      // so query the pool address when the caller supplies it and fall back to the mint.
       const swapAddress = poolAddress || mintAddress;
       try {
         const rawTxs = await solanaService.getTokenTransactions(swapAddress, 500);
@@ -1630,7 +1599,7 @@ const getPriceHistory = async (req, res, next) => {
         );
       }
 
-      // Build OHLC candles from the merged trade set.
+      // Build OHLC candles from the on-chain trade set.
       const buckets = {};
       for (const trade of trades) {
         const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
