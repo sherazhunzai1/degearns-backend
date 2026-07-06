@@ -203,6 +203,127 @@ async function getOnChainPoolPrice(poolAddress, mintAddress) {
 }
 
 /**
+ * Derive a single swap from a parsed transaction by looking at how the POOL's token
+ * balances changed — the AMM-agnostic, indexer-free way to read a swap. Analogous to
+ * the XRPL branch parsing RippleState/AccountRoot balance deltas from tx metadata.
+ *
+ * The pool is the non-signer account that holds the base (meme) token and shows an
+ * offsetting change in exactly one other token (the quote leg). We identify it purely
+ * from pre/post token balances (owner + mint + amount), so no pool-layout knowledge or
+ * transaction "type" label is needed.
+ *
+ * @returns {{txHash,type,tokenAmount,pairAmount,pairToken,pricePerToken,timestamp}|null}
+ */
+function parsePoolSwapFromTx(tx, signature, baseMint) {
+  if (!tx || !tx.meta || tx.meta.err) return null;
+  const pre = tx.meta.preTokenBalances || [];
+  const post = tx.meta.postTokenBalances || [];
+  if (pre.length === 0 && post.length === 0) return null;
+
+  // Fee payer / signer(s) — the trader side. The pool authority is never a signer, so
+  // excluding signer-owned accounts disambiguates pool vs trader (they mirror each other).
+  const keys = (tx.transaction?.message?.accountKeys) || [];
+  const signerOwners = new Set(
+    keys.filter(k => k && k.signer).map(k => (typeof k.pubkey === 'string' ? k.pubkey : k.pubkey?.toString()))
+  );
+
+  const amtOf = (b) => parseFloat(b?.uiTokenAmount?.uiAmountString ?? b?.uiTokenAmount?.uiAmount ?? '0');
+  const preI = {}, postI = {};
+  for (const b of pre) if (b?.owner && b?.mint) preI[`${b.owner}|${b.mint}`] = amtOf(b);
+  for (const b of post) if (b?.owner && b?.mint) postI[`${b.owner}|${b.mint}`] = amtOf(b);
+
+  // Owners that hold the base mint (candidate pools), excluding the trader/signers.
+  const baseOwners = new Set();
+  for (const b of [...pre, ...post]) {
+    if (b?.mint === baseMint && b?.owner && !signerOwners.has(b.owner)) baseOwners.add(b.owner);
+  }
+
+  let best = null;
+  for (const owner of baseOwners) {
+    const bKey = `${owner}|${baseMint}`;
+    const baseDelta = (postI[bKey] ?? 0) - (preI[bKey] ?? 0);
+    if (!baseDelta) continue;
+
+    // Find the quote mint: another mint held by the same owner with an opposite-signed delta.
+    const otherMints = new Set();
+    for (const b of [...pre, ...post]) {
+      if (b?.owner === owner && b?.mint && b.mint !== baseMint) otherMints.add(b.mint);
+    }
+    for (const qMint of otherMints) {
+      const qKey = `${owner}|${qMint}`;
+      const quoteDelta = (postI[qKey] ?? 0) - (preI[qKey] ?? 0);
+      if (!quoteDelta) continue;
+      if (Math.sign(baseDelta) === Math.sign(quoteDelta)) continue; // one leg in, one out
+      if (!best || Math.abs(baseDelta) > Math.abs(best.baseDelta)) {
+        best = { baseDelta, quoteDelta, quoteMint: qMint };
+      }
+    }
+  }
+  if (!best) return null;
+
+  const tokenAmount = Math.abs(best.baseDelta);
+  const pairAmount = Math.abs(best.quoteDelta);
+  if (!tokenAmount || !pairAmount) return null;
+
+  const pairToken = best.quoteMint === SOL_MINT ? 'SOL'
+    : best.quoteMint === USDC_MINT ? 'USDC'
+    : best.quoteMint === USDT_MINT ? 'USDT'
+    : best.quoteMint.slice(0, 6);
+
+  return {
+    txHash: signature,
+    // Pool base balance went UP => pool received tokens => trader SOLD; DOWN => BOUGHT.
+    type: best.baseDelta > 0 ? 'sell' : 'buy',
+    tokenAmount,
+    pairAmount,
+    pairToken,
+    pricePerToken: pairAmount / tokenAmount,
+    timestamp: tx.blockTime ? new Date(tx.blockTime * 1000) : null
+  };
+}
+
+/**
+ * Read a pool's swap history DIRECTLY from on-chain, with no dependency on any indexer
+ * or transaction "type" classification. Pulls recent signatures for the pool/market
+ * account, fetches the parsed transactions, and derives each swap from the pool's token
+ * balance deltas. Works across AMMs (Raydium CPMM/AMM, Meteora, Orca, …).
+ *
+ * @param {string} poolAddress - the AMM pool / market account
+ * @param {string} baseMint    - the meme coin mint (price is quote-per-base)
+ * @param {object} [opts]
+ * @param {number} [opts.limit=200] - how many recent signatures to scan
+ * @returns {Promise<Array>} on-chain trades, oldest-first
+ */
+async function getPoolSwapHistory(poolAddress, baseMint, { limit = 200 } = {}) {
+  if (!poolAddress || !baseMint) return [];
+  const connection = solanaConfig.getConnection();
+
+  const sigInfos = await connection.getSignaturesForAddress(new PublicKey(poolAddress), { limit });
+  const signatures = sigInfos.filter(s => !s.err).map(s => s.signature);
+  if (signatures.length === 0) return [];
+
+  const trades = [];
+  const CHUNK = 25; // getParsedTransactions batches, but keep request bodies modest
+  for (let i = 0; i < signatures.length; i += CHUNK) {
+    const chunk = signatures.slice(i, i + CHUNK);
+    let txs;
+    try {
+      txs = await connection.getParsedTransactions(chunk, { maxSupportedTransactionVersion: 0 });
+    } catch (e) {
+      logger.warn(`getParsedTransactions failed for pool ${poolAddress}: ${e.message}`);
+      continue;
+    }
+    for (let j = 0; j < txs.length; j++) {
+      const trade = parsePoolSwapFromTx(txs[j], chunk[j], baseMint);
+      if (trade && trade.pricePerToken > 0) trades.push(trade);
+    }
+  }
+
+  trades.sort((a, b) => (a.timestamp?.getTime() || 0) - (b.timestamp?.getTime() || 0));
+  return trades;
+}
+
+/**
  * Discover NFT mint addresses held by a wallet.
  * An SPL token is treated as an NFT when it has 0 decimals and a balance of 1.
  * @returns {Promise<string[]>} Array of NFT mint addresses
@@ -442,5 +563,7 @@ module.exports = {
   buildJupiterSwapTransaction,
   getJupiterPrice,
   getOnChainPoolPrice,
+  getPoolSwapHistory,
+  parsePoolSwapFromTx,
   getNetworkInfo
 };
