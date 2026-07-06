@@ -47,6 +47,7 @@ const MemeCoinLock = require('./MemeCoinLock')(sequelize, DataTypes);
 const UserWallet = require('./UserWallet')(sequelize, DataTypes);
 const SolanaNftListing = require('./SolanaNftListing')(sequelize, DataTypes);
 const CollectionChatMessage = require('./CollectionChatMessage')(sequelize, DataTypes);
+const MemeCoinChatMessage = require('./MemeCoinChatMessage')(sequelize, DataTypes);
 const WithdrawalOwner = require('./WithdrawalOwner')(sequelize, DataTypes);
 const Withdrawal = require('./Withdrawal')(sequelize, DataTypes);
 const WithdrawalSignature = require('./WithdrawalSignature')(sequelize, DataTypes);
@@ -77,6 +78,37 @@ CollectionChatMessage.hasMany(CollectionChatMessage, {
   as: 'replies'
 });
 CollectionChatMessage.belongsTo(CollectionChatMessage, {
+  foreignKey: 'replyToMessageId',
+  as: 'replyTo'
+});
+
+// MemeCoinChatMessage — open chatroom for listed meme coins.
+// memeCoinId is a real FK to MemeCoins.id; sender identity comes from Users via
+// walletAddress (association only, no hard FK, so linked→primary wallets work).
+MemeCoin.hasMany(MemeCoinChatMessage, {
+  foreignKey: 'memeCoinId',
+  as: 'chatMessages'
+});
+MemeCoinChatMessage.belongsTo(MemeCoin, {
+  foreignKey: 'memeCoinId',
+  as: 'memeCoin'
+});
+User.hasMany(MemeCoinChatMessage, {
+  foreignKey: 'senderWalletAddress',
+  sourceKey: 'walletAddress',
+  as: 'memeCoinChatMessages'
+});
+MemeCoinChatMessage.belongsTo(User, {
+  foreignKey: 'senderWalletAddress',
+  targetKey: 'walletAddress',
+  as: 'sender'
+});
+// MemeCoinChatMessage self-referencing for replies
+MemeCoinChatMessage.hasMany(MemeCoinChatMessage, {
+  foreignKey: 'replyToMessageId',
+  as: 'replies'
+});
+MemeCoinChatMessage.belongsTo(MemeCoinChatMessage, {
   foreignKey: 'replyToMessageId',
   as: 'replyTo'
 });
@@ -840,6 +872,7 @@ module.exports = {
   UserWallet,
   SolanaNftListing,
   CollectionChatMessage,
+  MemeCoinChatMessage,
   WithdrawalOwner,
   Withdrawal,
   WithdrawalSignature,

@@ -22,6 +22,7 @@ const luckyDrawRoutes = require('./luckyDrawRoutes');
 const referralRoutes = require('./referralRoutes');
 const memeCoinRoutes = require('./memeCoinRoutes');
 const collectionChatRoutes = require('./collectionChatRoutes');
+const memeCoinChatRoutes = require('./memeCoinChatRoutes');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -45,6 +46,7 @@ router.use('/lucky-draw', luckyDrawRoutes);
 router.use('/referrals', referralRoutes);
 router.use('/memecoins', memeCoinRoutes);
 router.use('/collection-chat', collectionChatRoutes);
+router.use('/memecoin-chat', memeCoinChatRoutes);
 
 // Health check endpoint
 router.get('/health', (req, res) => {
