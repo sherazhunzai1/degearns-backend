@@ -1295,35 +1295,82 @@ const compute24hStats = async (trades, currentPrice) => {
   };
 };
 
+// ==================== Price-history interval helpers ====================
+
+/**
+ * Candle interval configuration.
+ * - `ms`: bucket width in milliseconds. For '1M'/'1y' this is an approximation used
+ *   only for default-range sizing — the actual buckets are calendar-aligned.
+ * - `defaultRangeMs`: how far back to look when the caller omits from/to, scaled so
+ *   each interval yields a useful number of candles out of the box.
+ */
+const PRICE_INTERVALS = {
+  '5m':  { ms: 5 * 60 * 1000,             defaultRangeMs: 1 * 24 * 60 * 60 * 1000 },
+  '15m': { ms: 15 * 60 * 1000,            defaultRangeMs: 2 * 24 * 60 * 60 * 1000 },
+  '30m': { ms: 30 * 60 * 1000,            defaultRangeMs: 3 * 24 * 60 * 60 * 1000 },
+  '1h':  { ms: 60 * 60 * 1000,            defaultRangeMs: 7 * 24 * 60 * 60 * 1000 },
+  '4h':  { ms: 4 * 60 * 60 * 1000,        defaultRangeMs: 30 * 24 * 60 * 60 * 1000 },
+  '1d':  { ms: 24 * 60 * 60 * 1000,       defaultRangeMs: 90 * 24 * 60 * 60 * 1000 },
+  '1w':  { ms: 7 * 24 * 60 * 60 * 1000,   defaultRangeMs: 365 * 24 * 60 * 60 * 1000 },
+  '1M':  { ms: 30 * 24 * 60 * 60 * 1000,  defaultRangeMs: 3 * 365 * 24 * 60 * 60 * 1000 },
+  '1y':  { ms: 365 * 24 * 60 * 60 * 1000, defaultRangeMs: 10 * 365 * 24 * 60 * 60 * 1000 }
+};
+
+// Accept natural aliases (week/month/year, weekly/monthly/yearly, …) alongside the
+// canonical keys. Unknown values fall back to '1h'. Month is '1M' (capital M) to avoid
+// colliding with a minute-style '1m'.
+const INTERVAL_ALIASES = {
+  week: '1w', '1week': '1w', weekly: '1w',
+  month: '1M', '1month': '1M', monthly: '1M', '1mo': '1M',
+  year: '1y', '1year': '1y', yearly: '1y', annual: '1y',
+  day: '1d', daily: '1d', hour: '1h', hourly: '1h'
+};
+
+const normalizeInterval = (raw) => {
+  if (raw && PRICE_INTERVALS[raw]) return raw;
+  return INTERVAL_ALIASES[String(raw || '').toLowerCase()] || '1h';
+};
+
+/**
+ * ISO start-of-bucket key for a timestamp at the given interval. Sub-day, day and week
+ * align to fixed epoch-based windows; month and year align to UTC calendar boundaries
+ * so long-range buckets don't drift.
+ */
+const bucketKeyFor = (date, interval) => {
+  const d = date instanceof Date ? date : new Date(date);
+  if (interval === '1M') return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString();
+  if (interval === '1y') return new Date(Date.UTC(d.getUTCFullYear(), 0, 1)).toISOString();
+  const ms = PRICE_INTERVALS[interval].ms;
+  return new Date(Math.floor(d.getTime() / ms) * ms).toISOString();
+};
+
 /**
  * Get price history for a meme coin (for graph rendering).
- * Fetches trades directly from XRPL on-chain and builds OHLC candles.
+ * Fetches trades directly on-chain (XRPL AMM / Solana pool swaps) and builds OHLC candles.
  *
  * Query params:
- * - interval: '5m' | '15m' | '1h' | '4h' | '1d' (default '1h')
- * - from: ISO date string (default 7 days ago)
+ * - interval: '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w' | '1M' | '1y'
+ *   (default '1h'; also accepts word aliases like 'week', 'month', 'year')
+ * - from: ISO date string (default scales to the interval, e.g. ~1y back for '1w')
  * - to: ISO date string (default now)
  * - currencyHex + issuerWalletAddress (XRPL)
- * - mintAddress (Solana — falls back to DB)
+ * - mintAddress (+ optional poolAddress) (Solana)
  */
 const getPriceHistory = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { interval = '1h', from, to, currencyHex, issuerWalletAddress, mintAddress, poolAddress, tokenSymbol } = req.query;
+    const { from, to, currencyHex, issuerWalletAddress, mintAddress, poolAddress, tokenSymbol } = req.query;
 
     const resolvedHex = currencyHex || (tokenSymbol ? xrplService.currencyToHex(tokenSymbol) : null);
 
-    const intervalMs = {
-      '5m': 5 * 60 * 1000,
-      '15m': 15 * 60 * 1000,
-      '30m': 30 * 60 * 1000,
-      '1h': 60 * 60 * 1000,
-      '4h': 4 * 60 * 60 * 1000,
-      '1d': 24 * 60 * 60 * 1000
-    }[interval] || 60 * 60 * 1000;
+    // Canonical interval (5m..1d plus 1w / 1M / 1y and word aliases). Responses echo
+    // this normalized value.
+    const interval = normalizeInterval(req.query.interval);
+    const intervalCfg = PRICE_INTERVALS[interval];
+    const intervalMs = intervalCfg.ms;
 
     const toDate = to ? new Date(to) : new Date();
-    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fromDate = from ? new Date(from) : new Date(toDate.getTime() - intervalCfg.defaultRangeMs);
 
     // For XRPL — fetch on-chain
     if (resolvedHex && issuerWalletAddress) {
@@ -1426,7 +1473,7 @@ const getPriceHistory = async (req, res, next) => {
       // If no trades found, return the current pool price as a single candle
       if (trades.length === 0 && currentPoolPrice > 0) {
         const now = new Date();
-        const bucketTime = new Date(Math.floor(now.getTime() / intervalMs) * intervalMs).toISOString();
+        const bucketTime = bucketKeyFor(now, interval);
 
         let tokenSym = resolvedHex;
         try { tokenSym = Buffer.from(resolvedHex, 'hex').toString('utf-8').replace(/\0/g, ''); } catch (e) {}
@@ -1474,7 +1521,7 @@ const getPriceHistory = async (req, res, next) => {
       // Build OHLC candles from trades
       const buckets = {};
       for (const trade of trades) {
-        const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
+        const bucketTime = bucketKeyFor(trade.timestamp, interval);
         if (!buckets[bucketTime]) {
           buckets[bucketTime] = { trades: [] };
         }
@@ -1567,7 +1614,7 @@ const getPriceHistory = async (req, res, next) => {
       // No trades in range: return a single candle at the current price (if we have one).
       if (trades.length === 0) {
         const candles = currentSolPrice > 0 ? [{
-          time: new Date(Math.floor(Date.now() / intervalMs) * intervalMs).toISOString(),
+          time: bucketKeyFor(new Date(), interval),
           open: currentSolPrice,
           high: currentSolPrice,
           low: currentSolPrice,
@@ -1602,7 +1649,7 @@ const getPriceHistory = async (req, res, next) => {
       // Build OHLC candles from the on-chain trade set.
       const buckets = {};
       for (const trade of trades) {
-        const bucketTime = new Date(Math.floor(trade.timestamp.getTime() / intervalMs) * intervalMs).toISOString();
+        const bucketTime = bucketKeyFor(trade.timestamp, interval);
         if (!buckets[bucketTime]) buckets[bucketTime] = { trades: [] };
         buckets[bucketTime].trades.push(trade);
       }
@@ -1651,9 +1698,17 @@ const getPriceHistory = async (req, res, next) => {
     }
 
     const intervalSeconds = intervalMs / 1000;
+    // Month/year align to UTC calendar boundaries (fixed-second bucketing would drift);
+    // everything else uses fixed epoch-based windows. bucketExpr is an internal constant,
+    // not user input, so string-interpolating it is safe.
+    let bucketExpr;
+    if (interval === '1M') bucketExpr = "DATE_FORMAT(tradedAt, '%Y-%m-01 00:00:00')";
+    else if (interval === '1y') bucketExpr = "DATE_FORMAT(tradedAt, '%Y-01-01 00:00:00')";
+    else bucketExpr = 'FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(tradedAt) / :intervalSeconds) * :intervalSeconds)';
+
     const dbTrades = await sequelize.query(`
       SELECT
-        FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(tradedAt) / :intervalSeconds) * :intervalSeconds) AS bucket,
+        ${bucketExpr} AS bucket,
         MIN(pricePerToken) AS low,
         MAX(pricePerToken) AS high,
         SUM(tokenAmount) AS volume,
