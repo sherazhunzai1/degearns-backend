@@ -295,21 +295,32 @@ async function searchAssets(filters) {
 }
 
 /**
- * Get parsed transaction history for a token mint address.
- * Uses Helius enhanced transactions API for rich swap data.
- * Returns swap details including token amounts, SOL amounts, and prices.
+ * Get parsed transaction history for an address (mint OR pool/market account).
+ * Uses the Helius enhanced transactions API for rich swap data.
+ *
+ * NOTE: we deliberately do NOT pass `&type=SWAP`. Helius frequently classifies
+ * Jupiter/Raydium-CPMM swaps on newer tokens as `UNKNOWN`, so that filter silently
+ * drops real swaps. We fetch the recent history and let parseHeliusSwap identify the
+ * swaps structurally (via the parsed `events.swap` / transfer legs).
+ *
+ * @param {string} address - mint or pool/market address to pull history for
+ * @param {number} limit - max transactions to fetch (Helius caps at 100 per page)
+ * @param {string} [type] - optional Helius type filter (e.g. 'SWAP'); omit for all
  */
-async function getTokenTransactions(mintAddress, limit = 100) {
-  // Helius enhanced API: parse transactions for an address
-  // Extract API key from RPC URL
+async function getTokenTransactions(address, limit = 100, type = null) {
+  // API key can live in the RPC URL (Helius RPC) or a dedicated env var.
   const apiKeyMatch = solanaConfig.rpcUrl.match(/api-key=([^&]+)/);
-  if (!apiKeyMatch) {
-    throw new Error('Helius API key not found in RPC URL');
+  const apiKey = (apiKeyMatch && apiKeyMatch[1]) || process.env.HELIUS_API_KEY;
+  if (!apiKey) {
+    throw new Error('Helius API key not found (set SOLANA_RPC_URL to a Helius URL or HELIUS_API_KEY)');
   }
-  const apiKey = apiKeyMatch[1];
+
+  const params = new URLSearchParams({ 'api-key': apiKey, limit: String(limit) });
+  if (type) params.set('type', type);
 
   const { data } = await axios.get(
-    `https://api.helius.xyz/v0/addresses/${mintAddress}/transactions?api-key=${apiKey}&limit=${limit}&type=SWAP`
+    `https://api.helius.xyz/v0/addresses/${address}/transactions?${params.toString()}`,
+    { timeout: 15000 }
   );
 
   return data || [];
@@ -320,7 +331,12 @@ async function getTokenTransactions(mintAddress, limit = 100) {
  * Extracts swap amounts from tokenTransfers and nativeTransfers.
  */
 function parseHeliusSwap(tx, mintAddress) {
-  if (!tx || tx.type !== 'SWAP') return null;
+  if (!tx) return null;
+  // Treat as a swap when Helius labels it SWAP OR when it carries a parsed swap event
+  // (covers Jupiter/CPMM swaps mis-typed as UNKNOWN). A plain SPL transfer has neither,
+  // so this stays free of false positives.
+  const isSwap = tx.type === 'SWAP' || !!(tx.events && tx.events.swap);
+  if (!isSwap) return null;
 
   const tokenTransfers = tx.tokenTransfers || [];
   const nativeTransfers = tx.nativeTransfers || [];
